@@ -1,5 +1,8 @@
 import * as SecureStore from 'expo-secure-store';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
+import { api } from '@/lib/api';
 
 type AuthContextValue = {
   isLoading: boolean;
@@ -20,7 +23,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
-        const token = await SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
+        const token = Platform.OS === 'web'
+          ? await AsyncStorage.getItem(ACCESS_TOKEN_KEY)
+          : await SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
         setAccessToken(token ?? null);
       } finally {
         setIsLoading(false);
@@ -31,15 +36,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signIn = useCallback(async ({ username, password }: { username: string; password: string }) => {
     setIsLoading(true);
     try {
-      // TODO: Replace with real API call to D:\App-YooYLand server endpoint
-      // For now, mock success if both fields present
-      if (username && password) {
-        const fakeToken = `token-${Date.now()}`;
-        await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, fakeToken);
-        setAccessToken(fakeToken);
+      const res = await api.post<{ accessToken: string }>('/auth/login', { username, password });
+      if (!res.ok) throw new Error(res.error);
+      const token = res.data.accessToken;
+      if (Platform.OS === 'web') {
+        await AsyncStorage.setItem(ACCESS_TOKEN_KEY, token);
       } else {
-        throw new Error('Missing credentials');
+        await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, token);
       }
+      setAccessToken(token);
     } finally {
       setIsLoading(false);
     }
@@ -48,7 +53,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = useCallback(async () => {
     setIsLoading(true);
     try {
-      await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
+      if (Platform.OS === 'web') {
+        await AsyncStorage.removeItem(ACCESS_TOKEN_KEY);
+      } else {
+        await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
+      }
       setAccessToken(null);
     } finally {
       setIsLoading(false);
