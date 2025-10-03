@@ -1,8 +1,8 @@
+import { api } from '@/lib/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-import { api } from '@/lib/api';
 
 type AuthContextValue = {
   isLoading: boolean;
@@ -10,6 +10,8 @@ type AuthContextValue = {
   accessToken: string | null;
   signIn: (params: { username: string; password: string }) => Promise<void>;
   signOut: () => Promise<void>;
+  signUp: (params: { email: string; password: string }) => Promise<void>;
+  requestPasswordReset: (params: { email: string }) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -70,6 +72,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     accessToken,
     signIn,
     signOut,
+    signUp: async ({ email, password }) => {
+      const res = await api.post<{ accessToken: string }>('/auth/register', { email, password });
+      if (!res.ok) throw new Error(res.error);
+      const token = res.data.accessToken;
+      if (Platform.OS === 'web') {
+        await AsyncStorage.setItem(ACCESS_TOKEN_KEY, token);
+      } else {
+        await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, token);
+      }
+      setAccessToken(token);
+    },
+    requestPasswordReset: async ({ email }) => {
+      const res = await api.post<{ ok: true }>('/auth/forgot-password', { email });
+      if (!res.ok) throw new Error(res.error);
+    },
   }), [isLoading, accessToken, signIn, signOut]);
 
   return (

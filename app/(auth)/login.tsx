@@ -1,5 +1,5 @@
 import { useAuth } from '@/contexts/AuthContext';
-import { Redirect } from 'expo-router';
+import { Link, Redirect } from 'expo-router';
 import React, { useState } from 'react';
 import { ActivityIndicator, Button, Image, Platform, StyleSheet, TextInput, View } from 'react-native';
 
@@ -46,6 +46,11 @@ export default function LoginScreen() {
         }}
         disabled={!username || !password || submitting}
       />
+      <View style={{ height: 8 }} />
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Link href="/(auth)/register">Create account</Link>
+        <Link href="/(auth)/forgot">Forgot password?</Link>
+      </View>
     </View>
   );
 }
