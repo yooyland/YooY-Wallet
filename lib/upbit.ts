@@ -133,10 +133,15 @@ export async function getUpbitKRWMarkets(): Promise<UpbitTicker[]> {
     const tickersResponse = await fetch(`${UPBIT_API_BASE}/ticker?markets=${krwMarketCodes.join(',')}`);
     const tickers = await tickersResponse.json();
     
-    // 거래량 기준으로 정렬하여 상위 100개 선택
+    // 24시간 거래금액 기준으로 정렬하여 상위 100개 선택
     const sortedTickers = tickers
       .sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h)
       .slice(0, 100);
+    
+    console.log('KRW top 10 by trading volume:', sortedTickers.slice(0, 10).map(t => ({
+      market: t.market,
+      volume: t.acc_trade_price_24h
+    })));
 
     // YOY 코인 추가
     const yoyPriceKRW = getYOYPriceKRW(1300);
@@ -199,10 +204,15 @@ export async function getUpbitUSDTMarkets(): Promise<UpbitTicker[]> {
     const tickersResponse = await fetch(`${UPBIT_API_BASE}/ticker?markets=${usdtMarketCodes.join(',')}`);
     const tickers = await tickersResponse.json();
     
-    // 거래량 기준으로 정렬하여 상위 100개 선택
+    // 24시간 거래금액 기준으로 정렬하여 상위 100개 선택
     const sortedTickers = tickers
       .sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h)
       .slice(0, 100);
+    
+    console.log('USDT top 10 by trading volume:', sortedTickers.slice(0, 10).map(t => ({
+      market: t.market,
+      volume: t.acc_trade_price_24h
+    })));
 
     // YOY 코인 추가
     const yoyPriceUSD = YOY_INFO.priceFeed.usd;
@@ -265,10 +275,15 @@ export async function getUpbitBTCMarkets(): Promise<UpbitTicker[]> {
     const tickersResponse = await fetch(`${UPBIT_API_BASE}/ticker?markets=${btcMarketCodes.join(',')}`);
     const tickers = await tickersResponse.json();
     
-    // 거래량 기준으로 정렬하여 상위 100개 선택
+    // 24시간 거래금액 기준으로 정렬하여 상위 100개 선택
     const sortedTickers = tickers
       .sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h)
       .slice(0, 100);
+    
+    console.log('BTC top 10 by trading volume:', sortedTickers.slice(0, 10).map(t => ({
+      market: t.market,
+      volume: t.acc_trade_price_24h
+    })));
 
     // YOY 코인 추가 (BTC 가격으로 변환)
     const btcPrice = 45000000; // BTC 가격 (KRW)
@@ -317,12 +332,17 @@ export async function getBinanceETHMarkets(): Promise<any[]> {
     const response = await fetch('https://api.binance.com/api/v3/ticker/24hr');
     const tickers = await response.json();
     
-    // ETH 페어만 필터링하고 상위 100개 선택
+    // ETH 페어만 필터링하고 거래금액 기준 상위 100개 선택
     const ethMarkets = tickers
       .filter((ticker: any) => ticker.symbol.endsWith('ETH'))
       .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
       .slice(0, 100);
 
+    console.log('Binance ETH top 10 by trading volume:', ethMarkets.slice(0, 10).map(t => ({
+      symbol: t.symbol,
+      volume: t.quoteVolume
+    })));
+    
     console.log('Binance ETH markets found:', ethMarkets.length);
     return ethMarkets;
   } catch (error) {
