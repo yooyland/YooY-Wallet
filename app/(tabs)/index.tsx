@@ -33,6 +33,8 @@ export default function HomeScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [rates, setRates] = useState<any>(null);
+  const [selectedCurrency, setSelectedCurrency] = useState<'Crypto' | 'KRW' | 'USD' | 'JPY' | 'CNY' | 'EUR'>('Crypto');
+  const [dropdownOpen, setDropdownOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -47,6 +49,49 @@ export default function HomeScreen() {
       if (saved) setAvatarUri(saved);
     })();
   }, []);
+
+  // Calculate total assets in different currencies
+  const getTotalInCurrency = (currency: string) => {
+    if (currency === 'Crypto') {
+      // Convert all assets to ETH equivalent
+      const ethTotal = mockBalances.reduce((sum, balance) => {
+        // Simple conversion: assume 1 ETH = $2000, other cryptos have different rates
+        const ethRate = 2000;
+        return sum + (balance.valueUSD / ethRate);
+      }, 0);
+      return { amount: ethTotal, symbol: 'ETH' };
+    } else {
+      const total = mockBalances.reduce((sum, balance) => sum + balance.valueUSD, 0);
+      const converted = rates ? total * rates[currency] : total;
+      return { amount: converted, symbol: currency };
+    }
+  };
+
+  const getBackgroundImage = (currency: string) => {
+    switch (currency) {
+      case 'Crypto': return require('@/assets/images/card-crypto.png');
+      case 'KRW': return require('@/assets/images/card-krw.png');
+      case 'USD': return require('@/assets/images/card-usd.png');
+      case 'JPY': return require('@/assets/images/card-jpy.png');
+      case 'CNY': return require('@/assets/images/card-cny.png');
+      case 'EUR': return require('@/assets/images/card-eur.png');
+      default: return require('@/assets/images/card-crypto.png');
+    }
+  };
+
+  const formatNumber = (num: number) => {
+    if (num >= 1000) {
+      return new Intl.NumberFormat('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(num);
+    } else {
+      return new Intl.NumberFormat('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 4,
+      }).format(num);
+    }
+  };
 
   return (
     <ThemedView style={{ flex: 1 }}>
@@ -64,45 +109,74 @@ export default function HomeScreen() {
         </View>
 
         {/* Asset Card */}
-        <LinearGradient
-          colors={['#4A148C', '#7B1FA2', '#9C27B0']}
-          style={styles.assetCard}
-        >
-          <View style={styles.currencyTabs}>
-            <TouchableOpacity style={[styles.currencyTab, styles.activeTab]}>
-              <ThemedText style={styles.activeTabText}>Crypto</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.currencyTab}>
-              <ThemedText style={styles.tabText}>KRW</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.currencyTab}>
-              <ThemedText style={styles.tabText}>USD</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.currencyTab}>
-              <ThemedText style={styles.tabText}>JPY</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.currencyTab}>
-              <ThemedText style={styles.tabText}>CNY</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.currencyTab}>
-              <ThemedText style={styles.tabText}>EUR</ThemedText>
-            </TouchableOpacity>
-          </View>
-          
-          <View style={styles.mainBalance}>
-            <ThemedText style={styles.balanceAmount}>1,193.0540 ETH</ThemedText>
-            <ThemedText style={styles.assetCount}>18개 자산</ThemedText>
-          </View>
-          
-          <View style={styles.cardFooter}>
-            <View style={styles.logoContainer}>
-              <ThemedText style={styles.cardLogo}>YooY</ThemedText>
+        <View style={styles.assetCard}>
+          <Image source={getBackgroundImage(selectedCurrency)} style={styles.cardBackground} contentFit="cover" />
+          <View style={styles.cardContent}>
+            <View style={styles.currencyTabs}>
+              {(['Crypto', 'KRW', 'USD', 'JPY', 'CNY', 'EUR'] as const).map((currency) => (
+                <TouchableOpacity 
+                  key={currency}
+                  style={[styles.currencyTab, selectedCurrency === currency && styles.activeTab]}
+                  onPress={() => setSelectedCurrency(currency)}
+                >
+                  <ThemedText style={selectedCurrency === currency ? styles.activeTabText : styles.tabText}>
+                    {currency}
+                  </ThemedText>
+                </TouchableOpacity>
+              ))}
             </View>
-            <TouchableOpacity style={styles.dropdownButton}>
-              <ThemedText style={styles.dropdownIcon}>▼</ThemedText>
-            </TouchableOpacity>
+            
+            <View style={styles.mainBalance}>
+              <ThemedText style={styles.balanceAmount}>
+                {formatNumber(getTotalInCurrency(selectedCurrency).amount)} {getTotalInCurrency(selectedCurrency).symbol}
+              </ThemedText>
+              <ThemedText style={styles.assetCount}>{mockBalances.length}개 자산</ThemedText>
+            </View>
+            
+            <View style={styles.cardFooter}>
+              <View style={styles.logoContainer}>
+                <ThemedText style={styles.cardLogo}>YooY</ThemedText>
+              </View>
+              <TouchableOpacity 
+                style={styles.dropdownButton}
+                onPress={() => setDropdownOpen(!dropdownOpen)}
+              >
+                <ThemedText style={styles.dropdownIcon}>{dropdownOpen ? '▲' : '▼'}</ThemedText>
+              </TouchableOpacity>
+            </View>
           </View>
-        </LinearGradient>
+        </View>
+
+        {/* Dropdown Menu */}
+        {dropdownOpen && (
+          <View style={styles.dropdownMenu}>
+            {selectedCurrency === 'Crypto' ? (
+              <View style={styles.holdingsList}>
+                {mockBalances.map((balance, index) => (
+                  <View key={index} style={styles.holdingItem}>
+                    <View style={styles.holdingInfo}>
+                      <ThemedText style={styles.holdingSymbol}>{balance.symbol}</ThemedText>
+                      <ThemedText style={styles.holdingName}>{balance.name}</ThemedText>
+                    </View>
+                    <View style={styles.holdingAmount}>
+                      <ThemedText style={styles.holdingValue}>
+                        {formatNumber(balance.amount)} {balance.symbol}
+                      </ThemedText>
+                      <ThemedText style={styles.holdingUSD}>
+                        ${formatNumber(balance.valueUSD)}
+                      </ThemedText>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.transactionList}>
+                <ThemedText style={styles.transactionTitle}>거래 내역</ThemedText>
+                <ThemedText style={styles.transactionText}>최근 거래 내역이 여기에 표시됩니다.</ThemedText>
+              </View>
+            )}
+          </View>
+        )}
 
         {/* Quick Actions */}
         <View style={styles.quickActionsSection}>
@@ -247,22 +321,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   slogan: {
-    color: '#FFFFFF',
-    fontSize: 14,
+    color: '#FFD700',
+    fontSize: 16,
+    fontWeight: 'bold',
     textAlign: 'center',
-    opacity: 0.8,
   },
   assetCard: {
     margin: 20,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#FFD700',
-    padding: 20,
+    overflow: 'hidden',
     shadowColor: '#FFD700',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 8,
+  },
+  cardBackground: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  cardContent: {
+    padding: 20,
+    zIndex: 1,
   },
   currencyTabs: {
     flexDirection: 'row',
@@ -450,5 +535,66 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 11,
     opacity: 0.6,
+  },
+  dropdownMenu: {
+    marginHorizontal: 20,
+    marginBottom: 20,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FFD700',
+    padding: 16,
+  },
+  holdingsList: {
+    maxHeight: 200,
+  },
+  holdingItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#333',
+  },
+  holdingInfo: {
+    flex: 1,
+  },
+  holdingSymbol: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  holdingName: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    opacity: 0.7,
+  },
+  holdingAmount: {
+    alignItems: 'flex-end',
+  },
+  holdingValue: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  holdingUSD: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    opacity: 0.6,
+  },
+  transactionList: {
+    padding: 16,
+    alignItems: 'center',
+  },
+  transactionTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  transactionText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    opacity: 0.7,
   },
 });
