@@ -68,14 +68,19 @@ export default function HomeScreen() {
   };
 
   const getBackgroundImage = (currency: string) => {
-    switch (currency) {
-      case 'Crypto': return require('@/assets/images/card-crypto.png');
-      case 'KRW': return require('@/assets/images/card-krw.png');
-      case 'USD': return require('@/assets/images/card-usd.png');
-      case 'JPY': return require('@/assets/images/card-jpy.png');
-      case 'CNY': return require('@/assets/images/card-cny.png');
-      case 'EUR': return require('@/assets/images/card-eur.png');
-      default: return require('@/assets/images/card-crypto.png');
+    try {
+      switch (currency) {
+        case 'Crypto': return require('@/assets/images/card-crypto.png');
+        case 'KRW': return require('@/assets/images/card-krw.png');
+        case 'USD': return require('@/assets/images/card-usd.png');
+        case 'JPY': return require('@/assets/images/card-jpy.png');
+        case 'CNY': return require('@/assets/images/card-cny.png');
+        case 'EUR': return require('@/assets/images/card-eur.png');
+        default: return require('@/assets/images/card-crypto.png');
+      }
+    } catch (error) {
+      // Fallback to gradient background if images don't exist
+      return null;
     }
   };
 
@@ -110,7 +115,19 @@ export default function HomeScreen() {
 
         {/* Asset Card */}
         <View style={styles.assetCard}>
-          <Image source={getBackgroundImage(selectedCurrency)} style={styles.cardBackground} contentFit="cover" />
+          {getBackgroundImage(selectedCurrency) ? (
+            <Image 
+              source={getBackgroundImage(selectedCurrency)} 
+              style={styles.cardBackground} 
+              contentFit="cover"
+              transition={200}
+            />
+          ) : (
+            <LinearGradient
+              colors={['#4A148C', '#7B1FA2', '#9C27B0']}
+              style={styles.cardBackground}
+            />
+          )}
           <View style={styles.cardContent}>
             <View style={styles.currencyTabs}>
               {(['Crypto', 'KRW', 'USD', 'JPY', 'CNY', 'EUR'] as const).map((currency) => (
