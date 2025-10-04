@@ -159,6 +159,7 @@ export default function DashboardScreen() {
       <TopBar 
         title={currentUser?.email?.split('@')[0] || 'admin'} 
         onProfilePress={() => setProfileOpen(true)}
+        onMenuPress={() => setMenuOpen(true)}
         avatarUri={avatarUri}
       />
       
