@@ -439,7 +439,7 @@ const styles = StyleSheet.create({
     paddingRight: 20,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: Colors.dark.icon,
-    marginLeft: 20,
+    marginLeft: 40,
     marginRight: 0,
   },
   menuIcon: {
