@@ -434,10 +434,11 @@ const styles = StyleSheet.create({
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 40,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: Colors.dark.icon,
+    marginHorizontal: 20,
   },
   menuIcon: {
     fontSize: 20,
