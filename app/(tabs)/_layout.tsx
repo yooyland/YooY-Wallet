@@ -30,6 +30,7 @@ export default function TabLayout() {
         tabBarItemStyle: {
           justifyContent: 'flex-end',
           alignItems: 'center',
+          paddingBottom: 4,
         },
       }}>
       <Tabs.Screen
