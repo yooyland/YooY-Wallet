@@ -51,10 +51,10 @@ export default function TabLayout() {
               name="house.fill" 
               color={color}
               style={{
-                borderWidth: focused ? 2 : 0,
+                borderWidth: focused ? 1 : 0,
                 borderColor: '#FFD700',
-                borderRadius: 8,
-                padding: 4,
+                borderRadius: 4,
+                padding: 2,
               }}
             />
           ),
@@ -70,10 +70,10 @@ export default function TabLayout() {
               name="chart.bar.fill" 
               color={color}
               style={{
-                borderWidth: focused ? 2 : 0,
+                borderWidth: focused ? 1 : 0,
                 borderColor: '#FFD700',
-                borderRadius: 8,
-                padding: 4,
+                borderRadius: 4,
+                padding: 2,
               }}
             />
           ),
@@ -89,10 +89,10 @@ export default function TabLayout() {
               name="wallet.pass.fill" 
               color={color}
               style={{
-                borderWidth: focused ? 2 : 0,
+                borderWidth: focused ? 1 : 0,
                 borderColor: '#FFD700',
-                borderRadius: 8,
-                padding: 4,
+                borderRadius: 4,
+                padding: 2,
               }}
             />
           ),
@@ -108,10 +108,10 @@ export default function TabLayout() {
               name="creditcard.fill" 
               color={color}
               style={{
-                borderWidth: focused ? 2 : 0,
+                borderWidth: focused ? 1 : 0,
                 borderColor: '#FFD700',
-                borderRadius: 8,
-                padding: 4,
+                borderRadius: 4,
+                padding: 2,
               }}
             />
           ),
@@ -127,10 +127,10 @@ export default function TabLayout() {
               name="bubble.left.and.bubble.right.fill" 
               color={color}
               style={{
-                borderWidth: focused ? 2 : 0,
+                borderWidth: focused ? 1 : 0,
                 borderColor: '#FFD700',
-                borderRadius: 8,
-                padding: 4,
+                borderRadius: 4,
+                padding: 2,
               }}
             />
           ),
@@ -146,10 +146,10 @@ export default function TabLayout() {
               name="checklist" 
               color={color}
               style={{
-                borderWidth: focused ? 2 : 0,
+                borderWidth: focused ? 1 : 0,
                 borderColor: '#FFD700',
-                borderRadius: 8,
-                padding: 4,
+                borderRadius: 4,
+                padding: 2,
               }}
             />
           ),
@@ -165,10 +165,10 @@ export default function TabLayout() {
               name="ellipsis" 
               color={color}
               style={{
-                borderWidth: focused ? 2 : 0,
+                borderWidth: focused ? 1 : 0,
                 borderColor: '#FFD700',
-                borderRadius: 8,
-                padding: 4,
+                borderRadius: 4,
+                padding: 2,
               }}
             />
           ),
