@@ -311,15 +311,19 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
               <View key={sectionIndex} style={styles.section}>
                 <ThemedText style={styles.sectionTitle}>{section.title}</ThemedText>
                 {section.items.map((item, itemIndex) => (
-                  <TouchableOpacity
-                    key={itemIndex}
-                    style={styles.menuItem}
-                    onPress={item.onPress}
-                  >
-                    <ThemedText style={styles.menuIcon}>{item.icon}</ThemedText>
-                    <ThemedText style={styles.menuText}>{item.title}</ThemedText>
-                    <ThemedText style={styles.arrow}>›</ThemedText>
-                  </TouchableOpacity>
+                  <View key={itemIndex}>
+                    <TouchableOpacity
+                      style={styles.menuItem}
+                      onPress={item.onPress}
+                    >
+                      <ThemedText style={styles.menuIcon}>{item.icon}</ThemedText>
+                      <ThemedText style={styles.menuText}>{item.title}</ThemedText>
+                      <ThemedText style={styles.arrow}>›</ThemedText>
+                    </TouchableOpacity>
+                    {itemIndex < section.items.length - 1 && (
+                      <View style={styles.separator} />
+                    )}
+                  </View>
                 ))}
               </View>
             ))}
@@ -437,8 +441,6 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingLeft: 40,
     paddingRight: 20,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: Colors.dark.icon,
     marginLeft: 0,
     marginRight: 0,
   },
@@ -454,6 +456,12 @@ const styles = StyleSheet.create({
   arrow: {
     fontSize: 18,
     color: Colors.dark.icon,
+  },
+  separator: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: Colors.dark.icon,
+    marginLeft: 40,
+    marginRight: 20,
   },
   signOutSection: {
     marginTop: 30,
