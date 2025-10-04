@@ -28,49 +28,49 @@ export default function TabLayout() {
       <Tabs.Screen
         name="dashboard"
         options={{
-          title: 'Home',
+          title: '',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="exchange"
         options={{
-          title: 'Exchange',
+          title: '',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="chart.bar.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="wallet"
         options={{
-          title: 'Wallet',
+          title: '',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="wallet.pass.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="payments"
         options={{
-          title: 'Payments',
+          title: '',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="creditcard.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="chat"
         options={{
-          title: 'Chat',
+          title: '',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="bubble.left.and.bubble.right.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="todo"
         options={{
-          title: 'To-Do',
+          title: '',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="checklist" color={color} />,
         }}
       />
       <Tabs.Screen
         name="more"
         options={{
-          title: 'More',
+          title: '',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="ellipsis" color={color} />,
         }}
       />
