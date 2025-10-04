@@ -97,8 +97,16 @@ export default function HomeScreen() {
     }
   };
 
-  const formatNumber = (num: number) => {
-    if (num >= 1000) {
+  const formatNumber = (num: number, currency: string) => {
+    // Currencies that don't use decimal places
+    const noDecimalCurrencies = ['KRW', 'JPY'];
+    
+    if (noDecimalCurrencies.includes(currency)) {
+      return new Intl.NumberFormat('en-US', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      }).format(num);
+    } else if (num >= 1000) {
       return new Intl.NumberFormat('en-US', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
@@ -157,7 +165,7 @@ export default function HomeScreen() {
             
             <View style={styles.mainBalance}>
               <ThemedText style={styles.balanceAmount}>
-                {formatNumber(getTotalInCurrency(selectedCurrency).amount)} {getTotalInCurrency(selectedCurrency).symbol}
+                {formatNumber(getTotalInCurrency(selectedCurrency).amount, selectedCurrency)} {getTotalInCurrency(selectedCurrency).symbol}
               </ThemedText>
               <ThemedText style={styles.assetCount}>
                 {selectedCurrency === 'Crypto' 
@@ -419,7 +427,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   balanceAmount: {
-    color: '#90EE90',
+    color: '#FFD700',
     fontSize: 28,
     fontWeight: 'bold',
     marginBottom: 4,
