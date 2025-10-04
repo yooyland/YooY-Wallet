@@ -24,46 +24,40 @@ export default function MoreScreen() {
 
   const moreMenuItems = [
     {
-      title: 'Dashboard',
-      icon: 'house.fill',
-      href: '/(tabs)/dashboard',
-      description: 'View your portfolio and assets'
-    },
-    {
       title: 'Explore',
       icon: 'paperplane.fill',
       href: '/explore',
-      description: 'Discover new features and content'
+      description: 'Discover new features'
     },
     {
       title: 'Shop / NFT',
       icon: 'bag.fill',
       href: '/shop',
-      description: 'NFT marketplace and shopping'
+      description: 'NFT marketplace'
     },
     {
       title: 'Profile',
       icon: 'person.circle.fill',
       href: '/profile',
-      description: 'Manage your profile settings'
+      description: 'Profile settings'
     },
     {
       title: 'Settings',
       icon: 'gearshape.fill',
       href: '/settings',
-      description: 'App preferences and configuration'
+      description: 'App preferences'
     },
     {
-      title: 'Help & Support',
+      title: 'Help',
       icon: 'questionmark.circle.fill',
       href: '/help',
-      description: 'Get help and contact support'
+      description: 'Support center'
     },
     {
       title: 'About',
       icon: 'info.circle.fill',
       href: '/about',
-      description: 'App information and version'
+      description: 'App information'
     }
   ];
 
@@ -88,7 +82,7 @@ export default function MoreScreen() {
             <Link key={index} href={item.href} asChild>
               <TouchableOpacity style={styles.menuItem}>
                 <View style={styles.menuIcon}>
-                  <IconSymbol size={32} name={item.icon} color="#FFD700" />
+                  <IconSymbol size={24} name={item.icon} color="#FFD700" />
                 </View>
                 <View style={styles.menuContent}>
                   <ThemedText style={styles.menuTitle}>{item.title}</ThemedText>
@@ -148,32 +142,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#1A1A1A',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#333',
   },
   menuIcon: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#2A2A2A',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 16,
+    marginRight: 12,
   },
   menuContent: {
     flex: 1,
   },
   menuTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   menuDescription: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#CCCCCC',
   },
   footer: {
