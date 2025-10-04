@@ -221,7 +221,7 @@ export default function ExchangeScreen() {
             keyExtractor={(m) => m.id}
             onScroll={handleScroll}
             scrollEventThrottle={16}
-            contentContainerStyle={{ paddingTop: 96, paddingBottom: 80 }}
+            contentContainerStyle={{ paddingTop: 80, paddingBottom: 80 }}
             style={{ flex: 1 }}
             showsVerticalScrollIndicator={true}
             renderItem={({ item }) => {
