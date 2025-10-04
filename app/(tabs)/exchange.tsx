@@ -37,6 +37,9 @@ export default function ExchangeScreen() {
   const [sortBy, setSortBy] = useState('volume');
   const [showNotice, setShowNotice] = useState(true);
   const [showSearchModal, setShowSearchModal] = useState(false);
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [nameLanguage, setNameLanguage] = useState<'en' | 'ko'>('ko');
 
   // 사용자 보유자산 데이터 (mock)
   const userAssets = {
@@ -60,19 +63,49 @@ export default function ExchangeScreen() {
     })();
   }, [currency]);
 
+  const toggleFavorite = (coinId: string) => {
+    setFavorites(prev => 
+      prev.includes(coinId) 
+        ? prev.filter(id => id !== coinId)
+        : [...prev, coinId]
+    );
+  };
+
+  const handleSort = (column: string) => {
+    if (column === 'name') {
+      setNameLanguage(prev => prev === 'en' ? 'ko' : 'en');
+    } else {
+      setSortBy(column);
+      setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+    }
+  };
+
   const filteredMarkets = mockMarkets
+    .filter(market => {
+      if (selectedMarket === 'FAV') {
+        return favorites.includes(market.id);
+      }
+      if (selectedMarket === 'MY') {
+        // 사용자 보유 자산이 있는 코인만 표시 (mock)
+        return ['bitcoin', 'ethereum', 'solana'].includes(market.id);
+      }
+      return market.quote === selectedMarket;
+    })
     .filter(market => 
       market.base.toLowerCase().includes(searchText.toLowerCase()) ||
       market.name.toLowerCase().includes(searchText.toLowerCase())
     )
     .sort((a, b) => {
+      const multiplier = sortOrder === 'asc' ? 1 : -1;
       switch (sortBy) {
         case 'volume':
-          return b.volume24h - a.volume24h;
+          return (b.volume24h - a.volume24h) * multiplier;
         case 'change':
-          return b.change24hPct - a.change24hPct;
+          return (b.change24hPct - a.change24hPct) * multiplier;
+        case 'price':
+          return (b.price - a.price) * multiplier;
         case 'name':
-          return a.base.localeCompare(b.base);
+          return a.base.localeCompare(b.base) * multiplier;
         default:
           return 0;
       }
@@ -133,20 +166,40 @@ export default function ExchangeScreen() {
 
           {/* 마켓 리스트 헤더 */}
           <View style={styles.listHeader}>
-            <TouchableOpacity style={styles.headerColumn}>
-              <ThemedText style={styles.headerText}>한글명</ThemedText>
+            <TouchableOpacity 
+              style={styles.headerColumn}
+              onPress={() => handleSort('name')}
+            >
+              <ThemedText style={[styles.headerText, nameLanguage === 'ko' && styles.activeHeaderText]}>
+                {selectedMarket === 'MY' ? 'Coin/Market' : 'Coin/Market'}
+              </ThemedText>
               <ThemedText style={styles.sortIcon}>↕</ThemedText>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.headerColumn}>
-              <ThemedText style={styles.headerText}>현재가</ThemedText>
+            <TouchableOpacity 
+              style={styles.headerColumn}
+              onPress={() => handleSort('price')}
+            >
+              <ThemedText style={[styles.headerText, sortBy === 'price' && styles.activeHeaderText]}>
+                {selectedMarket === 'MY' ? '현재가/n매수가' : '현재가'}
+              </ThemedText>
               <ThemedText style={styles.sortIcon}>↕</ThemedText>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.headerColumn}>
-              <ThemedText style={styles.headerText}>전일대비</ThemedText>
+            <TouchableOpacity 
+              style={styles.headerColumn}
+              onPress={() => handleSort('change')}
+            >
+              <ThemedText style={[styles.headerText, sortBy === 'change' && styles.activeHeaderText]}>
+                {selectedMarket === 'MY' ? '수익률/n수익금' : '전일대비'}
+              </ThemedText>
               <ThemedText style={styles.sortIcon}>↕</ThemedText>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.headerColumn}>
-              <ThemedText style={styles.headerText}>거래대금</ThemedText>
+            <TouchableOpacity 
+              style={styles.headerColumn}
+              onPress={() => handleSort('volume')}
+            >
+              <ThemedText style={[styles.headerText, sortBy === 'volume' && styles.activeHeaderText]}>
+                {selectedMarket === 'MY' ? '총보유금액' : '거래금액'}
+              </ThemedText>
               <ThemedText style={styles.sortIcon}>↕</ThemedText>
             </TouchableOpacity>
           </View>
@@ -160,34 +213,63 @@ export default function ExchangeScreen() {
             showsVerticalScrollIndicator={true}
             renderItem={({ item }) => {
               const isUp = item.change24hPct >= 0;
+              const isFavorite = favorites.includes(item.id);
+              const isMyTab = selectedMarket === 'MY';
+              const displayPrice = selectedMarket === 'KRW' ? 
+                `₩${item.price.toLocaleString()}` : 
+                `$${(item.price / 1300).toFixed(2)}`;
+              
               return (
                 <Link href={{ pathname: '/market/[id]', params: { id: item.id } }} asChild>
                   <Pressable style={styles.marketRow}>
                     <View style={styles.coinInfo}>
+                      <TouchableOpacity 
+                        style={styles.favoriteButton}
+                        onPress={() => toggleFavorite(item.id)}
+                      >
+                        <ThemedText style={[styles.favoriteIcon, isFavorite && styles.favoriteActive]}>
+                          {isFavorite ? '★' : '☆'}
+                        </ThemedText>
+                      </TouchableOpacity>
                       <View style={styles.coinIcon}>
                         <ThemedText style={styles.coinSymbol}>{item.base.charAt(0)}</ThemedText>
                       </View>
                       <View style={styles.coinDetails}>
-                        <ThemedText style={styles.coinName}>{item.name}</ThemedText>
+                        <ThemedText style={styles.coinName}>
+                          {nameLanguage === 'ko' ? item.name : item.base}
+                        </ThemedText>
                         <ThemedText style={styles.coinPair}>{item.base}/{item.quote}</ThemedText>
                       </View>
                     </View>
                     
                     <View style={styles.priceInfo}>
                       <ThemedText style={styles.price}>
-                        ₩{item.price.toLocaleString()}
+                        {displayPrice}
                       </ThemedText>
+                      {isMyTab && (
+                        <ThemedText style={styles.buyPrice}>
+                          매수가: {displayPrice}
+                        </ThemedText>
+                      )}
                     </View>
                     
                     <View style={styles.changeInfo}>
                       <ThemedText style={[styles.change, { color: isUp ? '#FF4444' : '#00C851' }]}>
                         {isUp ? '+' : ''}{item.change24hPct.toFixed(2)}%
                       </ThemedText>
+                      {isMyTab && (
+                        <ThemedText style={[styles.profit, { color: isUp ? '#FF4444' : '#00C851' }]}>
+                          {isUp ? '+' : ''}₩{(item.price * 0.1).toFixed(0)}
+                        </ThemedText>
+                      )}
                     </View>
                     
                     <View style={styles.volumeInfo}>
                       <ThemedText style={styles.volume}>
-                        ₩{(item.volume24h / 100000000).toFixed(0)}백만
+                        {isMyTab ? 
+                          `₩${(item.price * 1.5).toLocaleString()}` : 
+                          `₩${(item.volume24h / 100000000).toFixed(0)}백만`
+                        }
                       </ThemedText>
                     </View>
                   </Pressable>
@@ -342,13 +424,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
+    backgroundColor: '#1A237E',
   },
   activeMarketTab: {
     borderBottomColor: '#FFD700',
+    backgroundColor: '#3F51B5',
   },
   marketTabText: {
     fontSize: 14,
-    color: '#CCCCCC',
+    color: '#FFFFFF',
     fontWeight: '500',
   },
   activeMarketTabText: {
@@ -397,6 +481,17 @@ const styles = StyleSheet.create({
     flex: 2,
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  favoriteButton: {
+    marginRight: 8,
+    padding: 4,
+  },
+  favoriteIcon: {
+    color: '#666',
+    fontSize: 16,
+  },
+  favoriteActive: {
+    color: '#FFD700',
   },
   coinIcon: {
     width: 20,
@@ -449,6 +544,19 @@ const styles = StyleSheet.create({
   volume: {
     fontSize: 11,
     color: '#CCCCCC',
+  },
+  buyPrice: {
+    fontSize: 10,
+    color: '#999',
+    marginTop: 2,
+  },
+  profit: {
+    fontSize: 10,
+    marginTop: 2,
+  },
+  activeHeaderText: {
+    color: '#FFD700',
+    fontWeight: 'bold',
   },
   separator: {
     height: 0,
