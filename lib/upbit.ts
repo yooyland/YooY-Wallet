@@ -122,10 +122,10 @@ export async function getUpbitKRWMarkets(): Promise<UpbitTicker[]> {
     const response = await fetch(`${UPBIT_API_BASE}/market/all?isDetails=false`);
     const allMarkets = await response.json();
     
-    // KRW 페어만 필터링하고 상위 50개 선택
+    // KRW 페어만 필터링하고 상위 100개 선택
     const krwMarkets = allMarkets
       .filter((market: any) => market.market.startsWith('KRW-'))
-      .slice(0, 50);
+      .slice(0, 100);
     
     const krwMarketCodes = krwMarkets.map((m: any) => m.market);
     console.log('KRW markets to fetch:', krwMarketCodes.length);
@@ -165,7 +165,7 @@ export async function getUpbitKRWMarkets(): Promise<UpbitTicker[]> {
       timestamp: Date.now()
     };
 
-    return [...tickers, yoyMock].sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h).slice(0, 50);
+    return [...tickers, yoyMock].sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h).slice(0, 100);
   } catch (error) {
     console.error('Failed to fetch Upbit KRW markets:', error);
     return [];
@@ -179,10 +179,10 @@ export async function getUpbitUSDTMarkets(): Promise<UpbitTicker[]> {
     const response = await fetch(`${UPBIT_API_BASE}/market/all?isDetails=false`);
     const allMarkets = await response.json();
     
-    // USDT 페어만 필터링하고 상위 50개 선택
+    // USDT 페어만 필터링하고 상위 100개 선택
     const usdtMarkets = allMarkets
       .filter((market: any) => market.market.startsWith('USDT-'))
-      .slice(0, 50);
+      .slice(0, 100);
     
     const usdtMarketCodes = usdtMarkets.map((m: any) => m.market);
     console.log('USDT markets to fetch:', usdtMarketCodes.length);
@@ -227,7 +227,7 @@ export async function getUpbitUSDTMarkets(): Promise<UpbitTicker[]> {
       timestamp: Date.now()
     };
 
-    return [...tickers, yoyUSDT].sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h).slice(0, 50);
+    return [...tickers, yoyUSDT].sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h).slice(0, 100);
   } catch (error) {
     console.error('Failed to fetch Upbit USDT markets:', error);
     return [];
@@ -241,10 +241,10 @@ export async function getUpbitBTCMarkets(): Promise<UpbitTicker[]> {
     const response = await fetch(`${UPBIT_API_BASE}/market/all?isDetails=false`);
     const allMarkets = await response.json();
     
-    // BTC 페어만 필터링하고 상위 50개 선택
+    // BTC 페어만 필터링하고 상위 100개 선택
     const btcMarkets = allMarkets
       .filter((market: any) => market.market.startsWith('BTC-'))
-      .slice(0, 50);
+      .slice(0, 100);
     
     const btcMarketCodes = btcMarkets.map((m: any) => m.market);
     console.log('BTC markets to fetch:', btcMarketCodes.length);
@@ -291,7 +291,7 @@ export async function getUpbitBTCMarkets(): Promise<UpbitTicker[]> {
       timestamp: Date.now()
     };
 
-    return [...tickers, yoyBTC].sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h).slice(0, 50);
+    return [...tickers, yoyBTC].sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h).slice(0, 100);
   } catch (error) {
     console.error('Failed to fetch Upbit BTC markets:', error);
     return [];
@@ -305,11 +305,11 @@ export async function getBinanceETHMarkets(): Promise<any[]> {
     const response = await fetch('https://api.binance.com/api/v3/ticker/24hr');
     const tickers = await response.json();
     
-    // ETH 페어만 필터링하고 상위 50개 선택
+    // ETH 페어만 필터링하고 상위 100개 선택
     const ethMarkets = tickers
       .filter((ticker: any) => ticker.symbol.endsWith('ETH'))
       .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-      .slice(0, 50);
+      .slice(0, 100);
 
     console.log('Binance ETH markets found:', ethMarkets.length);
     return ethMarkets;
