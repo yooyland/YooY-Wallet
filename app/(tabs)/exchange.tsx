@@ -287,10 +287,10 @@ export default function ExchangeScreen() {
             >
               <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'price' && styles.activeHeaderText]}>
                 {selectedMarket === 'MY' ? (
-                  <>
+                  <View style={styles.headerTwoLine}>
                     <ThemedText style={styles.headerText}>현재가</ThemedText>
                     <ThemedText style={[styles.headerTextSmall, styles.headerTextRight]}>매수가</ThemedText>
-                  </>
+                  </View>
                 ) : '현재가'}
               </ThemedText>
             </TouchableOpacity>
@@ -300,10 +300,10 @@ export default function ExchangeScreen() {
             >
               <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'change' && styles.activeHeaderText]}>
                 {selectedMarket === 'MY' ? (
-                  <>
+                  <View style={styles.headerTwoLine}>
                     <ThemedText style={styles.headerText}>수익률</ThemedText>
                     <ThemedText style={[styles.headerTextSmall, styles.headerTextRight]}>수익금</ThemedText>
-                  </>
+                  </View>
                 ) : '전일대비'}
               </ThemedText>
             </TouchableOpacity>
@@ -600,6 +600,9 @@ const styles = StyleSheet.create({
     color: '#999',
     fontWeight: '400',
     lineHeight: 12,
+  },
+  headerTwoLine: {
+    alignItems: 'flex-end',
   },
   sortIcon: {
     fontSize: 10,
