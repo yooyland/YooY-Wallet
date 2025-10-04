@@ -13,7 +13,7 @@ import {
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { mockMarkets } from '@/data/markets';
+import { getAllUpbitMarkets } from '@/lib/upbit';
 import { formatCurrency, getExchangeRates } from '@/lib/currency';
 
 const { width } = Dimensions.get('window');
@@ -29,10 +29,54 @@ export default function MarketDetailScreen() {
   const [totalAmount, setTotalAmount] = useState('0');
   const [availableBalance, setAvailableBalance] = useState('0');
   const [rates, setRates] = useState<any>(null);
+  const [coin, setCoin] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
   // 코인 정보 찾기
-  const coin = mockMarkets.find(m => m.id === id);
+  useEffect(() => {
+    const findCoin = async () => {
+      try {
+        const markets = await getAllUpbitMarkets();
+        const allTickers = [...markets.KRW, ...markets.USDT, ...markets.BTC, ...markets.ETH];
+        
+        // ID로 직접 찾기
+        let foundCoin = allTickers.find(ticker => ticker.market === id || ticker.symbol === id);
+        
+        if (foundCoin) {
+          // Market 형식으로 변환
+          const base = foundCoin.market ? foundCoin.market.split('-')[1] : foundCoin.symbol.replace('ETH', '');
+          const quote = foundCoin.market ? foundCoin.market.split('-')[0] : 'ETH';
+          
+          setCoin({
+            id: foundCoin.market || foundCoin.symbol,
+            base,
+            quote,
+            symbol: foundCoin.market ? `${base}/${quote}` : foundCoin.symbol,
+            name: base,
+            price: foundCoin.trade_price || parseFloat(foundCoin.lastPrice),
+            change: foundCoin.signed_change_rate ? foundCoin.signed_change_rate * 100 : parseFloat(foundCoin.priceChangePercent),
+            change24hPct: foundCoin.signed_change_rate ? foundCoin.signed_change_rate * 100 : parseFloat(foundCoin.priceChangePercent),
+            volume24h: foundCoin.acc_trade_price_24h || parseFloat(foundCoin.quoteVolume)
+          });
+        }
+      } catch (error) {
+        console.error('Failed to find coin:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    findCoin();
+  }, [id]);
   
+  if (loading) {
+    return (
+      <ThemedView style={styles.container}>
+        <ThemedText>로딩 중...</ThemedText>
+      </ThemedView>
+    );
+  }
+
   if (!coin) {
     return (
       <ThemedView style={styles.container}>
