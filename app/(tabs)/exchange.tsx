@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { mockMarkets } from '@/data/markets';
 import { formatCurrency, getExchangeRates, formatPercentage } from '@/lib/currency';
+import { getUpbitPrices, UpbitPrice } from '@/lib/upbit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link } from 'expo-router';
 import { 
@@ -40,6 +41,7 @@ export default function ExchangeScreen() {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [nameLanguage, setNameLanguage] = useState<'en' | 'ko'>('ko');
+  const [upbitPrices, setUpbitPrices] = useState<Record<string, UpbitPrice>>({});
 
   // 사용자 보유자산 데이터 (mock)
   const userAssets = {
@@ -62,6 +64,29 @@ export default function ExchangeScreen() {
       setRates(exchangeRates);
     })();
   }, [currency]);
+
+  // 업비트 가격 가져오기
+  useEffect(() => {
+    const fetchUpbitPrices = async () => {
+      try {
+        const symbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'AVAX', 'DOT', 'LINK', 'LTC', 'ATOM', 'NEAR', 'FTM', 'ALGO', 'VET', 'ICP', 'FLOW', 'MANA', 'SAND', 'AXS', 'CHZ', 'ENJ', 'BAT', 'ZRX', 'COMP', 'MKR', 'SNX', 'YFI', 'UMA', 'LRC', 'REN', 'KNC', 'BAL', 'CRV', '1INCH', 'SUSHI', 'UNI', 'AAVE', 'GRT', 'LUNA', 'MIR', 'ANC', 'UST', 'KAVA', 'BAND', 'WBTC', 'USDT', 'USDC', 'DAI', 'YOY'];
+        const prices = await getUpbitPrices(symbols);
+        const priceMap: Record<string, UpbitPrice> = {};
+        prices.forEach(price => {
+          priceMap[price.symbol] = price;
+        });
+        setUpbitPrices(priceMap);
+        console.log('Upbit prices loaded:', priceMap);
+      } catch (error) {
+        console.error('Failed to fetch Upbit prices:', error);
+      }
+    };
+
+    fetchUpbitPrices();
+    // 30초마다 가격 업데이트
+    const interval = setInterval(fetchUpbitPrices, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   const toggleFavorite = (coinId: string) => {
     setFavorites(prev => 
@@ -224,18 +249,23 @@ export default function ExchangeScreen() {
             style={{ flex: 1 }}
             showsVerticalScrollIndicator={true}
             renderItem={({ item }) => {
-              const isUp = item.change24hPct >= 0;
+              // 실제 업비트 가격 사용
+              const upbitPrice = upbitPrices[item.base];
+              const currentPrice = upbitPrice?.price || item.price;
+              const currentChange = upbitPrice?.change24h || item.change24hPct;
+              const isUp = currentChange >= 0;
               const isFavorite = favorites.includes(item.id);
               const isMyTab = selectedMarket === 'MY';
+              
               const displayPrice = selectedMarket === 'KRW' ? 
-                `₩${item.price.toLocaleString()}` : 
+                `₩${currentPrice.toLocaleString()}` : 
                 selectedMarket === 'USDT' ? 
-                  `$${item.price.toLocaleString()}` :
+                  `$${(currentPrice / 1300).toFixed(2)}` :
                   selectedMarket === 'ETH' ?
-                    `${(item.price / 3200000).toFixed(4)} ETH` :
+                    `${(currentPrice / (upbitPrices['ETH']?.price || 3200000)).toFixed(4)} ETH` :
                     selectedMarket === 'BTC' ?
-                      `${(item.price / 45000000).toFixed(6)} BTC` :
-                      `$${item.price.toLocaleString()}`;
+                      `${(currentPrice / (upbitPrices['BTC']?.price || 45000000)).toFixed(6)} BTC` :
+                      `$${(currentPrice / 1300).toFixed(2)}`;
               
               return (
                 <View style={styles.marketRow}>
@@ -276,11 +306,11 @@ export default function ExchangeScreen() {
                   
                   <View style={styles.changeInfo}>
                     <ThemedText style={[styles.change, { color: isUp ? '#FF4444' : '#00C851' }]}>
-                      {isUp ? '+' : ''}{item.change24hPct.toFixed(2)}%
+                      {isUp ? '+' : ''}{currentChange.toFixed(2)}%
                     </ThemedText>
                     {isMyTab && (
                       <ThemedText style={[styles.profit, { color: isUp ? '#FF4444' : '#00C851' }]}>
-                        {isUp ? '+' : ''}₩{(item.price * 0.1).toFixed(0)}
+                        {isUp ? '+' : ''}₩{(currentPrice * 0.1).toFixed(0)}
                       </ThemedText>
                     )}
                   </View>
@@ -288,7 +318,7 @@ export default function ExchangeScreen() {
                   <View style={styles.volumeInfo}>
                     <ThemedText style={styles.volume}>
                       {isMyTab ? 
-                        `₩${(item.price * 1.5).toLocaleString()}` : 
+                        `₩${(currentPrice * 1.5).toLocaleString()}` : 
                         `₩${(item.volume24h / 100000000).toFixed(0)}백만`
                       }
                     </ThemedText>

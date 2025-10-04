@@ -64,6 +64,20 @@ export const mockMarkets: Market[] = [
   { id: 'USDC-KRW', base: 'USDC', quote: 'KRW', symbol: 'USDC/KRW', name: 'USD Coin', price: 1200, change: 0.0, change24hPct: 0.0, volume24h: 800000000000 },
   { id: 'DAI-KRW', base: 'DAI', quote: 'KRW', symbol: 'DAI/KRW', name: 'Dai', price: 1200, change: 0.1, change24hPct: 0.1, volume24h: 100000000000 },
   { id: 'YOY-KRW', base: 'YOY', quote: 'KRW', symbol: 'YOY/KRW', name: 'YooY Land', price: 150, change: 3.45, change24hPct: 3.45, volume24h: 1250000 },
+  
+  // USDT pairs
+  { id: 'BTC-USDT', base: 'BTC', quote: 'USDT', symbol: 'BTC/USDT', name: 'Bitcoin', price: 35000, change: 2.5, change24hPct: 2.5, volume24h: 1200000000000 },
+  { id: 'ETH-USDT', base: 'ETH', quote: 'USDT', symbol: 'ETH/USDT', name: 'Ethereum', price: 2500, change: -1.2, change24hPct: -1.2, volume24h: 800000000000 },
+  { id: 'SOL-USDT', base: 'SOL', quote: 'USDT', symbol: 'SOL/USDT', name: 'Solana', price: 140, change: 5.8, change24hPct: 5.8, volume24h: 200000000000 },
+  { id: 'BNB-USDT', base: 'BNB', quote: 'USDT', symbol: 'BNB/USDT', name: 'BNB', price: 350, change: 1.8, change24hPct: 1.8, volume24h: 150000000000 },
+  { id: 'XRP-USDT', base: 'XRP', quote: 'USDT', symbol: 'XRP/USDT', name: 'XRP', price: 0.65, change: -0.5, change24hPct: -0.5, volume24h: 100000000000 },
+  { id: 'ADA-USDT', base: 'ADA', quote: 'USDT', symbol: 'ADA/USDT', name: 'Cardano', price: 0.92, change: 3.2, change24hPct: 3.2, volume24h: 50000000000 },
+  { id: 'AVAX-USDT', base: 'AVAX', quote: 'USDT', symbol: 'AVAX/USDT', name: 'Avalanche', price: 35, change: 4.1, change24hPct: 4.1, volume24h: 40000000000 },
+  { id: 'DOT-USDT', base: 'DOT', quote: 'USDT', symbol: 'DOT/USDT', name: 'Polkadot', price: 6.5, change: -2.1, change24hPct: -2.1, volume24h: 30000000000 },
+  { id: 'LINK-USDT', base: 'LINK', quote: 'USDT', symbol: 'LINK/USDT', name: 'Chainlink', price: 14, change: 2.8, change24hPct: 2.8, volume24h: 25000000000 },
+  { id: 'LTC-USDT', base: 'LTC', quote: 'USDT', symbol: 'LTC/USDT', name: 'Litecoin', price: 92, change: 0.8, change24hPct: 0.8, volume24h: 15000000000 },
+  { id: 'ATOM-USDT', base: 'ATOM', quote: 'USDT', symbol: 'ATOM/USDT', name: 'Cosmos', price: 6.5, change: 3.5, change24hPct: 3.5, volume24h: 10000000000 },
+  { id: 'YOY-USDT', base: 'YOY', quote: 'USDT', symbol: 'YOY/USDT', name: 'YooY Land', price: 0.12, change: 3.45, change24hPct: 3.45, volume24h: 1250000 },
 ];
 
 
