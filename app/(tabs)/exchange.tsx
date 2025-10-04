@@ -78,7 +78,11 @@ export default function ExchangeScreen() {
         console.log('Fetching Upbit market data...');
         const markets = await getAllUpbitMarkets();
         setUpbitMarkets(markets);
-        console.log('Upbit markets loaded:', markets);
+        console.log('Upbit markets loaded:', {
+          KRW: markets.KRW.length,
+          USDT: markets.USDT.length,
+          BTC: markets.BTC.length
+        });
       } catch (error) {
         console.error('Failed to fetch Upbit markets:', error);
       }

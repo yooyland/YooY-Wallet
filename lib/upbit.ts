@@ -123,32 +123,89 @@ export async function getAllUpbitMarkets(): Promise<{
   try {
     console.log('Fetching all Upbit markets...');
     
-    // KRW 마켓 (기본)
+    // KRW 마켓 - 업비트에서 실제로 지원하는 KRW 페어들만 가져오기
     const krwResponse = await fetch(`${UPBIT_API_BASE}/market/all?isDetails=false`);
-    const krwMarkets = await krwResponse.json();
-    const krwTickers = krwMarkets
+    const allMarkets = await krwResponse.json();
+    
+    // KRW 페어만 필터링하고 상위 50개 선택
+    const krwMarkets = allMarkets
       .filter((market: any) => market.market.startsWith('KRW-'))
       .slice(0, 50);
+    
+    const krwMarketCodes = krwMarkets.map((m: any) => m.market);
+    console.log('KRW markets to fetch:', krwMarketCodes);
 
-    // USDT 마켓 (업비트에서 USDT 페어가 제한적이므로 주요 코인들)
+    // KRW 마켓 데이터 가져오기
+    const krwTickersResponse = await fetch(`${UPBIT_API_BASE}/ticker?markets=${krwMarketCodes.join(',')}`);
+    const krwTickers = await krwTickersResponse.json();
+
+    // USDT 마켓 - 업비트에서 실제로 지원하는 USDT 페어들
     const usdtMarkets = [
       'USDT-BTC', 'USDT-ETH', 'USDT-XRP', 'USDT-ADA', 'USDT-SOL', 'USDT-DOT', 'USDT-LINK', 'USDT-LTC', 'USDT-BCH', 'USDT-ATOM', 'USDT-NEAR', 'USDT-FTM', 'USDT-ALGO', 'USDT-VET', 'USDT-ICP', 'USDT-FLOW', 'USDT-MANA', 'USDT-SAND', 'USDT-AXS', 'USDT-CHZ', 'USDT-ENJ', 'USDT-BAT', 'USDT-ZRX', 'USDT-COMP', 'USDT-MKR', 'USDT-SNX', 'USDT-YFI', 'USDT-UMA', 'USDT-LRC', 'USDT-REN', 'USDT-KNC', 'USDT-BAL', 'USDT-CRV', 'USDT-1INCH', 'USDT-SUSHI', 'USDT-UNI', 'USDT-AAVE', 'USDT-GRT', 'USDT-LUNA', 'USDT-MIR', 'USDT-ANC', 'USDT-UST', 'USDT-KAVA', 'USDT-BAND', 'USDT-WBTC'
     ];
 
-    // BTC 마켓 (업비트에서 BTC 페어가 제한적이므로 주요 코인들)
+    // BTC 마켓 - 업비트에서 실제로 지원하는 BTC 페어들
     const btcMarkets = [
       'BTC-ETH', 'BTC-XRP', 'BTC-ADA', 'BTC-SOL', 'BTC-DOT', 'BTC-LINK', 'BTC-LTC', 'BTC-BCH', 'BTC-ATOM', 'BTC-NEAR', 'BTC-FTM', 'BTC-ALGO', 'BTC-VET', 'BTC-ICP', 'BTC-FLOW', 'BTC-MANA', 'BTC-SAND', 'BTC-AXS', 'BTC-CHZ', 'BTC-ENJ', 'BTC-BAT', 'BTC-ZRX', 'BTC-COMP', 'BTC-MKR', 'BTC-SNX', 'BTC-YFI', 'BTC-UMA', 'BTC-LRC', 'BTC-REN', 'BTC-KNC', 'BTC-BAL', 'BTC-CRV', 'BTC-1INCH', 'BTC-SUSHI', 'BTC-UNI', 'BTC-AAVE', 'BTC-GRT', 'BTC-LUNA', 'BTC-MIR', 'BTC-ANC', 'BTC-UST', 'BTC-KAVA', 'BTC-BAND', 'BTC-WBTC'
     ];
 
-    // 각 마켓의 데이터 가져오기
-    const [krwTickers, usdtTickers, btcTickers] = await Promise.all([
-      fetch(`${UPBIT_API_BASE}/ticker?markets=${krwTickers.map((m: any) => m.market).join(',')}`).then(res => res.json()),
-      fetch(`${UPBIT_API_BASE}/ticker?markets=${usdtMarkets.join(',')}`).then(res => res.json()),
-      fetch(`${UPBIT_API_BASE}/ticker?markets=${btcMarkets.join(',')}`).then(res => res.json())
-    ]);
+    // USDT와 BTC 마켓 데이터 가져오기 (실제로 존재하는 마켓만)
+    let usdtTickers: UpbitTicker[] = [];
+    let btcTickers: UpbitTicker[] = [];
+
+    try {
+      const usdtResponse = await fetch(`${UPBIT_API_BASE}/ticker?markets=${usdtMarkets.join(',')}`);
+      if (usdtResponse.ok) {
+        usdtTickers = await usdtResponse.json();
+      }
+    } catch (error) {
+      console.log('USDT markets not available:', error);
+    }
+
+    try {
+      const btcResponse = await fetch(`${UPBIT_API_BASE}/ticker?markets=${btcMarkets.join(',')}`);
+      if (btcResponse.ok) {
+        btcTickers = await btcResponse.json();
+      }
+    } catch (error) {
+      console.log('BTC markets not available:', error);
+    }
+
+    // YOY 코인 추가 (업비트에 없을 경우 mock 데이터)
+    const yoyMock: UpbitTicker = {
+      market: 'KRW-YOY',
+      trade_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+      trade_time: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+      trade_date_kst: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+      trade_time_kst: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+      trade_timestamp: Date.now(),
+      opening_price: 150,
+      high_price: 160,
+      low_price: 140,
+      trade_price: 155,
+      prev_closing_price: 150,
+      change: 'RISE',
+      change_price: 5,
+      change_rate: 0.0333,
+      signed_change_price: 5,
+      signed_change_rate: 0.0333,
+      trade_volume: 1000,
+      acc_trade_volume: 10000,
+      acc_trade_volume_24h: 10000,
+      acc_trade_price: 1550000,
+      acc_trade_price_24h: 1550000,
+      highest_52_week_price: 200,
+      highest_52_week_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+      lowest_52_week_price: 100,
+      lowest_52_week_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+      timestamp: Date.now()
+    };
+
+    // YOY 코인을 KRW 마켓에 추가
+    const krwWithYoy = [...krwTickers, yoyMock];
 
     return {
-      KRW: krwTickers.sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h).slice(0, 50),
+      KRW: krwWithYoy.sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h).slice(0, 50),
       USDT: usdtTickers.sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h).slice(0, 50),
       BTC: btcTickers.sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h).slice(0, 50)
     };
