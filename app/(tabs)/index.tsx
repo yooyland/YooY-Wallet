@@ -18,7 +18,8 @@ import {
   View, 
   ScrollView, 
   TouchableOpacity, 
-  Dimensions
+  Dimensions,
+  Image
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -119,8 +120,7 @@ export default function HomeScreen() {
             <Image 
               source={getBackgroundImage(selectedCurrency)} 
               style={styles.cardBackground} 
-              contentFit="cover"
-              transition={200}
+              resizeMode="cover"
             />
           ) : (
             <LinearGradient
