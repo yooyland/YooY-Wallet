@@ -17,7 +17,8 @@ import {
   ScrollView, 
   TouchableOpacity,
   TextInput,
-  Dimensions 
+  Dimensions,
+  Image
 } from 'react-native';
 import { useEffect, useState } from 'react';
 
@@ -29,9 +30,19 @@ export default function ExchangeScreen() {
   const [rates, setRates] = useState<any>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
-  const [selectedTab, setSelectedTab] = useState('KRW');
+  const [selectedTab, setSelectedTab] = useState('거래소');
+  const [selectedMarket, setSelectedMarket] = useState('KRW');
   const [searchText, setSearchText] = useState('');
-  const [sortBy, setSortBy] = useState('volume'); // volume, change, name
+  const [sortBy, setSortBy] = useState('volume');
+  const [showNotice, setShowNotice] = useState(true);
+
+  // 사용자 보유자산 데이터 (mock)
+  const userAssets = {
+    totalPurchase: 0,
+    unrealizedPnl: 0,
+    totalValue: 0,
+    returnRate: 0.00
+  };
 
   useEffect(() => {
     (async () => {
@@ -67,115 +78,176 @@ export default function ExchangeScreen() {
 
   return (
     <ThemedView style={{ flex: 1 }}>
-      <TopBar 
-        title="거래소" 
-        onMenuPress={() => setMenuOpen(true)}
-        avatarUri={avatarUri} 
-      />
-      
-      <View style={styles.container}>
-        {/* 검색 및 정렬 바 */}
-        <View style={styles.searchContainer}>
-          <View style={styles.searchRow}>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="코인명/심볼 검색"
-              placeholderTextColor="#666"
-              value={searchText}
-              onChangeText={setSearchText}
-            />
-            <TouchableOpacity style={styles.sortButton}>
-              <ThemedText style={styles.sortText}>정렬</ThemedText>
-            </TouchableOpacity>
+      {/* 커스텀 헤더 */}
+      <View style={styles.customHeader}>
+        <View style={styles.headerLeft}>
+          <View style={styles.logoContainer}>
+            <View style={styles.logoCircle}>
+              <ThemedText style={styles.logoText}>Y</ThemedText>
+            </View>
+            <ThemedText style={styles.headerTitle}>거래소</ThemedText>
           </View>
         </View>
-
-        {/* 탭 메뉴 */}
-        <View style={styles.tabContainer}>
-          {['KRW', 'BTC', 'USDT'].map((tab) => (
-            <TouchableOpacity
-              key={tab}
-              style={[styles.tab, selectedTab === tab && styles.activeTab]}
-              onPress={() => setSelectedTab(tab)}
-            >
-              <ThemedText style={[styles.tabText, selectedTab === tab && styles.activeTabText]}>
-                {tab}
-              </ThemedText>
-            </TouchableOpacity>
-          ))}
+        
+        <View style={styles.headerCenter}>
+          <ThemedText style={styles.mainLogo}>yooay</ThemedText>
         </View>
-
-        {/* 마켓 리스트 헤더 */}
-        <View style={styles.listHeader}>
-          <TouchableOpacity 
-            style={styles.headerColumn}
-            onPress={() => setSortBy('name')}
-          >
-            <ThemedText style={styles.headerText}>코인명</ThemedText>
+        
+        <View style={styles.headerRight}>
+          <TouchableOpacity style={styles.headerIcon}>
+            <ThemedText style={styles.iconText}>⚙️</ThemedText>
           </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.headerColumn}
-            onPress={() => setSortBy('volume')}
-          >
-            <ThemedText style={styles.headerText}>현재가</ThemedText>
+          <TouchableOpacity style={styles.headerIcon}>
+            <ThemedText style={styles.iconText}>🔔</ThemedText>
           </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.headerColumn}
-            onPress={() => setSortBy('change')}
-          >
-            <ThemedText style={styles.headerText}>24h 변동</ThemedText>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.headerColumn}
-            onPress={() => setSortBy('volume')}
-          >
-            <ThemedText style={styles.headerText}>거래량</ThemedText>
+          <TouchableOpacity onPress={() => setMenuOpen(true)}>
+            <ThemedText style={styles.iconText}>☰</ThemedText>
           </TouchableOpacity>
         </View>
-
-        {/* 마켓 리스트 */}
-        <FlatList
-          data={filteredMarkets}
-          keyExtractor={(m) => m.id}
-          renderItem={({ item }) => {
-            const isUp = item.change24hPct >= 0;
-            return (
-              <Link href={{ pathname: '/market/[id]', params: { id: item.id } }} asChild>
-                <Pressable style={styles.marketRow}>
-                  <View style={styles.coinInfo}>
-                    <View style={styles.coinIcon}>
-                      <ThemedText style={styles.coinSymbol}>{item.base.charAt(0)}</ThemedText>
-                    </View>
-                    <View style={styles.coinDetails}>
-                      <ThemedText style={styles.coinName}>{item.base}</ThemedText>
-                      <ThemedText style={styles.coinFullName}>{item.name}</ThemedText>
-                    </View>
-                  </View>
-                  
-                  <View style={styles.priceInfo}>
-                    <ThemedText style={styles.price}>
-                      ₩{item.price.toLocaleString()}
-                    </ThemedText>
-                  </View>
-                  
-                  <View style={styles.changeInfo}>
-                    <ThemedText style={[styles.change, { color: isUp ? '#00C851' : '#FF4444' }]}>
-                      {isUp ? '+' : ''}{item.change24hPct.toFixed(2)}%
-                    </ThemedText>
-                  </View>
-                  
-                  <View style={styles.volumeInfo}>
-                    <ThemedText style={styles.volume}>
-                      ₩{(item.volume24h / 1000000000).toFixed(1)}B
-                    </ThemedText>
-                  </View>
-                </Pressable>
-              </Link>
-            );
-          }}
-          ItemSeparatorComponent={() => <View style={styles.separator} />}
-        />
       </View>
+
+      {/* 메인 탭 */}
+      <View style={styles.mainTabContainer}>
+        <TouchableOpacity 
+          style={[styles.mainTab, selectedTab === '거래소' && styles.activeMainTab]}
+          onPress={() => setSelectedTab('거래소')}
+        >
+          <ThemedText style={[styles.mainTabText, selectedTab === '거래소' && styles.activeMainTabText]}>
+            거래소
+          </ThemedText>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.mainTab, selectedTab === 'NFT' && styles.activeMainTab]}
+          onPress={() => setSelectedTab('NFT')}
+        >
+          <ThemedText style={[styles.mainTabText, selectedTab === 'NFT' && styles.activeMainTabText]}>
+            NFT
+          </ThemedText>
+        </TouchableOpacity>
+      </View>
+
+      {selectedTab === '거래소' && (
+        <View style={styles.container}>
+          {/* 검색바 */}
+          <View style={styles.searchContainer}>
+            <View style={styles.searchInputContainer}>
+              <ThemedText style={styles.searchIcon}>🔍</ThemedText>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="코인명/심볼 검색"
+                placeholderTextColor="#666"
+                value={searchText}
+                onChangeText={setSearchText}
+              />
+            </View>
+          </View>
+
+          {/* 사용자 보유자산 */}
+          <View style={styles.assetSummary}>
+            <View style={styles.assetRow}>
+              <ThemedText style={styles.assetLabel}>총 매수</ThemedText>
+              <ThemedText style={styles.assetValue}>₩{userAssets.totalPurchase.toLocaleString()}</ThemedText>
+            </View>
+            <View style={styles.assetRow}>
+              <ThemedText style={styles.assetLabel}>평가손익</ThemedText>
+              <ThemedText style={[styles.assetValue, { color: userAssets.unrealizedPnl >= 0 ? '#FF4444' : '#00C851' }]}>
+                ₩{userAssets.unrealizedPnl.toLocaleString()}
+              </ThemedText>
+            </View>
+            <View style={styles.assetRow}>
+              <ThemedText style={styles.assetLabel}>총 평가</ThemedText>
+              <ThemedText style={styles.assetValue}>₩{userAssets.totalValue.toLocaleString()}</ThemedText>
+            </View>
+            <View style={styles.assetRow}>
+              <ThemedText style={styles.assetLabel}>수익률</ThemedText>
+              <ThemedText style={[styles.assetValue, { color: userAssets.returnRate >= 0 ? '#FF4444' : '#00C851' }]}>
+                {userAssets.returnRate >= 0 ? '+' : ''}{userAssets.returnRate.toFixed(2)}%
+              </ThemedText>
+            </View>
+          </View>
+
+          {/* 마켓 탭 */}
+          <View style={styles.marketTabContainer}>
+            {['USDT', 'KRW', 'ETH', 'BTC', 'MY', 'FAV'].map((market) => (
+              <TouchableOpacity
+                key={market}
+                style={[styles.marketTab, selectedMarket === market && styles.activeMarketTab]}
+                onPress={() => setSelectedMarket(market)}
+              >
+                <ThemedText style={[styles.marketTabText, selectedMarket === market && styles.activeMarketTabText]}>
+                  {market}
+                </ThemedText>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* 마켓 리스트 헤더 */}
+          <View style={styles.listHeader}>
+            <ThemedText style={styles.headerText}>한글명</ThemedText>
+            <ThemedText style={styles.headerText}>현재가</ThemedText>
+            <ThemedText style={styles.headerText}>전일대비</ThemedText>
+            <ThemedText style={styles.headerText}>거래대금</ThemedText>
+          </View>
+
+          {/* 마켓 리스트 */}
+          <FlatList
+            data={filteredMarkets}
+            keyExtractor={(m) => m.id}
+            renderItem={({ item }) => {
+              const isUp = item.change24hPct >= 0;
+              return (
+                <Link href={{ pathname: '/market/[id]', params: { id: item.id } }} asChild>
+                  <Pressable style={styles.marketRow}>
+                    <View style={styles.coinInfo}>
+                      <View style={styles.coinIcon}>
+                        <ThemedText style={styles.coinSymbol}>{item.base.charAt(0)}</ThemedText>
+                      </View>
+                      <View style={styles.coinDetails}>
+                        <ThemedText style={styles.coinName}>{item.name}</ThemedText>
+                        <ThemedText style={styles.coinPair}>{item.base}/{item.quote}</ThemedText>
+                      </View>
+                    </View>
+                    
+                    <View style={styles.priceInfo}>
+                      <ThemedText style={styles.price}>
+                        ₩{item.price.toLocaleString()}
+                      </ThemedText>
+                    </View>
+                    
+                    <View style={styles.changeInfo}>
+                      <ThemedText style={[styles.change, { color: isUp ? '#FF4444' : '#00C851' }]}>
+                        {isUp ? '+' : ''}{item.change24hPct.toFixed(2)}%
+                      </ThemedText>
+                      <ThemedText style={[styles.changeAmount, { color: isUp ? '#FF4444' : '#00C851' }]}>
+                        {isUp ? '+' : ''}{((item.price * item.change24hPct) / 100).toLocaleString()}
+                      </ThemedText>
+                    </View>
+                    
+                    <View style={styles.volumeInfo}>
+                      <ThemedText style={styles.volume}>
+                        ₩{(item.volume24h / 100000000).toFixed(0)}백만
+                      </ThemedText>
+                    </View>
+                  </Pressable>
+                </Link>
+              );
+            }}
+            ItemSeparatorComponent={() => <View style={styles.separator} />}
+          />
+        </View>
+      )}
+
+      {/* 공지사항 */}
+      {showNotice && (
+        <View style={styles.noticeBanner}>
+          <ThemedText style={styles.noticeText}>
+            공지 [업비트 ATH 이벤트] 비트코인 ATH 기념! 풍성한 한가위에...
+          </ThemedText>
+          <TouchableOpacity onPress={() => setShowNotice(false)}>
+            <ThemedText style={styles.noticeClose}>✕</ThemedText>
+          </TouchableOpacity>
+        </View>
+      )}
       
       <HamburgerMenu visible={menuOpen} onClose={() => setMenuOpen(false)} avatarUri={avatarUri} />
     </ThemedView>
@@ -183,95 +255,203 @@ export default function ExchangeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  searchContainer: {
-    backgroundColor: '#F8F9FA',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E9ECEF',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  searchRow: {
+  // 커스텀 헤더
+  customHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    backgroundColor: '#1A1A1A',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
   },
-  searchInput: {
+  headerLeft: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 14,
-    color: '#212529',
-    borderWidth: 1,
-    borderColor: '#DEE2E6',
+  },
+  logoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  logoCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFD700',
+    alignItems: 'center',
+    justifyContent: 'center',
     marginRight: 8,
   },
-  sortButton: {
-    backgroundColor: '#6C757D',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,
+  logoText: {
+    color: '#000000',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
-  sortText: {
+  headerTitle: {
     color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '500',
+    fontSize: 16,
+    fontWeight: '600',
   },
-  tabContainer: {
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  mainLogo: {
+    color: '#FFD700',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  headerRight: {
+    flex: 1,
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E9ECEF',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
   },
-  tab: {
+  headerIcon: {
+    marginLeft: 12,
+  },
+  iconText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+  },
+
+  // 메인 탭
+  mainTabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#1A1A1A',
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  mainTab: {
     flex: 1,
     paddingVertical: 16,
     alignItems: 'center',
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
   },
-  activeTab: {
+  activeMainTab: {
     borderBottomColor: '#FFD700',
   },
-  tabText: {
-    fontSize: 14,
-    color: '#6C757D',
+  mainTabText: {
+    fontSize: 16,
+    color: '#CCCCCC',
     fontWeight: '500',
   },
-  activeTabText: {
+  activeMainTabText: {
     color: '#FFD700',
     fontWeight: '600',
   },
-  listHeader: {
-    flexDirection: 'row',
-    backgroundColor: '#F8F9FA',
+
+  // 컨테이너
+  container: {
+    flex: 1,
+    backgroundColor: '#0A0A0A',
+  },
+
+  // 검색바
+  searchContainer: {
+    backgroundColor: '#1A1A1A',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#E9ECEF',
+    borderBottomColor: '#333',
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2A2A2A',
+    borderRadius: 8,
+    paddingHorizontal: 12,
     paddingVertical: 8,
   },
-  headerColumn: {
-    flex: 1,
-    paddingHorizontal: 8,
-    alignItems: 'center',
+  searchIcon: {
+    color: '#666',
+    fontSize: 16,
+    marginRight: 8,
   },
-  headerText: {
-    fontSize: 11,
-    color: '#6C757D',
+  searchInput: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 14,
+  },
+
+  // 사용자 보유자산
+  assetSummary: {
+    backgroundColor: '#1A1A1A',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  assetRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  assetLabel: {
+    color: '#CCCCCC',
+    fontSize: 14,
+  },
+  assetValue: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  // 마켓 탭
+  marketTabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#1A1A1A',
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  marketTab: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  activeMarketTab: {
+    borderBottomColor: '#FFD700',
+  },
+  marketTabText: {
+    fontSize: 14,
+    color: '#CCCCCC',
     fontWeight: '500',
   },
+  activeMarketTabText: {
+    color: '#FFD700',
+    fontWeight: '600',
+  },
+
+  // 리스트 헤더
+  listHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#1A1A1A',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  headerText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#999',
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+
+  // 마켓 행
   marketRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#0A0A0A',
     borderBottomWidth: 1,
-    borderBottomColor: '#F8F9FA',
+    borderBottomColor: '#1A1A1A',
   },
   coinInfo: {
     flex: 2,
@@ -298,12 +478,12 @@ const styles = StyleSheet.create({
   coinName: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#212529',
+    color: '#FFFFFF',
     marginBottom: 2,
   },
-  coinFullName: {
+  coinPair: {
     fontSize: 11,
-    color: '#6C757D',
+    color: '#999',
   },
   priceInfo: {
     flex: 1,
@@ -312,7 +492,7 @@ const styles = StyleSheet.create({
   price: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#212529',
+    color: '#FFFFFF',
   },
   changeInfo: {
     flex: 1,
@@ -322,16 +502,42 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  changeAmount: {
+    fontSize: 11,
+    marginTop: 2,
+  },
   volumeInfo: {
     flex: 1,
     alignItems: 'flex-end',
   },
   volume: {
     fontSize: 11,
-    color: '#6C757D',
+    color: '#CCCCCC',
   },
   separator: {
     height: 0,
+  },
+
+  // 공지사항
+  noticeBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#2A2A2A',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  noticeText: {
+    flex: 1,
+    color: '#CCCCCC',
+    fontSize: 12,
+  },
+  noticeClose: {
+    color: '#999',
+    fontSize: 16,
+    marginLeft: 8,
   },
 });
 
