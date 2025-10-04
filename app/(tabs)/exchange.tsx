@@ -43,7 +43,7 @@ export default function ExchangeScreen() {
     BTC: UpbitTicker[];
     ETH: any[];
   }>({ KRW: [], USDT: [], BTC: [], ETH: [] });
-  const [userHoldings] = useState<string[]>(['BTC', 'ETH', 'SOL', 'YOY']); // 사용자 보유 코인
+  const [userHoldings] = useState<string[]>(['YOY', 'BTC', 'ETH', 'SOL', 'DOT', 'BNB', 'AVAX', 'XMR', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC']); // 사용자 보유 코인
 
   // 사용자 보유자산 데이터 (mock)
   const userAssets = {
@@ -161,10 +161,10 @@ export default function ExchangeScreen() {
       const allTickers = [...upbitMarkets.KRW, ...upbitMarkets.USDT, ...upbitMarkets.BTC];
       tickers = allTickers.filter(ticker => favorites.includes(ticker.market));
     } else if (selectedMarket === 'MY') {
-      // 내 보유 코인: 마켓 우선순위에 따라 중복 제거
+      // 내 보유 코인: 마켓 우선순위에 따라 중복 제거 (USDT > KRW > ETH > BTC)
       const myMarkets: { [key: string]: UpbitTicker } = {};
       
-      // USDT 마켓 우선
+      // 1. USDT 마켓 우선
       upbitMarkets.USDT.forEach(ticker => {
         const base = ticker.market.split('-')[1];
         if (userHoldings.includes(base) && !myMarkets[base]) {
@@ -172,7 +172,7 @@ export default function ExchangeScreen() {
         }
       });
       
-      // KRW 마켓 (USDT에 없는 경우만)
+      // 2. KRW 마켓 (USDT에 없는 경우만)
       upbitMarkets.KRW.forEach(ticker => {
         const base = ticker.market.split('-')[1];
         if (userHoldings.includes(base) && !myMarkets[base]) {
@@ -180,7 +180,7 @@ export default function ExchangeScreen() {
         }
       });
       
-      // ETH 마켓 (USDT, KRW에 없는 경우만)
+      // 3. ETH 마켓 (USDT, KRW에 없는 경우만)
       upbitMarkets.ETH.forEach(ticker => {
         const base = ticker.symbol.replace('ETH', '');
         if (userHoldings.includes(base) && !myMarkets[base]) {
@@ -188,7 +188,7 @@ export default function ExchangeScreen() {
         }
       });
       
-      // BTC 마켓 (USDT, KRW, ETH에 없는 경우만)
+      // 4. BTC 마켓 (USDT, KRW, ETH에 없는 경우만)
       upbitMarkets.BTC.forEach(ticker => {
         const base = ticker.market.split('-')[1];
         if (userHoldings.includes(base) && !myMarkets[base]) {
