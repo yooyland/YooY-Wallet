@@ -222,7 +222,7 @@ export default function ExchangeScreen() {
             onScroll={handleScroll}
             scrollEventThrottle={16}
             contentContainerStyle={{ paddingBottom: 80 }}
-            style={{ flex: 1, marginTop: 100 }}
+            style={{ flex: 1, marginTop: 0, paddingTop: 100 }}
             showsVerticalScrollIndicator={true}
             renderItem={({ item }) => {
               const isUp = item.change24hPct >= 0;
@@ -327,6 +327,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0A0A0A',
+    height: '100%',
   },
 
   // 검색바
