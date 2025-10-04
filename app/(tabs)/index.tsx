@@ -51,7 +51,7 @@ export default function HomeScreen() {
   return (
     <ThemedView style={{ flex: 1 }}>
       <TopBar 
-        title={currentUser?.email?.split('@')[0] || 'User'} 
+        title={currentUser?.email?.split('@')[0] || 'admin'} 
         onAvatarPress={() => setProfileOpen(true)} 
         onMenuPress={() => setMenuOpen(true)}
         avatarUri={avatarUri} 

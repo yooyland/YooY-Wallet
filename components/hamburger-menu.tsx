@@ -275,22 +275,22 @@ export default function HamburgerMenu({ visible, onClose }: HamburgerMenuProps) 
             {/* Header */}
             <View style={styles.header}>
               <View style={styles.userInfo}>
-                <View style={styles.avatar}>
-                  <ThemedText style={styles.avatarText}>
-                    {currentUser?.email?.charAt(0).toUpperCase() || 'U'}
-                  </ThemedText>
-                </View>
-                <View style={styles.userDetails}>
-                  <ThemedText type="defaultSemiBold">{currentUser?.email || 'User'}</ThemedText>
-                  <ThemedText style={styles.balance}>
-                    {formatCurrency(total, currency, rates)}
-                  </ThemedText>
-                  {isUserAdmin && (
-                    <ThemedText style={styles.adminBadge}>
-                      {adminRole?.replace('_', ' ').toUpperCase()}
-                    </ThemedText>
-                  )}
-                </View>
+                 <View style={styles.avatar}>
+                   <ThemedText style={styles.avatarText}>
+                     {currentUser?.email?.charAt(0).toUpperCase() || 'A'}
+                   </ThemedText>
+                 </View>
+                 <View style={styles.userDetails}>
+                   <ThemedText type="defaultSemiBold">{currentUser?.email || 'admin@yooyland.com'}</ThemedText>
+                   <ThemedText style={styles.balance}>
+                     {formatCurrency(total, currency, rates)}
+                   </ThemedText>
+                   {isUserAdmin && (
+                     <ThemedText style={styles.adminBadge}>
+                       {adminRole?.replace('_', ' ').toUpperCase()}
+                     </ThemedText>
+                   )}
+                 </View>
               </View>
               <TouchableOpacity onPress={onClose} style={styles.closeButton}>
                 <ThemedText style={styles.closeIcon}>✕</ThemedText>

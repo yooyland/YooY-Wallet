@@ -68,7 +68,7 @@ export default function ProfileSheet({ visible, onClose, onSaved }: Props) {
           if (parsed.username) setUsername(parsed.username);
         } catch {}
       }
-      const currentEmail = currentUser?.email || firebaseAuth.currentUser?.email || (await AsyncStorage.getItem('user.email')) || 'admin@yooyland.com';
+      const currentEmail = currentUser?.email || firebaseAuth.currentUser?.email || 'admin@yooyland.com';
       setEmail(currentEmail);
       if (!savedInfo) deriveFromEmail(currentEmail);
     })();
