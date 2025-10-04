@@ -41,6 +41,7 @@ const dict: Record<Lang, Record<string, string>> = {
     transactions: 'Transactions',
     reports: 'Reports',
     system: 'System',
+    assets: 'Assets',
   },
   ko: {
     home: '홈',
@@ -82,6 +83,7 @@ const dict: Record<Lang, Record<string, string>> = {
     transactions: '거래내역',
     reports: '보고서',
     system: '시스템',
+    assets: '자산',
   },
   ja: {
     home: 'ホーム',
@@ -96,6 +98,7 @@ const dict: Record<Lang, Record<string, string>> = {
     username: 'メール',
     password: 'パスワード',
     slogan: 'YooY Landは、あなたと共に新しい黄金時代を始めます。',
+    assets: '資産',
   },
   zh: {
     home: '首页',
@@ -110,6 +113,7 @@ const dict: Record<Lang, Record<string, string>> = {
     username: '邮箱',
     password: '密码',
     slogan: 'YooY Land 正与您一起开启新的黄金时代。',
+    assets: '资产',
   },
 };
 

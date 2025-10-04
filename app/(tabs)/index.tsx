@@ -147,13 +147,10 @@ export default function HomeScreen() {
               <ThemedText style={styles.balanceAmount}>
                 {formatNumber(getTotalInCurrency(selectedCurrency).amount)} {getTotalInCurrency(selectedCurrency).symbol}
               </ThemedText>
-              <ThemedText style={styles.assetCount}>{mockBalances.length}개 자산</ThemedText>
+              <ThemedText style={styles.assetCount}>{mockBalances.length} {t('assets', language)}</ThemedText>
             </View>
             
             <View style={styles.cardFooter}>
-              <View style={styles.logoContainer}>
-                <ThemedText style={styles.cardLogo}>YooY</ThemedText>
-              </View>
               <TouchableOpacity 
                 style={styles.dropdownButton}
                 onPress={() => setDropdownOpen(!dropdownOpen)}
@@ -409,7 +406,7 @@ const styles = StyleSheet.create({
   },
   cardFooter: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     alignItems: 'center',
   },
   logoContainer: {
