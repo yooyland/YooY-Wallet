@@ -109,13 +109,13 @@ export default function ExchangeScreen() {
   // 거래대금 포맷팅 함수
   const formatVolume = (volume: number, market: string) => {
     if (volume >= 1000000000) {
-      return `${(volume / 1000000000).toFixed(1)}B`;
+      return { number: (volume / 1000000000).toFixed(1), unit: 'B' };
     } else if (volume >= 1000000) {
-      return `${(volume / 1000000).toFixed(1)}M`;
+      return { number: (volume / 1000000).toFixed(1), unit: 'M' };
     } else if (volume >= 1000) {
-      return `${(volume / 1000).toFixed(1)}K`;
+      return { number: (volume / 1000).toFixed(1), unit: 'K' };
     }
-    return volume.toFixed(0);
+    return { number: volume.toFixed(0), unit: '' };
   };
 
   // 업비트 데이터를 Market 형식으로 변환
@@ -406,15 +406,24 @@ export default function ExchangeScreen() {
                     <ThemedText style={styles.volume}>
                       {isMyTab ? 
                         `₩${(currentPrice * 1.5).toLocaleString()}` : 
-                        selectedMarket === 'KRW' ? 
-                          `₩${formatVolume(item.volume24h, selectedMarket)}` :
-                          selectedMarket === 'USDT' ?
-                            `$${formatVolume(item.volume24h, selectedMarket)}` :
-                            selectedMarket === 'ETH' ?
-                              `${formatVolume(item.volume24h, selectedMarket)} ETH` :
-                              selectedMarket === 'BTC' ?
-                                `${formatVolume(item.volume24h, selectedMarket)} BTC` :
-                                `$${formatVolume(item.volume24h, selectedMarket)}`
+                        (() => {
+                          const formatted = formatVolume(item.volume24h, selectedMarket);
+                          const currency = selectedMarket === 'KRW' ? '₩' : 
+                                        selectedMarket === 'USDT' ? '$' :
+                                        selectedMarket === 'ETH' ? ' ETH' :
+                                        selectedMarket === 'BTC' ? ' BTC' : '$';
+                          
+                          return (
+                            <>
+                              {currency === '₩' ? '₩' : currency === '$' ? '$' : ''}
+                              {formatted.number}
+                              {formatted.unit && (
+                                <ThemedText style={styles.volumeUnit}>{formatted.unit}</ThemedText>
+                              )}
+                              {currency === ' ETH' ? ' ETH' : currency === ' BTC' ? ' BTC' : ''}
+                            </>
+                          );
+                        })()
                       }
                     </ThemedText>
                   </View>
@@ -714,6 +723,10 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   volume: {
+    fontSize: 11,
+    color: '#CCCCCC',
+  },
+  volumeUnit: {
     fontSize: 11,
     color: '#00BFFF',
     fontWeight: 'bold',
