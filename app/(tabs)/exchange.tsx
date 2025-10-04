@@ -1,28 +1,22 @@
-import TopBar from '@/components/top-bar';
 import HamburgerMenu from '@/components/hamburger-menu';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Colors } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
-import { mockMarkets } from '@/data/markets';
-import { formatCurrency, getExchangeRates, formatPercentage } from '@/lib/currency';
-import { getUpbitPrices, UpbitPrice, getAllUpbitMarkets, UpbitTicker } from '@/lib/upbit';
+import { getExchangeRates } from '@/lib/currency';
+import { getAllUpbitMarkets, UpbitPrice, UpbitTicker } from '@/lib/upbit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link } from 'expo-router';
-import { 
-  FlatList, 
-  Pressable, 
-  StyleSheet, 
-  View, 
-  ScrollView, 
-  TouchableOpacity,
-  TextInput,
-  Dimensions,
-  Image,
-  Animated
+import { useEffect, useState } from 'react';
+import {
+    Dimensions,
+    FlatList,
+    Pressable,
+    StyleSheet,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
-import { useEffect, useState, useRef } from 'react';
 
 const { width } = Dimensions.get('window');
 
@@ -154,12 +148,42 @@ export default function ExchangeScreen() {
       const allTickers = [...upbitMarkets.KRW, ...upbitMarkets.USDT, ...upbitMarkets.BTC];
       tickers = allTickers.filter(ticker => favorites.includes(ticker.market));
     } else if (selectedMarket === 'MY') {
-      // 내 보유 코인: 모든 마켓에서 보유 코인 찾기
-      const allTickers = [...upbitMarkets.KRW, ...upbitMarkets.USDT, ...upbitMarkets.BTC];
-      tickers = allTickers.filter(ticker => {
+      // 내 보유 코인: 마켓 우선순위에 따라 중복 제거
+      const myMarkets: { [key: string]: UpbitTicker } = {};
+      
+      // USDT 마켓 우선
+      upbitMarkets.USDT.forEach(ticker => {
         const base = ticker.market.split('-')[1];
-        return userHoldings.includes(base);
+        if (userHoldings.includes(base) && !myMarkets[base]) {
+          myMarkets[base] = ticker;
+        }
       });
+      
+      // KRW 마켓 (USDT에 없는 경우만)
+      upbitMarkets.KRW.forEach(ticker => {
+        const base = ticker.market.split('-')[1];
+        if (userHoldings.includes(base) && !myMarkets[base]) {
+          myMarkets[base] = ticker;
+        }
+      });
+      
+      // ETH 마켓 (USDT, KRW에 없는 경우만)
+      upbitMarkets.ETH.forEach(ticker => {
+        const base = ticker.symbol.replace('ETH', '');
+        if (userHoldings.includes(base) && !myMarkets[base]) {
+          myMarkets[base] = ticker;
+        }
+      });
+      
+      // BTC 마켓 (USDT, KRW, ETH에 없는 경우만)
+      upbitMarkets.BTC.forEach(ticker => {
+        const base = ticker.market.split('-')[1];
+        if (userHoldings.includes(base) && !myMarkets[base]) {
+          myMarkets[base] = ticker;
+        }
+      });
+      
+      tickers = Object.values(myMarkets);
     } else if (selectedMarket === 'ETH') {
       // ETH 마켓: 바이낸스 데이터 사용
       return upbitMarkets.ETH.map(convertBinanceToMarket);
@@ -262,7 +286,12 @@ export default function ExchangeScreen() {
               onPress={() => handleSort('price')}
             >
               <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'price' && styles.activeHeaderText]}>
-                {selectedMarket === 'MY' ? '현재가/n매수가' : '현재가'}
+                {selectedMarket === 'MY' ? (
+                  <>
+                    <ThemedText style={styles.headerText}>현재가</ThemedText>
+                    <ThemedText style={[styles.headerTextSmall, styles.headerTextRight]}>매수가</ThemedText>
+                  </>
+                ) : '현재가'}
               </ThemedText>
             </TouchableOpacity>
             <TouchableOpacity 
@@ -270,7 +299,12 @@ export default function ExchangeScreen() {
               onPress={() => handleSort('change')}
             >
               <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'change' && styles.activeHeaderText]}>
-                {selectedMarket === 'MY' ? '수익률/n수익금' : '전일대비'}
+                {selectedMarket === 'MY' ? (
+                  <>
+                    <ThemedText style={styles.headerText}>수익률</ThemedText>
+                    <ThemedText style={[styles.headerTextSmall, styles.headerTextRight]}>수익금</ThemedText>
+                  </>
+                ) : '전일대비'}
               </ThemedText>
             </TouchableOpacity>
             <TouchableOpacity 
@@ -340,7 +374,7 @@ export default function ExchangeScreen() {
                     </ThemedText>
                     {isMyTab && (
                       <ThemedText style={styles.buyPrice}>
-                        매수가: {displayPrice}
+                        {displayPrice}
                       </ThemedText>
                     )}
                   </View>
@@ -554,10 +588,18 @@ const styles = StyleSheet.create({
     color: '#999',
     fontWeight: '500',
     marginRight: 4,
+    lineHeight: 14,
   },
   headerTextRight: {
     marginRight: 0,
     textAlign: 'right',
+    lineHeight: 14,
+  },
+  headerTextSmall: {
+    fontSize: 10,
+    color: '#999',
+    fontWeight: '400',
+    lineHeight: 12,
   },
   sortIcon: {
     fontSize: 10,
