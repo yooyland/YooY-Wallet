@@ -152,7 +152,11 @@ export default function HomeScreen() {
               <ThemedText style={styles.balanceAmount}>
                 {formatNumber(getTotalInCurrency(selectedCurrency).amount)} {getTotalInCurrency(selectedCurrency).symbol}
               </ThemedText>
-              <ThemedText style={styles.assetCount}>{mockBalances.length} {t('assets', language)}</ThemedText>
+              <ThemedText style={styles.assetCount}>
+                {mockBalances.filter(balance => 
+                  ['YOY', 'BTC', 'ETH', 'SOL', 'DOT', 'BNB', 'AVAX', 'XMR', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC'].includes(balance.symbol)
+                ).length} {t('assets', language)}
+              </ThemedText>
             </View>
             
             <View style={styles.cardFooter}>
