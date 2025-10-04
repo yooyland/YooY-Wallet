@@ -169,7 +169,11 @@ export default function HomeScreen() {
         {dropdownOpen && (
           <View style={styles.dropdownMenu}>
             {selectedCurrency === 'Crypto' ? (
-              <View style={styles.holdingsList}>
+              <ScrollView 
+                style={styles.holdingsList}
+                showsVerticalScrollIndicator={true}
+                nestedScrollEnabled={true}
+              >
                 {mockBalances.map((balance, index) => (
                   <View key={index} style={styles.holdingItem}>
                     <View style={styles.holdingInfo}>
@@ -186,7 +190,7 @@ export default function HomeScreen() {
                     </View>
                   </View>
                 ))}
-              </View>
+              </ScrollView>
             ) : (
               <View style={styles.transactionList}>
                 <ThemedText style={styles.transactionTitle}>{t('transactions', language)}</ThemedText>
