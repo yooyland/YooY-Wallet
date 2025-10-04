@@ -383,11 +383,18 @@ export default function ExchangeScreen() {
                     <Link href={{ pathname: '/market/[id]', params: { id: item.id } }} asChild>
                       <Pressable style={styles.coinInfoLink}>
                         <View style={styles.coinIcon}>
-                          <Image 
-                            source={{ uri: `https://static.upbit.com/logos/${item.base}.png` }}
-                            style={styles.coinLogo}
-                            defaultSource={{ uri: `https://static.upbit.com/logos/${item.base}.png` }}
-                          />
+                          {item.base === 'YOY' ? (
+                            <Image 
+                              source={require('@/assets/images/yoy.png')}
+                              style={styles.coinLogo}
+                            />
+                          ) : (
+                            <Image 
+                              source={{ uri: `https://static.upbit.com/logos/${item.base}.png` }}
+                              style={styles.coinLogo}
+                              defaultSource={{ uri: `https://static.upbit.com/logos/${item.base}.png` }}
+                            />
+                          )}
                         </View>
                         <View style={styles.coinDetails}>
                           <ThemedText style={styles.coinName}>
