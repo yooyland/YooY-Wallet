@@ -374,26 +374,30 @@ const styles = StyleSheet.create({
   },
   currencyTabs: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    justifyContent: 'space-between',
     marginBottom: 20,
+    paddingHorizontal: 4,
   },
   currencyTab: {
+    flex: 1,
     paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingHorizontal: 4,
     borderRadius: 8,
     backgroundColor: 'rgba(0,0,0,0.3)',
+    marginHorizontal: 2,
+    alignItems: 'center',
   },
   activeTab: {
     backgroundColor: 'rgba(255,215,0,0.3)',
   },
   tabText: {
     color: '#CCCCCC',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 'bold',
   },
   activeTabText: {
-    color: '#FFD700',
-    fontSize: 12,
+    color: '#000000',
+    fontSize: 11,
     fontWeight: 'bold',
   },
   mainBalance: {
