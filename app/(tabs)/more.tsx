@@ -24,6 +24,12 @@ export default function MoreScreen() {
 
   const moreMenuItems = [
     {
+      title: 'Dashboard',
+      icon: 'house.fill',
+      href: '/(tabs)/dashboard',
+      description: 'View your portfolio and assets'
+    },
+    {
       title: 'Explore',
       icon: 'paperplane.fill',
       href: '/explore',

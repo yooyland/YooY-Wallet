@@ -165,8 +165,8 @@ export default function DashboardScreen() {
       <ScrollView style={styles.container}>
         {/* Slogan */}
         <View style={styles.sloganContainer}>
-          <ThemedText style={styles.slogan}>YooY Land is starting a new golden era</ThemedText>
-          <ThemedText style={styles.slogan}>with you.</ThemedText>
+          <ThemedText style={styles.slogan}>YooY Land is starting</ThemedText>
+          <ThemedText style={styles.slogan}>a new golden era with you.</ThemedText>
         </View>
 
         {/* Asset Card */}
