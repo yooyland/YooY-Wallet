@@ -223,6 +223,7 @@ export default function ExchangeScreen() {
             scrollEventThrottle={16}
             contentContainerStyle={{ paddingBottom: 80 }}
             style={{ flex: 1, marginTop: 100 }}
+            showsVerticalScrollIndicator={true}
             renderItem={({ item }) => {
               const isUp = item.change24hPct >= 0;
               return (
@@ -365,6 +366,7 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 1000,
     elevation: 1000,
+    backgroundColor: '#1A1A1A',
   },
 
   // 마켓 탭
