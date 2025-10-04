@@ -1,16 +1,30 @@
+import TopBar from '@/components/top-bar';
+import HamburgerMenu from '@/components/hamburger-menu';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
+import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { mockMarkets } from '@/data/markets';
 import { formatCurrency, getExchangeRates, formatPercentage } from '@/lib/currency';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link } from 'expo-router';
 import { FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { useEffect, useState } from 'react';
 
 export default function ExchangeScreen() {
+  const { currentUser } = useAuth();
   const { currency } = usePreferences();
   const [rates, setRates] = useState<any>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const saved = await AsyncStorage.getItem('profile.photoUri');
+      if (saved) setAvatarUri(saved);
+    })();
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -20,8 +34,14 @@ export default function ExchangeScreen() {
   }, [currency]);
 
   return (
-    <ThemedView style={styles.container}>
-      <ThemedText type="title">Markets</ThemedText>
+    <ThemedView style={{ flex: 1 }}>
+      <TopBar 
+        title={currentUser?.email?.split('@')[0] || 'admin'} 
+        onMenuPress={() => setMenuOpen(true)}
+        avatarUri={avatarUri} 
+      />
+      <View style={styles.container}>
+        <ThemedText type="title">Markets</ThemedText>
       <View style={{ height: 8 }} />
       <FlatList
         data={mockMarkets}
@@ -47,6 +67,8 @@ export default function ExchangeScreen() {
           );
         }}
       />
+      </View>
+      <HamburgerMenu visible={menuOpen} onClose={() => setMenuOpen(false)} avatarUri={avatarUri} />
     </ThemedView>
   );
 }

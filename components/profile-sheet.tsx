@@ -3,9 +3,10 @@ import { usePreferences } from '@/contexts/PreferencesContext';
 import { firebaseAuth } from '@/lib/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { onAuthStateChanged } from 'firebase/auth';
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Animated, Easing, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 type Props = {
   visible: boolean;
@@ -90,24 +91,31 @@ export default function ProfileSheet({ visible, onClose, onSaved }: Props) {
   const translateY = slide.interpolate({ inputRange: [0, 1], outputRange: [400, 0] });
 
   const pickImage = async () => {
-    const ImagePicker = await import('expo-image-picker');
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
-      base64: true,
-    });
-    if (!result.canceled && result.assets && result.assets.length > 0) {
-      const asset = result.assets[0];
-      const uri = asset.base64
-        ? `data:${asset.type ?? 'image/jpeg'};base64,${asset.base64}`
-        : asset.uri;
-      setPhotoUri(uri);
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission denied', 'Sorry, we need camera roll permissions to change your profile photo.');
+        return;
+      }
+      
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+        base64: true,
+      });
+      
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        const uri = asset.base64
+          ? `data:${asset.type ?? 'image/jpeg'};base64,${asset.base64}`
+          : asset.uri;
+        setPhotoUri(uri);
+      }
+    } catch (error) {
+      console.error('Error picking image:', error);
+      Alert.alert('Error', 'Failed to pick image. Please try again.');
     }
   };
 

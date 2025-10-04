@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { router } from 'expo-router';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 type Props = {
@@ -21,7 +22,9 @@ export default function TopBar({ title = 'admin', onMenuPress, onAvatarPress, av
         )}
         <Text style={styles.name}>{title}</Text>
       </TouchableOpacity>
-      <Image source={require('@/assets/images/logo.png')} style={styles.logo} contentFit="contain" />
+      <TouchableOpacity onPress={() => router.push('/(tabs)/')}>
+        <Image source={require('@/assets/images/logo.png')} style={styles.logo} contentFit="contain" />
+      </TouchableOpacity>
       <TouchableOpacity onPress={onMenuPress} style={styles.menuBtn}>
         <View style={styles.menuLine} />
         <View style={styles.menuLine} />

@@ -1,17 +1,24 @@
+import TopBar from '@/components/top-bar';
+import HamburgerMenu from '@/components/hamburger-menu';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { mockBalances } from '@/data/balances';
 import { formatCurrency, getExchangeRates, formatCrypto } from '@/lib/currency';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useMemo, useState, useEffect } from 'react';
 import { Alert, Button, FlatList, StyleSheet, TextInput, View } from 'react-native';
 
 export default function WalletScreen() {
+  const { currentUser } = useAuth();
   const { currency } = usePreferences();
   const [to, setTo] = useState('');
   const [amount, setAmount] = useState('');
   const [symbol, setSymbol] = useState('YOY');
   const [rates, setRates] = useState<any>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const total = useMemo(() => mockBalances.reduce((s, b) => s + b.valueUSD, 0), []);
 
   useEffect(() => {
@@ -21,9 +28,22 @@ export default function WalletScreen() {
     })();
   }, [currency]);
 
+  useEffect(() => {
+    (async () => {
+      const saved = await AsyncStorage.getItem('profile.photoUri');
+      if (saved) setAvatarUri(saved);
+    })();
+  }, []);
+
   return (
-    <ThemedView style={styles.container}>
-      <ThemedText type="title">Wallet</ThemedText>
+    <ThemedView style={{ flex: 1 }}>
+      <TopBar 
+        title={currentUser?.email?.split('@')[0] || 'admin'} 
+        onMenuPress={() => setMenuOpen(true)}
+        avatarUri={avatarUri} 
+      />
+      <View style={styles.container}>
+        <ThemedText type="title">Wallet</ThemedText>
       <ThemedText style={{ opacity: 0.7 }}>Total ≈ {formatCurrency(total, currency, rates)}</ThemedText>
 
       <View style={{ height: 12 }} />
@@ -56,6 +76,8 @@ export default function WalletScreen() {
         Alert.alert('Submitted', `Send ${amt} ${symbol} to ${to}`);
         setTo(''); setAmount('');
       }} />
+      </View>
+      <HamburgerMenu visible={menuOpen} onClose={() => setMenuOpen(false)} avatarUri={avatarUri} />
     </ThemedView>
   );
 }
