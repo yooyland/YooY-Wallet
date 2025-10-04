@@ -112,6 +112,52 @@ export default function ExchangeScreen() {
     }
   };
 
+  // 코인 한글 이름 매핑
+  const coinKoreanNames: { [key: string]: string } = {
+    'BTC': '비트코인',
+    'ETH': '이더리움',
+    'SOL': '솔라나',
+    'DOT': '폴카닷',
+    'BNB': '바이낸스코인',
+    'AVAX': '아발란체',
+    'XMR': '모네로',
+    'LTC': '라이트코인',
+    'LINK': '체인링크',
+    'ADA': '에이다',
+    'ATOM': '코스모스',
+    'XLM': '스텔라',
+    'XRP': '리플',
+    'DOGE': '도지코인',
+    'TRX': '트론',
+    'USDT': '테더',
+    'USDC': 'USD코인',
+    'YOY': '유이랜드',
+    'MATIC': '폴리곤',
+    'UNI': '유니스왑',
+    'AAVE': '에이브',
+    'SUSHI': '스시스왑',
+    'COMP': '컴파운드',
+    'MKR': '메이커',
+    'SNX': '신세틱스',
+    'YFI': '이어파이낸스',
+    'UMA': '우마',
+    'LRC': '루프링',
+    'REN': '렌',
+    'KNC': '카이버네트워크',
+    'BAL': '밸런서',
+    'CRV': '커브',
+    '1INCH': '원인치',
+    'GRT': '더그래프',
+    'LUNA': '루나',
+    'MIR': '미러프로토콜',
+    'ANC': '앵커프로토콜',
+    'UST': '테라USD',
+    'KAVA': '카바',
+    'BAND': '밴드프로토콜',
+    'WBTC': '래핑비트코인',
+    'DAI': '다이'
+  };
+
   // 거래대금 포맷팅 함수
   const formatVolume = (volume: number, market: string) => {
     if (volume >= 1000000000) {
@@ -404,7 +450,7 @@ export default function ExchangeScreen() {
                         <View style={styles.coinDetails}>
                           <ThemedText style={styles.coinName}>
                             {nameLanguage === 'ko' ? 
-                              (item.base === 'YOY' ? '유이랜드' : item.name) : 
+                              (coinKoreanNames[item.base] || item.name) : 
                               item.base
                             }
                           </ThemedText>
