@@ -420,7 +420,7 @@ const styles = StyleSheet.create({
   },
   marketTab: {
     flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 4,
     alignItems: 'center',
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
