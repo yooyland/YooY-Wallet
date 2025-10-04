@@ -36,8 +36,7 @@ export default function ExchangeScreen() {
   const [searchText, setSearchText] = useState('');
   const [sortBy, setSortBy] = useState('volume');
   const [showNotice, setShowNotice] = useState(true);
-  const [isScrolled, setIsScrolled] = useState(false);
-  const scrollY = useRef(new Animated.Value(0)).current;
+  const [showSearchModal, setShowSearchModal] = useState(false);
 
   // 사용자 보유자산 데이터 (mock)
   const userAssets = {
@@ -79,34 +78,11 @@ export default function ExchangeScreen() {
       }
     });
 
-  const handleScroll = Animated.event(
-    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-    { 
-      useNativeDriver: false,
-      listener: (event: any) => {
-        const offsetY = event.nativeEvent.contentOffset.y;
-        setIsScrolled(offsetY > 20);
-      }
-    }
-  );
 
   return (
     <ThemedView style={{ flex: 1 }}>
-      {/* 거래소 상단바 - 스크롤 시 숨김 */}
-      <Animated.View 
-        style={[
-          styles.exchangeTopBar,
-          {
-            transform: [{
-              translateY: scrollY.interpolate({
-                inputRange: [0, 50],
-                outputRange: [0, -100],
-                extrapolate: 'clamp',
-              })
-            }]
-          }
-        ]}
-      >
+      {/* 거래소 상단바 */}
+      <View style={styles.exchangeTopBar}>
         <TouchableOpacity 
           style={[styles.exchangeTab, selectedTab === '거래소' && styles.activeExchangeTab]}
           onPress={() => setSelectedTab('거래소')}
@@ -126,6 +102,9 @@ export default function ExchangeScreen() {
         </TouchableOpacity>
         
         <View style={styles.exchangeIcons}>
+          <TouchableOpacity style={styles.exchangeIcon} onPress={() => setShowSearchModal(true)}>
+            <ThemedText style={styles.iconText}>🔍</ThemedText>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.exchangeIcon}>
             <ThemedText style={styles.iconText}>⚙️</ThemedText>
           </TouchableOpacity>
@@ -133,95 +112,50 @@ export default function ExchangeScreen() {
             <ThemedText style={styles.iconText}>💬</ThemedText>
           </TouchableOpacity>
         </View>
-      </Animated.View>
+      </View>
 
       {selectedTab === '거래소' && (
         <View style={styles.container}>
-          {/* 검색바 - 스크롤 시 숨김 */}
-          <Animated.View 
-            style={[
-              styles.searchContainer,
-              {
-                transform: [{
-                  translateY: scrollY.interpolate({
-                    inputRange: [0, 50],
-                    outputRange: [0, -100],
-                    extrapolate: 'clamp',
-                  })
-                }]
-              }
-            ]}
-          >
-            <View style={styles.searchInputContainer}>
-              <ThemedText style={styles.searchIcon}>🔍</ThemedText>
-              <TextInput
-                style={styles.searchInput}
-                placeholder="코인명/심볼 검색"
-                placeholderTextColor="#666"
-                value={searchText}
-                onChangeText={setSearchText}
-              />
-            </View>
-          </Animated.View>
+          {/* 마켓 탭 */}
+          <View style={styles.marketTabContainer}>
+            {['USDT', 'KRW', 'ETH', 'BTC', 'MY', 'FAV'].map((market) => (
+              <TouchableOpacity
+                key={market}
+                style={[styles.marketTab, selectedMarket === market && styles.activeMarketTab]}
+                onPress={() => setSelectedMarket(market)}
+              >
+                <ThemedText style={[styles.marketTabText, selectedMarket === market && styles.activeMarketTabText]}>
+                  {market}
+                </ThemedText>
+              </TouchableOpacity>
+            ))}
+          </View>
 
-          {/* 마켓 탭 + 코인 제목탭 - 스크롤 시 상단 고정 */}
-          <Animated.View 
-            style={[
-              styles.fixedMarketSection,
-              {
-                transform: [{
-                  translateY: scrollY.interpolate({
-                    inputRange: [0, 100],
-                    outputRange: [0, 0],
-                    extrapolate: 'clamp',
-                  })
-                }]
-              }
-            ]}
-          >
-            {/* 마켓 탭 */}
-            <View style={styles.marketTabContainer}>
-              {['USDT', 'KRW', 'ETH', 'BTC', 'MY', 'FAV'].map((market) => (
-                <TouchableOpacity
-                  key={market}
-                  style={[styles.marketTab, selectedMarket === market && styles.activeMarketTab]}
-                  onPress={() => setSelectedMarket(market)}
-                >
-                  <ThemedText style={[styles.marketTabText, selectedMarket === market && styles.activeMarketTabText]}>
-                    {market}
-                  </ThemedText>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* 마켓 리스트 헤더 */}
-            <View style={styles.listHeader}>
-              <TouchableOpacity style={styles.headerColumn}>
-                <ThemedText style={styles.headerText}>한글명</ThemedText>
-                <ThemedText style={styles.sortIcon}>↕</ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.headerColumn}>
-                <ThemedText style={styles.headerText}>현재가</ThemedText>
-                <ThemedText style={styles.sortIcon}>↕</ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.headerColumn}>
-                <ThemedText style={styles.headerText}>전일대비</ThemedText>
-                <ThemedText style={styles.sortIcon}>↕</ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.headerColumn}>
-                <ThemedText style={styles.headerText}>거래대금</ThemedText>
-                <ThemedText style={styles.sortIcon}>↕</ThemedText>
-              </TouchableOpacity>
-            </View>
-          </Animated.View>
+          {/* 마켓 리스트 헤더 */}
+          <View style={styles.listHeader}>
+            <TouchableOpacity style={styles.headerColumn}>
+              <ThemedText style={styles.headerText}>한글명</ThemedText>
+              <ThemedText style={styles.sortIcon}>↕</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.headerColumn}>
+              <ThemedText style={styles.headerText}>현재가</ThemedText>
+              <ThemedText style={styles.sortIcon}>↕</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.headerColumn}>
+              <ThemedText style={styles.headerText}>전일대비</ThemedText>
+              <ThemedText style={styles.sortIcon}>↕</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.headerColumn}>
+              <ThemedText style={styles.headerText}>거래대금</ThemedText>
+              <ThemedText style={styles.sortIcon}>↕</ThemedText>
+            </TouchableOpacity>
+          </View>
 
           {/* 마켓 리스트 */}
           <FlatList
             data={filteredMarkets}
             keyExtractor={(m) => m.id}
-            onScroll={handleScroll}
-            scrollEventThrottle={16}
-            contentContainerStyle={{ paddingTop: 40, paddingBottom: 80 }}
+            contentContainerStyle={{ paddingBottom: 80 }}
             style={{ flex: 1 }}
             showsVerticalScrollIndicator={true}
             renderItem={({ item }) => {
@@ -262,6 +196,31 @@ export default function ExchangeScreen() {
             }}
             ItemSeparatorComponent={() => <View style={styles.separator} />}
           />
+        </View>
+      )}
+
+      {/* 검색 모달 */}
+      {showSearchModal && (
+        <View style={styles.searchModal}>
+          <View style={styles.searchModalContent}>
+            <View style={styles.searchInputContainer}>
+              <ThemedText style={styles.searchIcon}>🔍</ThemedText>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="코인명/심볼 검색"
+                placeholderTextColor="#666"
+                value={searchText}
+                onChangeText={setSearchText}
+                autoFocus={true}
+              />
+            </View>
+            <TouchableOpacity 
+              style={styles.searchCloseButton}
+              onPress={() => setShowSearchModal(false)}
+            >
+              <ThemedText style={styles.searchCloseText}>✕</ThemedText>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
 
@@ -493,6 +452,37 @@ const styles = StyleSheet.create({
   },
   separator: {
     height: 0,
+  },
+
+  // 검색 모달
+  searchModal: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    zIndex: 1000,
+    elevation: 1000,
+    justifyContent: 'flex-start',
+    paddingTop: 100,
+  },
+  searchModalContent: {
+    backgroundColor: '#1A1A1A',
+    marginHorizontal: 16,
+    borderRadius: 8,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  searchCloseButton: {
+    marginLeft: 12,
+    padding: 8,
+  },
+  searchCloseText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
 
   // 공지사항
