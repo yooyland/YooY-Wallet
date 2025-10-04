@@ -75,6 +75,17 @@ export default function MarketDetailScreen() {
       setRates(exchangeRates);
     })();
   }, []);
+
+  // 총 금액 계산
+  const updateTotalAmount = () => {
+    const qty = parseFloat(quantity) || 0;
+    const prc = parseFloat(price) || 0;
+    setTotalAmount((qty * prc).toFixed(2));
+  };
+
+  useEffect(() => {
+    updateTotalAmount();
+  }, [quantity, price]);
   
   if (loading) {
     return (
@@ -141,16 +152,6 @@ export default function MarketDetailScreen() {
     );
   };
 
-  const updateTotalAmount = () => {
-    if (quantity && price) {
-      const total = parseFloat(quantity) * parseFloat(price);
-      setTotalAmount(total.toLocaleString());
-    }
-  };
-
-  useEffect(() => {
-    updateTotalAmount();
-  }, [quantity, price]);
 
   return (
     <ThemedView style={styles.container}>

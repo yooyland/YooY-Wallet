@@ -31,7 +31,6 @@ export default function ExchangeScreen() {
   const [selectedMarket, setSelectedMarket] = useState('KRW');
   const [searchText, setSearchText] = useState('');
   const [sortBy, setSortBy] = useState('volume');
-  const [showNotice, setShowNotice] = useState(true);
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -214,9 +213,50 @@ export default function ExchangeScreen() {
     let tickers: UpbitTicker[] = [];
     
     if (selectedMarket === 'FAV') {
-      // 즐겨찾기: 모든 마켓에서 즐겨찾기된 코인 찾기
-      const allTickers = [...upbitMarkets.KRW, ...upbitMarkets.USDT, ...upbitMarkets.BTC];
-      tickers = allTickers.filter(ticker => favorites.includes(ticker.market));
+      // 즐겨찾기: 마켓 우선순위에 따라 중복 제거 (USDT > KRW > ETH > BTC)
+      const favMarkets: { [key: string]: UpbitTicker } = {};
+      
+      // 1. USDT 마켓 우선
+      upbitMarkets.USDT.forEach(ticker => {
+        if (ticker.market && favorites.includes(ticker.market)) {
+          const base = ticker.market.split('-')[1];
+          if (!favMarkets[base]) {
+            favMarkets[base] = ticker;
+          }
+        }
+      });
+      
+      // 2. KRW 마켓 (USDT에 없는 경우만)
+      upbitMarkets.KRW.forEach(ticker => {
+        if (ticker.market && favorites.includes(ticker.market)) {
+          const base = ticker.market.split('-')[1];
+          if (!favMarkets[base]) {
+            favMarkets[base] = ticker;
+          }
+        }
+      });
+      
+      // 3. ETH 마켓 (USDT, KRW에 없는 경우만)
+      upbitMarkets.ETH.forEach(ticker => {
+        if (ticker.symbol && favorites.includes(ticker.symbol)) {
+          const base = ticker.symbol.replace('ETH', '');
+          if (!favMarkets[base]) {
+            favMarkets[base] = ticker;
+          }
+        }
+      });
+      
+      // 4. BTC 마켓 (USDT, KRW, ETH에 없는 경우만)
+      upbitMarkets.BTC.forEach(ticker => {
+        if (ticker.market && favorites.includes(ticker.market)) {
+          const base = ticker.market.split('-')[1];
+          if (!favMarkets[base]) {
+            favMarkets[base] = ticker;
+          }
+        }
+      });
+      
+      tickers = Object.values(favMarkets).filter(ticker => ticker && ticker.market);
     } else if (selectedMarket === 'MY') {
       // 내 보유 코인: 마켓 우선순위에 따라 중복 제거 (USDT > KRW > ETH > BTC)
       const myMarkets: { [key: string]: UpbitTicker } = {};
@@ -540,17 +580,6 @@ export default function ExchangeScreen() {
         </View>
       )}
 
-      {/* 공지사항 */}
-      {showNotice && (
-        <View style={styles.noticeBanner}>
-          <ThemedText style={styles.noticeText}>
-            Notice : [YooY Land] Wishing everyone great prosperity!
-          </ThemedText>
-          <TouchableOpacity onPress={() => setShowNotice(false)}>
-            <ThemedText style={styles.noticeClose}>✕</ThemedText>
-          </TouchableOpacity>
-        </View>
-      )}
       
       <HamburgerMenu visible={menuOpen} onClose={() => setMenuOpen(false)} avatarUri={avatarUri} />
     </ThemedView>
@@ -864,31 +893,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
 
-  // 공지사항
-  noticeBanner: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#2A2A2A',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    zIndex: 999,
-    elevation: 999,
-  },
-  noticeText: {
-    flex: 1,
-    color: '#CCCCCC',
-    fontSize: 12,
-  },
-  noticeClose: {
-    color: '#999',
-    fontSize: 16,
-    marginLeft: 8,
-  },
 });
 
 
