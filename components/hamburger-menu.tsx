@@ -1,24 +1,22 @@
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { getAdminRoleByEmail, isAdmin } from '@/constants/admins';
+import { Colors } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
-import { isAdmin, getAdminRoleByEmail } from '@/constants/admins';
-import { Colors } from '@/constants/theme';
-import { formatCurrency, getExchangeRates } from '@/lib/currency';
 import { mockBalances } from '@/data/balances';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Link, router } from 'expo-router';
+import { formatCurrency, getExchangeRates } from '@/lib/currency';
+import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { 
-  Alert, 
-  Animated, 
-  Dimensions, 
-  Modal, 
-  Pressable, 
-  ScrollView, 
-  StyleSheet, 
-  TouchableOpacity, 
-  View 
+import {
+    Alert,
+    Animated,
+    Dimensions,
+    Modal,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    TouchableOpacity,
+    View
 } from 'react-native';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');

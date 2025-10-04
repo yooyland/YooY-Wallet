@@ -7,12 +7,20 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { mockBalances } from '@/data/balances';
 import { mockMarkets } from '@/data/markets';
-import { formatCurrency, getExchangeRates, formatPercentage } from '@/lib/currency';
+import { formatCurrency, getExchangeRates, formatPercentage, formatCrypto } from '@/lib/currency';
 import { t } from '@/i18n';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Button, StyleSheet, View } from 'react-native';
+import { 
+  Button, 
+  StyleSheet, 
+  View, 
+  ScrollView, 
+  TouchableOpacity, 
+  Dimensions
+} from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 
 const PHOTO_KEY = 'profile.photoUri';
 
@@ -43,54 +51,404 @@ export default function HomeScreen() {
   return (
     <ThemedView style={{ flex: 1 }}>
       <TopBar 
-        title="admin" 
+        title="jch4389" 
         onAvatarPress={() => setProfileOpen(true)} 
         onMenuPress={() => setMenuOpen(true)}
         avatarUri={avatarUri} 
       />
-      <View style={{ padding: 16 }}>
-        <ThemedText type="title">{t('dashboard', language)}</ThemedText>
-        <View style={{ height: 6 }} />
-        <ThemedText style={{ opacity: 0.7 }}>{t('totalAssets', language)}</ThemedText>
-        <ThemedText type="subtitle">{formatCurrency(total, currency, rates)}</ThemedText>
-
-        <View style={{ height: 16 }} />
-        <ThemedText type="subtitle">{t('quickActions', language)}</ThemedText>
-        <View style={styles.actionsRow}>
-          <Link href="/(tabs)/payments" asChild><Button title={t('depositWithdraw', language)} onPress={() => {}} /></Link>
-          <View style={{ width: 8 }} />
-          <Link href="/(tabs)/wallet" asChild><Button title={t('send', language)} onPress={() => {}} /></Link>
-          <View style={{ width: 8 }} />
-          <Link href="/(tabs)/exchange" asChild><Button title={t('trade', language)} onPress={() => {}} /></Link>
+      
+      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+        {/* Slogan */}
+        <View style={styles.sloganContainer}>
+          <ThemedText style={styles.slogan}>YooY Land is starting a new golden era with you.</ThemedText>
         </View>
 
-        <View style={{ height: 16 }} />
-        <ThemedText type="subtitle">{t('topMarkets', language)}</ThemedText>
-        {topMarkets.map((m) => (
-          <View key={m.id} style={styles.marketRow}>
-            <View style={{ flex: 1 }}>
-              <ThemedText type="defaultSemiBold">{m.base}/{m.quote}</ThemedText>
-              <ThemedText style={{ opacity: 0.7 }}>Vol 24h: {formatCurrency(m.volume24h, currency, rates)}</ThemedText>
+        {/* Asset Card */}
+        <LinearGradient
+          colors={['#4A148C', '#7B1FA2', '#9C27B0']}
+          style={styles.assetCard}
+        >
+          <View style={styles.currencyTabs}>
+            <TouchableOpacity style={[styles.currencyTab, styles.activeTab]}>
+              <ThemedText style={styles.activeTabText}>Crypto</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.currencyTab}>
+              <ThemedText style={styles.tabText}>KRW</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.currencyTab}>
+              <ThemedText style={styles.tabText}>USD</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.currencyTab}>
+              <ThemedText style={styles.tabText}>JPY</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.currencyTab}>
+              <ThemedText style={styles.tabText}>CNY</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.currencyTab}>
+              <ThemedText style={styles.tabText}>EUR</ThemedText>
+            </TouchableOpacity>
+          </View>
+          
+          <View style={styles.mainBalance}>
+            <ThemedText style={styles.balanceAmount}>1,193.0540 ETH</ThemedText>
+            <ThemedText style={styles.assetCount}>18개 자산</ThemedText>
+          </View>
+          
+          <View style={styles.cardFooter}>
+            <View style={styles.logoContainer}>
+              <ThemedText style={styles.cardLogo}>YooY</ThemedText>
             </View>
-            <View style={{ alignItems: 'flex-end' }}>
-              <ThemedText>{formatCurrency(m.price, currency, rates)}</ThemedText>
-              <ThemedText style={{ color: m.change24hPct >= 0 ? '#2ecc71' : '#e74c3c', fontWeight: '600' }}>
-                {formatPercentage(m.change24hPct)}
-              </ThemedText>
+            <TouchableOpacity style={styles.dropdownButton}>
+              <ThemedText style={styles.dropdownIcon}>▼</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </LinearGradient>
+
+        {/* Quick Actions */}
+        <View style={styles.quickActionsSection}>
+          <ThemedText style={styles.sectionTitle}>빠른 액션</ThemedText>
+          <View style={styles.quickActionsGrid}>
+            <TouchableOpacity style={styles.actionButton}>
+              <ThemedText style={styles.actionIcon}>📤</ThemedText>
+              <ThemedText style={styles.actionText}>전송</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton}>
+              <ThemedText style={styles.actionIcon}>📥</ThemedText>
+              <ThemedText style={styles.actionText}>수신</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton}>
+              <ThemedText style={styles.actionIcon}>📱</ThemedText>
+              <ThemedText style={styles.actionText}>QR코드</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton}>
+              <ThemedText style={styles.actionIcon}>🔄</ThemedText>
+              <ThemedText style={styles.actionText}>거래내역</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton}>
+              <ThemedText style={styles.actionIcon}>📅</ThemedText>
+              <ThemedText style={styles.actionText}>calendar</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton}>
+              <ThemedText style={styles.actionIcon}>❓</ThemedText>
+              <ThemedText style={styles.actionText}>일일출석보상</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton}>
+              <ThemedText style={styles.actionIcon}>❓</ThemedText>
+              <ThemedText style={styles.actionText}>일일출석보상</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton}>
+              <ThemedText style={styles.actionIcon}>⋯</ThemedText>
+              <ThemedText style={styles.actionText}>더보기</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Holdings Section */}
+        <View style={styles.holdingsSection}>
+          <ThemedText style={styles.sectionTitle}>보유자산</ThemedText>
+          
+          <View style={styles.filterOptions}>
+            <TouchableOpacity style={styles.filterOption}>
+              <View style={[styles.filterDot, { backgroundColor: '#FFD700' }]} />
+              <ThemedText style={styles.filterText}>즐겨찾기</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.filterOption}>
+              <View style={[styles.filterDot, { backgroundColor: '#FF69B4' }]} />
+              <ThemedText style={styles.filterText}>보유 1위</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.filterOption}>
+              <View style={[styles.filterDot, { backgroundColor: '#32CD32' }]} />
+              <ThemedText style={styles.filterText}>보유 2위</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.filterOption}>
+              <View style={[styles.filterDot, { backgroundColor: '#87CEEB' }]} />
+              <ThemedText style={styles.filterText}>보유 3위</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.filterOption}>
+              <View style={[styles.filterDot, { backgroundColor: '#FFFFFF' }]} />
+              <ThemedText style={styles.filterText}>기타</ThemedText>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.cryptoGrid}>
+            {/* YOY Card */}
+            <View style={styles.cryptoCard}>
+              <View style={styles.cryptoHeader}>
+                <ThemedText style={styles.cryptoName}>YOY *</ThemedText>
+                <ThemedText style={styles.cryptoChange}>-2.88%</ThemedText>
+              </View>
+              <View style={styles.cryptoIcon}>
+                <ThemedText style={styles.cryptoIconText}>Y</ThemedText>
+              </View>
+              <ThemedText style={styles.cryptoAmount}>50.00M YOY</ThemedText>
+              <ThemedText style={styles.cryptoValue}>₩6677.09B</ThemedText>
+              <ThemedText style={styles.cryptoValueUSD}>$4.82B</ThemedText>
+            </View>
+
+            {/* BTC Card */}
+            <View style={styles.cryptoCard}>
+              <View style={styles.cryptoHeader}>
+                <ThemedText style={styles.cryptoName}>BTC *</ThemedText>
+                <ThemedText style={styles.cryptoChange}>-2.50%</ThemedText>
+              </View>
+              <View style={styles.cryptoIcon}>
+                <ThemedText style={styles.cryptoIconText}>B</ThemedText>
+              </View>
+              <ThemedText style={styles.cryptoAmount}>2.44 BTC</ThemedText>
+              <ThemedText style={styles.cryptoValue}>₩539.93B</ThemedText>
+              <ThemedText style={styles.cryptoValueUSD}>$389.84M</ThemedText>
+            </View>
+
+            {/* ETH Card */}
+            <View style={styles.cryptoCard}>
+              <View style={styles.cryptoHeader}>
+                <ThemedText style={styles.cryptoName}>ETH *</ThemedText>
+                <ThemedText style={[styles.cryptoChange, { color: '#32CD32' }]}>+1.80%</ThemedText>
+              </View>
+              <View style={styles.cryptoIcon}>
+                <ThemedText style={styles.cryptoIconText}>E</ThemedText>
+              </View>
+              <ThemedText style={styles.cryptoAmount}>3.16 ETH</ThemedText>
+              <ThemedText style={styles.cryptoValue}>₩1,234.56M</ThemedText>
+              <ThemedText style={styles.cryptoValueUSD}>$890.12M</ThemedText>
+            </View>
+
+            {/* SOL Card */}
+            <View style={styles.cryptoCard}>
+              <View style={styles.cryptoHeader}>
+                <ThemedText style={styles.cryptoName}>SOL *</ThemedText>
+                <ThemedText style={styles.cryptoChange}>-5.20%</ThemedText>
+              </View>
+              <View style={styles.cryptoIcon}>
+                <ThemedText style={styles.cryptoIconText}>S</ThemedText>
+              </View>
+              <ThemedText style={styles.cryptoAmount}>34.00 SOL</ThemedText>
+              <ThemedText style={styles.cryptoValue}>₩123.45M</ThemedText>
+              <ThemedText style={styles.cryptoValueUSD}>$89.01M</ThemedText>
             </View>
           </View>
-        ))}
-
-        <View style={{ height: 16 }} />
-        <Button title={t('signOut', language)} onPress={async () => { await signOut(); }} />
-      </View>
+        </View>
+      </ScrollView>
+      
       <ProfileSheet visible={profileOpen} onClose={() => setProfileOpen(false)} onSaved={(uri) => setAvatarUri(uri)} />
       <HamburgerMenu visible={menuOpen} onClose={() => setMenuOpen(false)} />
-    </ThemedView>
+      </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  actionsRow: { flexDirection: 'row', alignItems: 'center' },
-  marketRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, opacity: 0.9 },
+  container: {
+    flex: 1,
+    backgroundColor: '#0A0A0A',
+  },
+  sloganContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  slogan: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    textAlign: 'center',
+    opacity: 0.8,
+  },
+  assetCard: {
+    margin: 20,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#FFD700',
+    padding: 20,
+    shadowColor: '#FFD700',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  currencyTabs: {
+    flexDirection: 'row',
+    marginBottom: 20,
+  },
+  currencyTab: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginRight: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  activeTab: {
+    backgroundColor: '#FFD700',
+  },
+  tabText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  activeTabText: {
+    color: '#0A0A0A',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  mainBalance: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  balanceAmount: {
+    color: '#90EE90',
+    fontSize: 28,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  assetCount: {
+    color: '#90EE90',
+    fontSize: 14,
+    opacity: 0.8,
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  logoContainer: {
+    flex: 1,
+  },
+  cardLogo: {
+    color: '#FFD700',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  dropdownButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#0A0A0A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dropdownIcon: {
+    color: '#FFD700',
+    fontSize: 12,
+  },
+  quickActionsSection: {
+    paddingHorizontal: 20,
+    marginBottom: 20,
+  },
+  sectionTitle: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+    marginBottom: 16,
+  },
+  quickActionsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  actionButton: {
+    width: '22%',
+    aspectRatio: 1,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FFD700',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  actionIcon: {
+    fontSize: 20,
+    marginBottom: 4,
+  },
+  actionText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  holdingsSection: {
+    paddingHorizontal: 20,
+    marginBottom: 20,
+  },
+  filterOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 16,
+  },
+  filterOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 16,
+    marginBottom: 8,
+  },
+  filterDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  filterText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    opacity: 0.8,
+  },
+  cryptoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  cryptoCard: {
+    width: '48%',
+    backgroundColor: '#1A1A1A',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FFD700',
+    padding: 12,
+    marginBottom: 12,
+  },
+  cryptoHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  cryptoName: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  cryptoChange: {
+    color: '#FF6B6B',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  cryptoIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FFD700',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  cryptoIconText: {
+    color: '#0A0A0A',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  cryptoAmount: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  cryptoValue: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    opacity: 0.8,
+    marginBottom: 2,
+  },
+  cryptoValueUSD: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    opacity: 0.6,
+  },
 });
