@@ -262,30 +262,156 @@ export default function DashboardScreen() {
 
         {/* Quick Actions */}
         <View style={styles.quickActionsSection}>
-          <ThemedText style={styles.sectionTitle}>Quick Actions</ThemedText>
+          <ThemedText style={styles.sectionTitle}>빠른 액션</ThemedText>
           <View style={styles.quickActionsGrid}>
-            <Link href="/(tabs)/exchange" asChild>
-              <TouchableOpacity style={styles.actionButton}>
-                <ThemedText style={styles.actionIcon}>📈</ThemedText>
-                <ThemedText style={styles.actionText}>Trade</ThemedText>
-              </TouchableOpacity>
-            </Link>
-            <Link href="/(tabs)/wallet" asChild>
-              <TouchableOpacity style={styles.actionButton}>
-                <ThemedText style={styles.actionIcon}>💳</ThemedText>
-                <ThemedText style={styles.actionText}>Send</ThemedText>
-              </TouchableOpacity>
-            </Link>
-            <Link href="/(tabs)/payments" asChild>
-              <TouchableOpacity style={styles.actionButton}>
-                <ThemedText style={styles.actionIcon}>💰</ThemedText>
-                <ThemedText style={styles.actionText}>Deposit</ThemedText>
-              </TouchableOpacity>
-            </Link>
             <TouchableOpacity style={styles.actionButton}>
-              <ThemedText style={styles.actionIcon}>📊</ThemedText>
-              <ThemedText style={styles.actionText}>Analytics</ThemedText>
+              <ThemedText style={styles.actionIcon}>✈️</ThemedText>
+              <ThemedText style={styles.actionText}>전송</ThemedText>
             </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton}>
+              <ThemedText style={styles.actionIcon}>⬇️</ThemedText>
+              <ThemedText style={styles.actionText}>수신</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton}>
+              <ThemedText style={styles.actionIcon}>📱</ThemedText>
+              <ThemedText style={styles.actionText}>QR코드</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton}>
+              <ThemedText style={styles.actionIcon}>🔄</ThemedText>
+              <ThemedText style={styles.actionText}>거래내역</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton}>
+              <ThemedText style={styles.actionIcon}>📅</ThemedText>
+              <ThemedText style={styles.actionText}>calendar</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton}>
+              <ThemedText style={styles.actionIcon}>❓</ThemedText>
+              <ThemedText style={styles.actionText}>일일출석보상</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton}>
+              <ThemedText style={styles.actionIcon}>❓</ThemedText>
+              <ThemedText style={styles.actionText}>일일출석보상</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.actionButton}>
+              <ThemedText style={styles.actionIcon}>⋯</ThemedText>
+              <ThemedText style={styles.actionText}>더보기</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Holdings Section */}
+        <View style={styles.holdingsSection}>
+          <ThemedText style={styles.sectionTitle}>보유자산</ThemedText>
+          
+          {/* Legend */}
+          <View style={styles.legendContainer}>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: '#FFD700' }]} />
+              <ThemedText style={styles.legendText}>즐겨찾기</ThemedText>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: '#FF69B4' }]} />
+              <ThemedText style={styles.legendText}>보유 1위</ThemedText>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: '#90EE90' }]} />
+              <ThemedText style={styles.legendText}>보유 2위</ThemedText>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: '#87CEEB' }]} />
+              <ThemedText style={styles.legendText}>보유 3위</ThemedText>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: '#808080' }]} />
+              <ThemedText style={styles.legendText}>기타</ThemedText>
+            </View>
+          </View>
+
+          {/* Asset Cards Grid */}
+          <View style={styles.assetCardsGrid}>
+            {/* YOY Card */}
+            <View style={[styles.assetCard, { backgroundColor: '#FFD700' }]}>
+              <View style={styles.cardHeader}>
+                <ThemedText style={styles.cardSymbol}>YOY ★</ThemedText>
+                <View style={styles.priceChangeContainer}>
+                  <ThemedText style={styles.priceChange}>-2.88%</ThemedText>
+                  <ThemedText style={styles.priceChangeIcon}>↓</ThemedText>
+                </View>
+              </View>
+              <View style={styles.cardContent}>
+                <ThemedText style={styles.cardAmount}>50.00M YOY</ThemedText>
+                <ThemedText style={styles.cardValue}>₩6677.09B</ThemedText>
+                <ThemedText style={styles.cardValue}>$4.82B</ThemedText>
+              </View>
+              <View style={styles.cardIcon}>
+                <View style={[styles.iconCircle, { backgroundColor: '#FFD700' }]}>
+                  <ThemedText style={styles.iconText}>Y</ThemedText>
+                </View>
+              </View>
+            </View>
+
+            {/* BTC Card */}
+            <View style={[styles.assetCard, { backgroundColor: '#FF8C00' }]}>
+              <View style={styles.cardHeader}>
+                <ThemedText style={styles.cardSymbol}>BTC ★</ThemedText>
+                <View style={styles.priceChangeContainer}>
+                  <ThemedText style={styles.priceChange}>-2.50%</ThemedText>
+                  <ThemedText style={styles.priceChangeIcon}>↓</ThemedText>
+                </View>
+              </View>
+              <View style={styles.cardContent}>
+                <ThemedText style={styles.cardAmount}>2.44 BTC</ThemedText>
+                <ThemedText style={styles.cardValue}>₩539.93B</ThemedText>
+                <ThemedText style={styles.cardValue}>$389.84M</ThemedText>
+              </View>
+              <View style={styles.cardIcon}>
+                <View style={[styles.iconCircle, { backgroundColor: '#FF8C00' }]}>
+                  <ThemedText style={styles.iconText}>B</ThemedText>
+                </View>
+              </View>
+            </View>
+
+            {/* ETH Card */}
+            <View style={[styles.assetCard, { backgroundColor: '#8A2BE2' }]}>
+              <View style={styles.cardHeader}>
+                <ThemedText style={styles.cardSymbol}>ETH ★</ThemedText>
+                <View style={styles.priceChangeContainer}>
+                  <ThemedText style={[styles.priceChange, { color: '#00FF00' }]}>+1.80%</ThemedText>
+                  <ThemedText style={[styles.priceChangeIcon, { color: '#00FF00' }]}>↑</ThemedText>
+                </View>
+              </View>
+              <View style={styles.cardContent}>
+                <ThemedText style={styles.cardAmount}>3.16 ETH</ThemedText>
+                <ThemedText style={styles.cardValue}>₩289.11M</ThemedText>
+                <ThemedText style={styles.cardValue}>$222.45M</ThemedText>
+              </View>
+              <View style={styles.cardIcon}>
+                <View style={[styles.iconCircle, { backgroundColor: '#8A2BE2' }]}>
+                  <ThemedText style={styles.iconText}>E</ThemedText>
+                </View>
+              </View>
+            </View>
+
+            {/* SOL Card */}
+            <View style={[styles.assetCard, { backgroundColor: '#4169E1' }]}>
+              <View style={styles.cardHeader}>
+                <ThemedText style={styles.cardSymbol}>SOL ★</ThemedText>
+                <View style={styles.priceChangeContainer}>
+                  <ThemedText style={styles.priceChange}>-5.20%</ThemedText>
+                  <ThemedText style={styles.priceChangeIcon}>↓</ThemedText>
+                </View>
+              </View>
+              <View style={styles.cardContent}>
+                <ThemedText style={styles.cardAmount}>34.00 SOL</ThemedText>
+                <ThemedText style={styles.cardValue}>₩5.72M</ThemedText>
+                <ThemedText style={styles.cardValue}>$4.40M</ThemedText>
+              </View>
+              <View style={styles.cardIcon}>
+                <View style={[styles.iconCircle, { backgroundColor: '#4169E1' }]}>
+                  <ThemedText style={styles.iconText}>S</ThemedText>
+                </View>
+              </View>
+            </View>
           </View>
         </View>
 
@@ -502,23 +628,120 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   actionButton: {
-    width: '48%',
+    width: '22%',
     backgroundColor: '#1A1A1A',
     borderRadius: 12,
-    padding: 16,
+    padding: 12,
     alignItems: 'center',
     marginBottom: 12,
     borderWidth: 1,
     borderColor: '#FFD700',
   },
   actionIcon: {
-    fontSize: 24,
-    marginBottom: 8,
+    fontSize: 20,
+    marginBottom: 6,
   },
   actionText: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
+    textAlign: 'center',
+  },
+  holdingsSection: {
+    padding: 20,
+  },
+  legendContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 16,
+    justifyContent: 'space-between',
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    width: '48%',
+  },
+  legendDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  legendText: {
+    color: '#CCCCCC',
+    fontSize: 12,
+  },
+  assetCardsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  assetCard: {
+    width: '48%',
+    height: 120,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    position: 'relative',
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  cardSymbol: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  priceChangeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  priceChange: {
+    color: '#FF4444',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginRight: 4,
+  },
+  priceChangeIcon: {
+    color: '#FF4444',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  cardContent: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  cardAmount: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  cardValue: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    opacity: 0.8,
+  },
+  cardIcon: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+  },
+  iconCircle: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   topMarketsSection: {
     padding: 20,
