@@ -40,9 +40,9 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
   const adminRole = currentUser?.email ? getAdminRoleByEmail(currentUser.email) : null;
 
   const tabs = [
-    { id: 'APP', label: 'APP' },
-    { id: 'DEX', label: 'DEX' },
-    { id: 'CHAT', label: 'CHAT' },
+    { id: 'APP', label: 'App' },
+    { id: 'DEX', label: 'Dex' },
+    { id: 'CHAT', label: 'Chat' },
     { id: 'TODO', label: 'To-Do' },
     { id: 'SHOP', label: 'Shop' }
   ];
