@@ -355,6 +355,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 8,
+    borderWidth: 3,
+    borderColor: '#FFD700',
   },
   cardBackground: {
     position: 'absolute',
@@ -386,12 +388,12 @@ const styles = StyleSheet.create({
   tabText: {
     color: '#CCCCCC',
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: 'bold',
   },
   activeTabText: {
     color: '#FFD700',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: 'bold',
   },
   mainBalance: {
     alignItems: 'center',
