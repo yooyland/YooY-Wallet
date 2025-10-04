@@ -218,7 +218,8 @@ export default function ExchangeScreen() {
             keyExtractor={(m) => m.id}
             onScroll={handleScroll}
             scrollEventThrottle={16}
-            contentContainerStyle={{ paddingTop: 50 }}
+            contentContainerStyle={{ paddingTop: 50, paddingBottom: 80 }}
+            style={{ flex: 1 }}
             renderItem={({ item }) => {
               const isUp = item.change24hPct >= 0;
               return (
@@ -264,7 +265,7 @@ export default function ExchangeScreen() {
       {showNotice && (
         <View style={styles.noticeBanner}>
           <ThemedText style={styles.noticeText}>
-            공지 [업비트 ATH 이벤트] 비트코인 ATH 기념! 풍성한 한가위에...
+            Notice : [YooY Land] Wishing everyone great prosperity!
           </ThemedText>
           <TouchableOpacity onPress={() => setShowNotice(false)}>
             <ThemedText style={styles.noticeClose}>✕</ThemedText>
@@ -487,13 +488,18 @@ const styles = StyleSheet.create({
 
   // 공지사항
   noticeBanner: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: '#2A2A2A',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    marginBottom: 60, // 하단 네비게이션 바 공간 확보
+    zIndex: 999,
+    elevation: 999,
   },
   noticeText: {
     flex: 1,
