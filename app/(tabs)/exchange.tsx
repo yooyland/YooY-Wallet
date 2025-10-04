@@ -727,7 +727,7 @@ const styles = StyleSheet.create({
     color: '#CCCCCC',
   },
   volumeUnit: {
-    fontSize: 11,
+    fontSize: 13,
     color: '#00BFFF',
     fontWeight: 'bold',
   },
