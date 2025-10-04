@@ -53,7 +53,7 @@ export default function TabLayout() {
               style={{
                 borderWidth: focused ? 0.5 : 0,
                 borderColor: '#FFD700',
-                borderRadius: 3,
+                borderRadius: 8,
                 padding: 1,
               }}
             />
@@ -72,7 +72,7 @@ export default function TabLayout() {
               style={{
                 borderWidth: focused ? 0.5 : 0,
                 borderColor: '#FFD700',
-                borderRadius: 3,
+                borderRadius: 8,
                 padding: 1,
               }}
             />
@@ -91,7 +91,7 @@ export default function TabLayout() {
               style={{
                 borderWidth: focused ? 0.5 : 0,
                 borderColor: '#FFD700',
-                borderRadius: 3,
+                borderRadius: 8,
                 padding: 1,
               }}
             />
@@ -110,7 +110,7 @@ export default function TabLayout() {
               style={{
                 borderWidth: focused ? 0.5 : 0,
                 borderColor: '#FFD700',
-                borderRadius: 3,
+                borderRadius: 8,
                 padding: 1,
               }}
             />
@@ -129,7 +129,7 @@ export default function TabLayout() {
               style={{
                 borderWidth: focused ? 0.5 : 0,
                 borderColor: '#FFD700',
-                borderRadius: 3,
+                borderRadius: 8,
                 padding: 1,
               }}
             />
@@ -148,7 +148,7 @@ export default function TabLayout() {
               style={{
                 borderWidth: focused ? 0.5 : 0,
                 borderColor: '#FFD700',
-                borderRadius: 3,
+                borderRadius: 8,
                 padding: 1,
               }}
             />
@@ -167,7 +167,7 @@ export default function TabLayout() {
               style={{
                 borderWidth: focused ? 0.5 : 0,
                 borderColor: '#FFD700',
-                borderRadius: 3,
+                borderRadius: 8,
                 padding: 1,
               }}
             />
