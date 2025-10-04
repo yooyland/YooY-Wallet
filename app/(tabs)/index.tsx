@@ -8,6 +8,7 @@ import { usePreferences } from '@/contexts/PreferencesContext';
 import { mockBalances } from '@/data/balances';
 import { mockMarkets } from '@/data/markets';
 import { formatCurrency, getExchangeRates, formatPercentage, formatCrypto } from '@/lib/currency';
+import { getUpbitPrices, convertKRWToUSD, getUSDKRWRate } from '@/lib/upbit';
 import { t } from '@/i18n';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link } from 'expo-router';
@@ -35,12 +36,41 @@ export default function HomeScreen() {
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [rates, setRates] = useState<any>(null);
   const [selectedCurrency, setSelectedCurrency] = useState<'Crypto' | 'KRW' | 'USD' | 'JPY' | 'CNY' | 'EUR'>('Crypto');
+  const [realTimeBalances, setRealTimeBalances] = useState(mockBalances);
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
       const exchangeRates = await getExchangeRates();
       setRates(exchangeRates);
+      
+      // Fetch real-time prices from Upbit
+      try {
+        const cryptoSymbols = mockBalances
+          .filter(balance => ['YOY', 'BTC', 'ETH', 'SOL', 'DOT', 'BNB', 'AVAX', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC'].includes(balance.symbol))
+          .map(balance => balance.symbol);
+        
+        const upbitPrices = await getUpbitPrices(cryptoSymbols);
+        const usdKrwRate = await getUSDKRWRate();
+        
+        const updatedBalances = mockBalances.map(balance => {
+          const upbitPrice = upbitPrices.find(price => price.symbol === balance.symbol);
+          if (upbitPrice) {
+            const usdPrice = convertKRWToUSD(upbitPrice.price, usdKrwRate);
+            return {
+              ...balance,
+              valueUSD: balance.amount * usdPrice,
+              currentPrice: usdPrice
+            };
+          }
+          return balance;
+        });
+        
+        setRealTimeBalances(updatedBalances);
+      } catch (error) {
+        console.error('Failed to fetch real-time prices:', error);
+        setRealTimeBalances(mockBalances);
+      }
     })();
   }, [currency]);
 
@@ -55,7 +85,7 @@ export default function HomeScreen() {
   const getTotalInCurrency = (currency: string) => {
     if (currency === 'Crypto') {
       // Convert all crypto assets to ETH equivalent (ETH is the base currency)
-      const ethTotal = mockBalances.reduce((sum, balance) => {
+      const ethTotal = realTimeBalances.reduce((sum, balance) => {
         if (balance.symbol === 'ETH') {
           return sum + balance.amount;
         } else if (['YOY', 'BTC', 'SOL', 'DOT', 'BNB', 'AVAX', 'XMR', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC'].includes(balance.symbol)) {
@@ -68,13 +98,13 @@ export default function HomeScreen() {
       return { amount: ethTotal, symbol: 'ETH' };
     } else {
       // For fiat currencies, show the actual fiat amount
-      const fiatBalance = mockBalances.find(balance => balance.symbol === currency);
+      const fiatBalance = realTimeBalances.find(balance => balance.symbol === currency);
       if (fiatBalance) {
         return { amount: fiatBalance.amount, symbol: currency };
       }
       
       // Fallback to USD conversion if fiat currency not found
-      const total = mockBalances.reduce((sum, balance) => sum + balance.valueUSD, 0);
+      const total = realTimeBalances.reduce((sum, balance) => sum + balance.valueUSD, 0);
       const converted = rates ? total * rates[currency] : total;
       return { amount: converted, symbol: currency };
     }
@@ -169,7 +199,7 @@ export default function HomeScreen() {
               </ThemedText>
               <ThemedText style={styles.assetCount}>
                 {selectedCurrency === 'Crypto' 
-                  ? mockBalances.filter(balance => 
+                  ? realTimeBalances.filter(balance => 
                       ['YOY', 'BTC', 'ETH', 'SOL', 'DOT', 'BNB', 'AVAX', 'XMR', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC'].includes(balance.symbol)
                     ).length
                   : 1
@@ -197,7 +227,7 @@ export default function HomeScreen() {
                 showsVerticalScrollIndicator={true}
                 nestedScrollEnabled={true}
               >
-                {mockBalances.filter(balance => 
+                {realTimeBalances.filter(balance => 
                   ['YOY', 'BTC', 'ETH', 'SOL', 'DOT', 'BNB', 'AVAX', 'XMR', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC'].includes(balance.symbol)
                 ).map((balance, index) => (
                   <View key={index} style={styles.holdingItem}>

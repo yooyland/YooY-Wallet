@@ -1,4 +1,4 @@
-export type Balance = { symbol: string; name: string; amount: number; valueUSD: number };
+export type Balance = { symbol: string; name: string; amount: number; valueUSD: number; currentPrice?: number };
 
 export const mockBalances: Balance[] = [
   // 가상화폐 (18종) - ETH 기준으로 환산 (1 ETH = $3,800 가정)
