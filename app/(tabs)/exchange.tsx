@@ -99,8 +99,8 @@ export default function ExchangeScreen() {
           {
             transform: [{
               translateY: scrollY.interpolate({
-                inputRange: [0, 100],
-                outputRange: [0, -200],
+                inputRange: [0, 50],
+                outputRange: [0, -100],
                 extrapolate: 'clamp',
               })
             }]
@@ -144,8 +144,8 @@ export default function ExchangeScreen() {
               {
                 transform: [{
                   translateY: scrollY.interpolate({
-                    inputRange: [0, 100],
-                    outputRange: [0, -200],
+                    inputRange: [0, 50],
+                    outputRange: [0, -100],
                     extrapolate: 'clamp',
                   })
                 }]
