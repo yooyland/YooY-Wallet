@@ -620,7 +620,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   orderBook: {
-    flex: 1,
+    flex: 0.4,
     backgroundColor: '#0A0A0A',
     padding: 16,
   },
@@ -667,7 +667,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   orderForm: {
-    width: width * 0.4,
+    flex: 0.6,
     backgroundColor: '#1A1A1A',
     padding: 16,
   },
