@@ -175,7 +175,9 @@ export default function HomeScreen() {
                 showsVerticalScrollIndicator={true}
                 nestedScrollEnabled={true}
               >
-                {mockBalances.map((balance, index) => (
+                {mockBalances.filter(balance => 
+                  ['YOY', 'BTC', 'ETH', 'SOL', 'DOT', 'BNB', 'AVAX', 'XMR', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC'].includes(balance.symbol)
+                ).map((balance, index) => (
                   <View key={index} style={styles.holdingItem}>
                     <View style={styles.holdingInfo}>
                       <ThemedText style={styles.holdingSymbol}>{balance.symbol}</ThemedText>
