@@ -231,7 +231,7 @@ export default function HomeScreen() {
       </ScrollView>
       
       <ProfileSheet visible={profileOpen} onClose={() => setProfileOpen(false)} onSaved={(uri) => setAvatarUri(uri)} />
-      <HamburgerMenu visible={menuOpen} onClose={() => setMenuOpen(false)} />
+      <HamburgerMenu visible={menuOpen} onClose={() => setMenuOpen(false)} avatarUri={avatarUri} />
       </ThemedView>
   );
 }

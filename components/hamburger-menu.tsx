@@ -11,6 +11,7 @@ import {
     Alert,
     Animated,
     Dimensions,
+    Image,
     Modal,
     Pressable,
     ScrollView,
@@ -24,9 +25,10 @@ const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 interface HamburgerMenuProps {
   visible: boolean;
   onClose: () => void;
+  avatarUri?: string | null;
 }
 
-export default function HamburgerMenu({ visible, onClose }: HamburgerMenuProps) {
+export default function HamburgerMenu({ visible, onClose, avatarUri }: HamburgerMenuProps) {
   const { currentUser, signOut } = useAuth();
   const { language, currency, setLanguage, setCurrency } = usePreferences();
   const [rates, setRates] = useState<any>(null);
@@ -276,9 +278,13 @@ export default function HamburgerMenu({ visible, onClose }: HamburgerMenuProps) 
             <View style={styles.header}>
               <View style={styles.userInfo}>
                  <View style={styles.avatar}>
-                   <ThemedText style={styles.avatarText}>
-                     {currentUser?.email?.charAt(0).toUpperCase() || 'A'}
-                   </ThemedText>
+                   {avatarUri ? (
+                     <Image source={{ uri: avatarUri }} style={styles.avatarImage} contentFit="cover" />
+                   ) : (
+                     <ThemedText style={styles.avatarText}>
+                       {currentUser?.email?.charAt(0).toUpperCase() || 'A'}
+                     </ThemedText>
+                   )}
                  </View>
                  <View style={styles.userDetails}>
                    <ThemedText type="defaultSemiBold">{currentUser?.email || 'admin@yooyland.com'}</ThemedText>
@@ -368,6 +374,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
+  },
+  avatarImage: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
   },
   avatarText: {
     color: Colors.dark.background,
