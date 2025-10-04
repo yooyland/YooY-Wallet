@@ -1,4 +1,5 @@
 // Upbit API integration for real-time cryptocurrency prices
+import { YOY_INFO, getYOYPriceKRW } from './yoy';
 
 export interface UpbitTicker {
   market: string;
@@ -171,7 +172,9 @@ export async function getAllUpbitMarkets(): Promise<{
       console.log('BTC markets not available:', error);
     }
 
-    // YOY 코인 추가 (업비트에 없을 경우 mock 데이터)
+    // YOY 코인 추가 (실제 Uniswap 데이터 기반)
+    const yoyPriceUSD = YOY_INFO.priceFeed.usd; // $0.03546 per YOY
+    const yoyPriceKRW = getYOYPriceKRW(1300); // 실제 KRW 가격
     const yoyMock: UpbitTicker = {
       market: 'KRW-YOY',
       trade_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
@@ -179,24 +182,24 @@ export async function getAllUpbitMarkets(): Promise<{
       trade_date_kst: new Date().toISOString().split('T')[0].replace(/-/g, ''),
       trade_time_kst: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
       trade_timestamp: Date.now(),
-      opening_price: 150,
-      high_price: 160,
-      low_price: 140,
-      trade_price: 155,
-      prev_closing_price: 150,
+      opening_price: yoyPriceKRW * 0.95, // 5% 변동
+      high_price: yoyPriceKRW * 1.05,
+      low_price: yoyPriceKRW * 0.95,
+      trade_price: yoyPriceKRW,
+      prev_closing_price: yoyPriceKRW * 0.98,
       change: 'RISE',
-      change_price: 5,
-      change_rate: 0.0333,
-      signed_change_price: 5,
-      signed_change_rate: 0.0333,
-      trade_volume: 1000,
-      acc_trade_volume: 10000,
-      acc_trade_volume_24h: 10000,
-      acc_trade_price: 1550000,
-      acc_trade_price_24h: 1550000,
-      highest_52_week_price: 200,
+      change_price: yoyPriceKRW * 0.02,
+      change_rate: 0.02,
+      signed_change_price: yoyPriceKRW * 0.02,
+      signed_change_rate: 0.02,
+      trade_volume: YOY_INFO.poolTokens * 0.1, // 풀의 10% 거래량
+      acc_trade_volume: YOY_INFO.poolTokens * 0.5, // 풀의 50% 누적 거래량
+      acc_trade_volume_24h: YOY_INFO.poolTokens * 0.5,
+      acc_trade_price: YOY_INFO.liquidityUSD * 0.1, // 유동성의 10% 거래대금
+      acc_trade_price_24h: YOY_INFO.liquidityUSD * 0.1,
+      highest_52_week_price: yoyPriceKRW * 1.5,
       highest_52_week_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
-      lowest_52_week_price: 100,
+      lowest_52_week_price: yoyPriceKRW * 0.5,
       lowest_52_week_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
       timestamp: Date.now()
     };
