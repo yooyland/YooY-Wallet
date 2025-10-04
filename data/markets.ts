@@ -11,7 +11,7 @@ export type Market = {
 };
 
 export const mockMarkets: Market[] = [
-  // Top 50 cryptocurrencies with KRW pairs
+  // KRW pairs
   { id: 'BTC-KRW', base: 'BTC', quote: 'KRW', symbol: 'BTC/KRW', name: 'Bitcoin', price: 45000000, change: 2.5, change24hPct: 2.5, volume24h: 1200000000000 },
   { id: 'ETH-KRW', base: 'ETH', quote: 'KRW', symbol: 'ETH/KRW', name: 'Ethereum', price: 3200000, change: -1.2, change24hPct: -1.2, volume24h: 800000000000 },
   { id: 'SOL-KRW', base: 'SOL', quote: 'KRW', symbol: 'SOL/KRW', name: 'Solana', price: 180000, change: 5.8, change24hPct: 5.8, volume24h: 200000000000 },

@@ -87,7 +87,19 @@ export default function ExchangeScreen() {
       }
       if (selectedMarket === 'MY') {
         // 사용자 보유 자산이 있는 코인만 표시 (mock)
-        return ['bitcoin', 'ethereum', 'solana'].includes(market.id);
+        return ['BTC-KRW', 'ETH-KRW', 'SOL-KRW'].includes(market.id);
+      }
+      if (selectedMarket === 'USDT') {
+        // USDT 마켓: USDT 페어 또는 주요 코인들
+        return market.quote === 'USDT' || ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(market.base);
+      }
+      if (selectedMarket === 'ETH') {
+        // ETH 마켓: ETH 페어 또는 주요 코인들
+        return market.quote === 'ETH' || ['BTC', 'SOL', 'BNB', 'XRP', 'ADA'].includes(market.base);
+      }
+      if (selectedMarket === 'BTC') {
+        // BTC 마켓: BTC 페어 또는 주요 코인들
+        return market.quote === 'BTC' || ['ETH', 'SOL', 'BNB', 'XRP', 'ADA'].includes(market.base);
       }
       return market.quote === selectedMarket;
     })
@@ -217,7 +229,13 @@ export default function ExchangeScreen() {
               const isMyTab = selectedMarket === 'MY';
               const displayPrice = selectedMarket === 'KRW' ? 
                 `₩${item.price.toLocaleString()}` : 
-                `$${item.price.toLocaleString()}`;
+                selectedMarket === 'USDT' ? 
+                  `$${item.price.toLocaleString()}` :
+                  selectedMarket === 'ETH' ?
+                    `${(item.price / 3200000).toFixed(4)} ETH` :
+                    selectedMarket === 'BTC' ?
+                      `${(item.price / 45000000).toFixed(6)} BTC` :
+                      `$${item.price.toLocaleString()}`;
               
               return (
                 <View style={styles.marketRow}>
