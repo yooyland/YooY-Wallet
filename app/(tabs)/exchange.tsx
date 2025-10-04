@@ -85,7 +85,7 @@ export default function ExchangeScreen() {
       useNativeDriver: false,
       listener: (event: any) => {
         const offsetY = event.nativeEvent.contentOffset.y;
-        setIsScrolled(offsetY > 20);
+        setIsScrolled(offsetY > 50);
       }
     }
   );
@@ -99,7 +99,7 @@ export default function ExchangeScreen() {
           {
             transform: [{
               translateY: scrollY.interpolate({
-                inputRange: [0, 50],
+                inputRange: [0, 30],
                 outputRange: [0, -100],
                 extrapolate: 'clamp',
               })
@@ -144,7 +144,7 @@ export default function ExchangeScreen() {
               {
                 transform: [{
                   translateY: scrollY.interpolate({
-                    inputRange: [0, 50],
+                    inputRange: [0, 30],
                     outputRange: [0, -100],
                     extrapolate: 'clamp',
                   })
