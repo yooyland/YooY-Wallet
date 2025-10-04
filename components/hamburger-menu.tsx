@@ -33,10 +33,19 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
   const { language, currency, setLanguage, setCurrency } = usePreferences();
   const [rates, setRates] = useState<any>(null);
   const [slideAnim] = useState(new Animated.Value(screenWidth));
+  const [selectedTab, setSelectedTab] = useState('APP');
 
   const total = mockBalances.reduce((s, b) => s + b.valueUSD, 0);
   const isUserAdmin = currentUser?.email ? isAdmin(currentUser.email) : false;
   const adminRole = currentUser?.email ? getAdminRoleByEmail(currentUser.email) : null;
+
+  const tabs = [
+    { id: 'APP', label: 'APP' },
+    { id: 'DEX', label: 'DEX' },
+    { id: 'CHAT', label: 'CHAT' },
+    { id: 'TODO', label: 'To-Do' },
+    { id: 'SHOP', label: 'Shop' }
+  ];
 
   useEffect(() => {
     (async () => {
@@ -306,6 +315,27 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
               </TouchableOpacity>
             </View>
 
+            {/* Tab Navigation */}
+            <View style={styles.tabContainer}>
+              {tabs.map((tab) => (
+                <TouchableOpacity
+                  key={tab.id}
+                  style={[
+                    styles.tab,
+                    selectedTab === tab.id && styles.activeTab
+                  ]}
+                  onPress={() => setSelectedTab(tab.id)}
+                >
+                  <ThemedText style={[
+                    styles.tabText,
+                    selectedTab === tab.id && styles.activeTabText
+                  ]}>
+                    {tab.label}
+                  </ThemedText>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             {/* Menu Sections */}
             {menuSections.map((section, sectionIndex) => (
               <View key={sectionIndex} style={styles.section}>
@@ -462,6 +492,34 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dark.icon,
     marginLeft: 40,
     marginRight: 20,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.dark.icon,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    backgroundColor: '#1A1A1A',
+    marginHorizontal: 2,
+    borderRadius: 4,
+  },
+  activeTab: {
+    backgroundColor: '#FFD700',
+  },
+  tabText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#FFFFFF',
+  },
+  activeTabText: {
+    color: '#000000',
+    fontWeight: 'bold',
   },
   signOutSection: {
     marginTop: 30,
