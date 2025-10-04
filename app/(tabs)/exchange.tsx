@@ -23,7 +23,7 @@ const { width } = Dimensions.get('window');
 
 export default function ExchangeScreen() {
   const { currentUser } = useAuth();
-  const { currency } = usePreferences();
+  const { currency, language } = usePreferences();
   const [rates, setRates] = useState<any>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
@@ -35,7 +35,7 @@ export default function ExchangeScreen() {
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-  const [nameLanguage, setNameLanguage] = useState<'en' | 'ko'>('en');
+  const [nameLanguage, setNameLanguage] = useState<'en' | 'ko'>(language === 'ko' ? 'ko' : 'en');
   const [upbitPrices, setUpbitPrices] = useState<Record<string, UpbitPrice>>({});
   const [upbitMarkets, setUpbitMarkets] = useState<{
     KRW: UpbitTicker[];
@@ -89,6 +89,11 @@ export default function ExchangeScreen() {
     const interval = setInterval(fetchUpbitMarkets, 300000);
     return () => clearInterval(interval);
   }, []);
+
+  // 언어 설정 변경 시 nameLanguage 업데이트
+  useEffect(() => {
+    setNameLanguage(language === 'ko' ? 'ko' : 'en');
+  }, [language]);
 
   const toggleFavorite = (coinId: string) => {
     setFavorites(prev => 
