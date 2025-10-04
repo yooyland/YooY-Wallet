@@ -5,14 +5,14 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 type Props = {
   title?: string;
   onMenuPress?: () => void;
-  onAvatarPress?: () => void;
+  onProfilePress?: () => void;
   avatarUri?: string | null;
 };
 
-export default function TopBar({ title = 'admin', onMenuPress, onAvatarPress, avatarUri }: Props) {
+export default function TopBar({ title = 'admin', onMenuPress, onProfilePress, avatarUri }: Props) {
   return (
     <View style={styles.container}>
-      <TouchableOpacity style={styles.left} onPress={onAvatarPress}>
+      <TouchableOpacity style={styles.left} onPress={onProfilePress}>
         {avatarUri ? (
           <Image source={{ uri: avatarUri }} style={styles.avatar} contentFit="cover" />
         ) : (
@@ -22,7 +22,7 @@ export default function TopBar({ title = 'admin', onMenuPress, onAvatarPress, av
         )}
         <Text style={styles.name}>{title}</Text>
       </TouchableOpacity>
-      <TouchableOpacity onPress={() => router.push('/(tabs)/')}>
+      <TouchableOpacity onPress={() => router.push('/(tabs)/dashboard')}>
         <Image source={require('@/assets/images/logo.png')} style={styles.logo} contentFit="contain" />
       </TouchableOpacity>
       <TouchableOpacity onPress={onMenuPress} style={styles.menuBtn}>
