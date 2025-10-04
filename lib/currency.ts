@@ -83,8 +83,8 @@ export function formatCurrency(
   const options: Intl.NumberFormatOptions = {
     style: 'currency',
     currency: currency,
-    minimumFractionDigits: currency === 'JPY' ? 0 : 2,
-    maximumFractionDigits: currency === 'JPY' ? 0 : 8,
+    minimumFractionDigits: currency === 'JPY' || currency === 'KRW' ? 0 : 2,
+    maximumFractionDigits: currency === 'JPY' || currency === 'KRW' ? 0 : 2,
   };
 
   return new Intl.NumberFormat('en-US', options).format(convertedAmount);
@@ -93,7 +93,7 @@ export function formatCurrency(
 export function formatCrypto(amount: number, symbol: string = 'YOY'): string {
   return new Intl.NumberFormat('en-US', {
     minimumFractionDigits: 0,
-    maximumFractionDigits: 8,
+    maximumFractionDigits: 2,
   }).format(amount) + ` ${symbol}`;
 }
 

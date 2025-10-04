@@ -258,31 +258,28 @@ export default function ExchangeScreen() {
               <ThemedText style={styles.sortIcon}>↕</ThemedText>
             </TouchableOpacity>
             <TouchableOpacity 
-              style={styles.headerColumn}
+              style={[styles.headerColumn, styles.headerColumnRight]}
               onPress={() => handleSort('price')}
             >
-              <ThemedText style={[styles.headerText, sortBy === 'price' && styles.activeHeaderText]}>
+              <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'price' && styles.activeHeaderText]}>
                 {selectedMarket === 'MY' ? '현재가/n매수가' : '현재가'}
               </ThemedText>
-              <ThemedText style={styles.sortIcon}>↕</ThemedText>
             </TouchableOpacity>
             <TouchableOpacity 
-              style={styles.headerColumn}
+              style={[styles.headerColumn, styles.headerColumnRight]}
               onPress={() => handleSort('change')}
             >
-              <ThemedText style={[styles.headerText, sortBy === 'change' && styles.activeHeaderText]}>
+              <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'change' && styles.activeHeaderText]}>
                 {selectedMarket === 'MY' ? '수익률/n수익금' : '전일대비'}
               </ThemedText>
-              <ThemedText style={styles.sortIcon}>↕</ThemedText>
             </TouchableOpacity>
             <TouchableOpacity 
-              style={styles.headerColumn}
+              style={[styles.headerColumn, styles.headerColumnRight]}
               onPress={() => handleSort('volume')}
             >
-              <ThemedText style={[styles.headerText, sortBy === 'volume' && styles.activeHeaderText]}>
+              <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'volume' && styles.activeHeaderText]}>
                 {selectedMarket === 'MY' ? '총보유금액' : '거래금액'}
               </ThemedText>
-              <ThemedText style={styles.sortIcon}>↕</ThemedText>
             </TouchableOpacity>
           </View>
 
@@ -306,9 +303,9 @@ export default function ExchangeScreen() {
                 selectedMarket === 'USDT' ? 
                   `$${currentPrice.toFixed(2)}` :
                   selectedMarket === 'ETH' ?
-                    `${currentPrice.toFixed(4)} ETH` :
+                    `${currentPrice.toFixed(2)} ETH` :
                     selectedMarket === 'BTC' ?
-                      `${currentPrice.toFixed(6)} BTC` :
+                      `${currentPrice.toFixed(2)} BTC` :
                       `$${currentPrice.toFixed(2)}`;
               
               return (
@@ -549,11 +546,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  headerColumnRight: {
+    justifyContent: 'flex-end',
+  },
   headerText: {
     fontSize: 12,
     color: '#999',
     fontWeight: '500',
     marginRight: 4,
+  },
+  headerTextRight: {
+    marginRight: 0,
+    textAlign: 'right',
   },
   sortIcon: {
     fontSize: 10,
