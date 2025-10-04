@@ -54,13 +54,17 @@ export default function HomeScreen() {
   // Calculate total assets in different currencies
   const getTotalInCurrency = (currency: string) => {
     if (currency === 'Crypto') {
-      // Convert all assets to ETH equivalent
-      const ethTotal = mockBalances.reduce((sum, balance) => {
-        // Simple conversion: assume 1 ETH = $2000, other cryptos have different rates
-        const ethRate = 2000;
-        return sum + (balance.valueUSD / ethRate);
+      // Convert all assets to YOY equivalent (YOY is the base currency)
+      const yoyTotal = mockBalances.reduce((sum, balance) => {
+        if (balance.symbol === 'YOY') {
+          return sum + balance.amount;
+        } else {
+          // Convert other cryptos to YOY: assume 1 YOY = $0.05
+          const yoyRate = 0.05;
+          return sum + (balance.valueUSD / yoyRate);
+        }
       }, 0);
-      return { amount: ethTotal, symbol: 'ETH' };
+      return { amount: yoyTotal, symbol: 'YOY' };
     } else {
       const total = mockBalances.reduce((sum, balance) => sum + balance.valueUSD, 0);
       const converted = rates ? total * rates[currency] : total;
@@ -185,8 +189,8 @@ export default function HomeScreen() {
               </View>
             ) : (
               <View style={styles.transactionList}>
-                <ThemedText style={styles.transactionTitle}>거래 내역</ThemedText>
-                <ThemedText style={styles.transactionText}>최근 거래 내역이 여기에 표시됩니다.</ThemedText>
+                <ThemedText style={styles.transactionTitle}>{t('transactions', language)}</ThemedText>
+                <ThemedText style={styles.transactionText}>Recent transactions will be displayed here.</ThemedText>
               </View>
             )}
           </View>
