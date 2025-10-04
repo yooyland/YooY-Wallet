@@ -20,6 +20,10 @@ export default function TabLayout() {
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
         tabBarButton: HapticTab,
+        tabBarStyle: {
+          borderTopWidth: 2,
+          borderTopColor: '#FFD700',
+        },
       }}>
       <Tabs.Screen
         name="exchange"
