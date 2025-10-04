@@ -1,10 +1,10 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
-type SupportedLanguage = 'en' | 'ko';
-type SupportedCurrency = 'USD' | 'KRW';
+type SupportedLanguage = 'en' | 'ko' | 'ja' | 'zh';
+type SupportedCurrency = 'USD' | 'KRW' | 'JPY' | 'CNY' | 'EUR';
 
-type PreferencesContextValue = {
+export type PreferencesContextValue = {
   language: SupportedLanguage;
   currency: SupportedCurrency;
   setLanguage: (lang: SupportedLanguage) => Promise<void>;
@@ -29,8 +29,8 @@ export function PreferencesProvider({ children }: { children: React.ReactNode })
           AsyncStorage.getItem(KEY_LANGUAGE),
           AsyncStorage.getItem(KEY_CURRENCY),
         ]);
-        if (storedLang === 'en' || storedLang === 'ko') setLanguageState(storedLang);
-        if (storedCur === 'USD' || storedCur === 'KRW') setCurrencyState(storedCur);
+        if (storedLang === 'en' || storedLang === 'ko' || storedLang === 'ja' || storedLang === 'zh') setLanguageState(storedLang);
+        if (storedCur === 'USD' || storedCur === 'KRW' || storedCur === 'JPY' || storedCur === 'CNY' || storedCur === 'EUR') setCurrencyState(storedCur);
       } finally {
         setIsLoading(false);
       }

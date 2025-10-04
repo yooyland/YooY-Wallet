@@ -1,98 +1,96 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
-
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
+import ProfileSheet from '@/components/profile-sheet';
+import HamburgerMenu from '@/components/hamburger-menu';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import TopBar from '@/components/top-bar';
+import { useAuth } from '@/contexts/AuthContext';
+import { usePreferences } from '@/contexts/PreferencesContext';
+import { mockBalances } from '@/data/balances';
+import { mockMarkets } from '@/data/markets';
+import { formatCurrency, getExchangeRates, formatPercentage } from '@/lib/currency';
+import { t } from '@/i18n';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link } from 'expo-router';
+import { useEffect, useState } from 'react';
+import { Button, StyleSheet, View } from 'react-native';
+
+const PHOTO_KEY = 'profile.photoUri';
 
 export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+  const { signOut } = useAuth();
+  const { currency, language } = usePreferences();
+  const total = mockBalances.reduce((s, b) => s + b.valueUSD, 0);
+  const topMarkets = mockMarkets.slice(0, 3);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [rates, setRates] = useState<any>(null);
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+  useEffect(() => {
+    (async () => {
+      const exchangeRates = await getExchangeRates();
+      setRates(exchangeRates);
+    })();
+  }, [currency]);
+
+  useEffect(() => {
+    (async () => {
+      const saved = await AsyncStorage.getItem(PHOTO_KEY);
+      if (saved) setAvatarUri(saved);
+    })();
+  }, []);
+
+  return (
+    <ThemedView style={{ flex: 1 }}>
+      <TopBar 
+        title="admin" 
+        onAvatarPress={() => setProfileOpen(true)} 
+        onMenuPress={() => setMenuOpen(true)}
+        avatarUri={avatarUri} 
+      />
+      <View style={{ padding: 16 }}>
+        <ThemedText type="title">{t('dashboard', language)}</ThemedText>
+        <View style={{ height: 6 }} />
+        <ThemedText style={{ opacity: 0.7 }}>{t('totalAssets', language)}</ThemedText>
+        <ThemedText type="subtitle">{formatCurrency(total, currency, rates)}</ThemedText>
+
+        <View style={{ height: 16 }} />
+        <ThemedText type="subtitle">{t('quickActions', language)}</ThemedText>
+        <View style={styles.actionsRow}>
+          <Link href="/(tabs)/payments" asChild><Button title={t('depositWithdraw', language)} onPress={() => {}} /></Link>
+          <View style={{ width: 8 }} />
+          <Link href="/(tabs)/wallet" asChild><Button title={t('send', language)} onPress={() => {}} /></Link>
+          <View style={{ width: 8 }} />
+          <Link href="/(tabs)/exchange" asChild><Button title={t('trade', language)} onPress={() => {}} /></Link>
+        </View>
+
+        <View style={{ height: 16 }} />
+        <ThemedText type="subtitle">{t('topMarkets', language)}</ThemedText>
+        {topMarkets.map((m) => (
+          <View key={m.id} style={styles.marketRow}>
+            <View style={{ flex: 1 }}>
+              <ThemedText type="defaultSemiBold">{m.base}/{m.quote}</ThemedText>
+              <ThemedText style={{ opacity: 0.7 }}>Vol 24h: {formatCurrency(m.volume24h, currency, rates)}</ThemedText>
+            </View>
+            <View style={{ alignItems: 'flex-end' }}>
+              <ThemedText>{formatCurrency(m.price, currency, rates)}</ThemedText>
+              <ThemedText style={{ color: m.change24hPct >= 0 ? '#2ecc71' : '#e74c3c', fontWeight: '600' }}>
+                {formatPercentage(m.change24hPct)}
+              </ThemedText>
+            </View>
+          </View>
+        ))}
+
+        <View style={{ height: 16 }} />
+        <Button title={t('signOut', language)} onPress={async () => { await signOut(); }} />
+      </View>
+      <ProfileSheet visible={profileOpen} onClose={() => setProfileOpen(false)} onSaved={(uri) => setAvatarUri(uri)} />
+      <HamburgerMenu visible={menuOpen} onClose={() => setMenuOpen(false)} />
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-  },
+  actionsRow: { flexDirection: 'row', alignItems: 'center' },
+  marketRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, opacity: 0.9 },
 });
