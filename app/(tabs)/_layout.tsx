@@ -32,7 +32,7 @@ export default function TabLayout() {
           height: 0,
         },
         tabBarItemStyle: {
-          justifyContent: 'center',
+          justifyContent: 'flex-end',
           alignItems: 'center',
           paddingBottom: 0,
           paddingTop: 0,
