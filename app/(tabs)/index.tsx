@@ -25,7 +25,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 const PHOTO_KEY = 'profile.photoUri';
 
 export default function HomeScreen() {
-  const { signOut } = useAuth();
+  const { signOut, currentUser } = useAuth();
   const { currency, language } = usePreferences();
   const total = mockBalances.reduce((s, b) => s + b.valueUSD, 0);
   const topMarkets = mockMarkets.slice(0, 3);
@@ -51,7 +51,7 @@ export default function HomeScreen() {
   return (
     <ThemedView style={{ flex: 1 }}>
       <TopBar 
-        title="jch4389" 
+        title={currentUser?.email?.split('@')[0] || 'User'} 
         onAvatarPress={() => setProfileOpen(true)} 
         onMenuPress={() => setMenuOpen(true)}
         avatarUri={avatarUri} 

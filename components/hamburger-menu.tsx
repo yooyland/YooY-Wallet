@@ -69,8 +69,13 @@ export default function HamburgerMenu({ visible, onClose }: HamburgerMenuProps) 
           text: 'Sign Out', 
           style: 'destructive',
           onPress: async () => {
-            await signOut();
-            onClose();
+            try {
+              await signOut();
+              onClose();
+            } catch (error) {
+              console.error('Sign out error:', error);
+              Alert.alert('Error', 'Failed to sign out. Please try again.');
+            }
           }
         }
       ]

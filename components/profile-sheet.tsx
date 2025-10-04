@@ -1,3 +1,4 @@
+import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { firebaseAuth } from '@/lib/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -17,6 +18,7 @@ const INFO_KEY = 'profile.info';
 
 export default function ProfileSheet({ visible, onClose, onSaved }: Props) {
   const slide = useRef(new Animated.Value(0)).current; // 0 hidden, 1 shown
+  const { currentUser } = useAuth();
   const { language, currency, setLanguage, setCurrency } = usePreferences();
   const [useHash, setUseHash] = useState(true);
   const [photoUri, setPhotoUri] = useState<string | null>(null);
@@ -66,7 +68,7 @@ export default function ProfileSheet({ visible, onClose, onSaved }: Props) {
           if (parsed.username) setUsername(parsed.username);
         } catch {}
       }
-      const currentEmail = firebaseAuth.currentUser?.email || (await AsyncStorage.getItem('user.email')) || 'admin@yooyland.com';
+      const currentEmail = currentUser?.email || firebaseAuth.currentUser?.email || (await AsyncStorage.getItem('user.email')) || 'admin@yooyland.com';
       setEmail(currentEmail);
       if (!savedInfo) deriveFromEmail(currentEmail);
     })();
