@@ -46,7 +46,8 @@ export default function ExchangeScreen() {
     KRW: UpbitTicker[];
     USDT: UpbitTicker[];
     BTC: UpbitTicker[];
-  }>({ KRW: [], USDT: [], BTC: [] });
+    ETH: any[];
+  }>({ KRW: [], USDT: [], BTC: [], ETH: [] });
   const [userHoldings] = useState<string[]>(['BTC', 'ETH', 'SOL', 'YOY']); // 사용자 보유 코인
 
   // 사용자 보유자산 데이터 (mock)
@@ -128,6 +129,22 @@ export default function ExchangeScreen() {
     };
   };
 
+  // 바이낸스 데이터를 Market 형식으로 변환
+  const convertBinanceToMarket = (ticker: any): Market => {
+    const base = ticker.symbol.replace('ETH', '');
+    return {
+      id: ticker.symbol,
+      base,
+      quote: 'ETH',
+      symbol: ticker.symbol,
+      name: base,
+      price: parseFloat(ticker.lastPrice),
+      change: parseFloat(ticker.priceChangePercent),
+      change24hPct: parseFloat(ticker.priceChangePercent),
+      volume24h: parseFloat(ticker.quoteVolume)
+    };
+  };
+
   // 현재 선택된 마켓의 데이터 가져오기
   const getCurrentMarketData = (): Market[] => {
     let tickers: UpbitTicker[] = [];
@@ -144,14 +161,12 @@ export default function ExchangeScreen() {
         return userHoldings.includes(base);
       });
     } else if (selectedMarket === 'ETH') {
-      // ETH 마켓: KRW 마켓에서 ETH 관련 코인들 (업비트에는 ETH 페어가 제한적)
-      tickers = upbitMarkets.KRW.filter(ticker => {
-        const base = ticker.market.split('-')[1];
-        return ['ETH', 'BTC', 'SOL', 'BNB', 'XRP', 'ADA', 'AVAX', 'DOT', 'LINK', 'LTC', 'ATOM', 'NEAR', 'FTM', 'ALGO', 'VET', 'ICP', 'FLOW', 'MANA', 'SAND', 'AXS', 'CHZ', 'ENJ', 'BAT', 'ZRX', 'COMP', 'MKR', 'SNX', 'YFI', 'UMA', 'LRC', 'REN', 'KNC', 'BAL', 'CRV', '1INCH', 'SUSHI', 'UNI', 'AAVE', 'GRT', 'LUNA', 'MIR', 'ANC', 'UST', 'KAVA', 'BAND', 'WBTC', 'YOY'].includes(base);
-      });
+      // ETH 마켓: 바이낸스 데이터 사용
+      return upbitMarkets.ETH.map(convertBinanceToMarket);
     } else {
       // KRW, USDT, BTC 마켓
       tickers = upbitMarkets[selectedMarket as keyof typeof upbitMarkets] || [];
+      return tickers.map(convertUpbitToMarket);
     }
 
     return tickers.map(convertUpbitToMarket);
