@@ -164,53 +164,56 @@ export default function ExchangeScreen() {
             </View>
           </Animated.View>
 
-          {/* 마켓 탭 - 스크롤 시 숨김 */}
+          {/* 마켓 탭 + 코인 제목탭 - 스크롤 시 상단 고정 */}
           <Animated.View 
             style={[
-              styles.marketTabContainer,
+              styles.fixedMarketSection,
               {
                 transform: [{
                   translateY: scrollY.interpolate({
                     inputRange: [0, 100],
-                    outputRange: [0, -100],
+                    outputRange: [0, 0],
                     extrapolate: 'clamp',
                   })
                 }]
               }
             ]}
           >
-            {['USDT', 'KRW', 'ETH', 'BTC', 'MY', 'FAV'].map((market) => (
-              <TouchableOpacity
-                key={market}
-                style={[styles.marketTab, selectedMarket === market && styles.activeMarketTab]}
-                onPress={() => setSelectedMarket(market)}
-              >
-                <ThemedText style={[styles.marketTabText, selectedMarket === market && styles.activeMarketTabText]}>
-                  {market}
-                </ThemedText>
-              </TouchableOpacity>
-            ))}
-          </Animated.View>
+            {/* 마켓 탭 */}
+            <View style={styles.marketTabContainer}>
+              {['USDT', 'KRW', 'ETH', 'BTC', 'MY', 'FAV'].map((market) => (
+                <TouchableOpacity
+                  key={market}
+                  style={[styles.marketTab, selectedMarket === market && styles.activeMarketTab]}
+                  onPress={() => setSelectedMarket(market)}
+                >
+                  <ThemedText style={[styles.marketTabText, selectedMarket === market && styles.activeMarketTabText]}>
+                    {market}
+                  </ThemedText>
+                </TouchableOpacity>
+              ))}
+            </View>
 
-          {/* 마켓 리스트 헤더 - 상단 고정 */}
-          <View style={[styles.listHeader, styles.fixedHeader]}>
-            <TouchableOpacity style={styles.headerColumn}>
-              <ThemedText style={styles.headerText}>한글명</ThemedText>
-              <ThemedText style={styles.sortIcon}>↕</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.headerColumn}>
-              <ThemedText style={styles.headerText}>현재가</ThemedText>
-              <ThemedText style={styles.sortIcon}>↕</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.headerColumn}>
-              <ThemedText style={styles.headerText}>전일대비</ThemedText>
-              <ThemedText style={styles.sortIcon}>↕</ThemedText>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.headerColumn}>
-              <ThemedText style={styles.headerText}>거래대금</ThemedText>
-              <ThemedText style={styles.sortIcon}>↕</ThemedText>
-            </TouchableOpacity>
-          </View>
+            {/* 마켓 리스트 헤더 */}
+            <View style={styles.listHeader}>
+              <TouchableOpacity style={styles.headerColumn}>
+                <ThemedText style={styles.headerText}>한글명</ThemedText>
+                <ThemedText style={styles.sortIcon}>↕</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.headerColumn}>
+                <ThemedText style={styles.headerText}>현재가</ThemedText>
+                <ThemedText style={styles.sortIcon}>↕</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.headerColumn}>
+                <ThemedText style={styles.headerText}>전일대비</ThemedText>
+                <ThemedText style={styles.sortIcon}>↕</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.headerColumn}>
+                <ThemedText style={styles.headerText}>거래대금</ThemedText>
+                <ThemedText style={styles.sortIcon}>↕</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
 
           {/* 마켓 리스트 */}
           <FlatList
@@ -218,7 +221,7 @@ export default function ExchangeScreen() {
             keyExtractor={(m) => m.id}
             onScroll={handleScroll}
             scrollEventThrottle={16}
-            contentContainerStyle={{ paddingTop: 50, paddingBottom: 80 }}
+            contentContainerStyle={{ paddingTop: 100, paddingBottom: 80 }}
             style={{ flex: 1 }}
             renderItem={({ item }) => {
               const isUp = item.change24hPct >= 0;
@@ -354,6 +357,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
+  // 고정 마켓 섹션
+  fixedMarketSection: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
+    elevation: 1000,
+  },
+
   // 마켓 탭
   marketTabContainer: {
     flexDirection: 'row',
@@ -389,14 +402,6 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#333',
-  },
-  fixedHeader: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 1000,
-    elevation: 1000,
   },
   headerColumn: {
     flex: 1,
