@@ -25,7 +25,7 @@ export default function TabLayout() {
           borderTopColor: '#FFD700',
           paddingBottom: 0,
           paddingTop: 0,
-          height: 40,
+          height: 50,
         },
         tabBarLabelStyle: {
           display: 'none',
@@ -38,54 +38,140 @@ export default function TabLayout() {
           paddingTop: 0,
           marginBottom: 0,
         },
+        tabBarActiveTintColor: '#FFD700',
+        tabBarInactiveTintColor: '#666666',
       }}>
       <Tabs.Screen
         name="dashboard"
         options={{
           title: '',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          tabBarIcon: ({ color, focused }) => (
+            <IconSymbol 
+              size={28} 
+              name="house.fill" 
+              color={color}
+              style={{
+                borderWidth: focused ? 2 : 0,
+                borderColor: '#FFD700',
+                borderRadius: 8,
+                padding: 4,
+              }}
+            />
+          ),
         }}
       />
       <Tabs.Screen
         name="exchange"
         options={{
           title: '',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="chart.bar.fill" color={color} />,
+          tabBarIcon: ({ color, focused }) => (
+            <IconSymbol 
+              size={28} 
+              name="chart.bar.fill" 
+              color={color}
+              style={{
+                borderWidth: focused ? 2 : 0,
+                borderColor: '#FFD700',
+                borderRadius: 8,
+                padding: 4,
+              }}
+            />
+          ),
         }}
       />
       <Tabs.Screen
         name="wallet"
         options={{
           title: '',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="wallet.pass.fill" color={color} />,
+          tabBarIcon: ({ color, focused }) => (
+            <IconSymbol 
+              size={28} 
+              name="wallet.pass.fill" 
+              color={color}
+              style={{
+                borderWidth: focused ? 2 : 0,
+                borderColor: '#FFD700',
+                borderRadius: 8,
+                padding: 4,
+              }}
+            />
+          ),
         }}
       />
       <Tabs.Screen
         name="payments"
         options={{
           title: '',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="creditcard.fill" color={color} />,
+          tabBarIcon: ({ color, focused }) => (
+            <IconSymbol 
+              size={28} 
+              name="creditcard.fill" 
+              color={color}
+              style={{
+                borderWidth: focused ? 2 : 0,
+                borderColor: '#FFD700',
+                borderRadius: 8,
+                padding: 4,
+              }}
+            />
+          ),
         }}
       />
       <Tabs.Screen
         name="chat"
         options={{
           title: '',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="bubble.left.and.bubble.right.fill" color={color} />,
+          tabBarIcon: ({ color, focused }) => (
+            <IconSymbol 
+              size={28} 
+              name="bubble.left.and.bubble.right.fill" 
+              color={color}
+              style={{
+                borderWidth: focused ? 2 : 0,
+                borderColor: '#FFD700',
+                borderRadius: 8,
+                padding: 4,
+              }}
+            />
+          ),
         }}
       />
       <Tabs.Screen
         name="todo"
         options={{
           title: '',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="checklist" color={color} />,
+          tabBarIcon: ({ color, focused }) => (
+            <IconSymbol 
+              size={28} 
+              name="checklist" 
+              color={color}
+              style={{
+                borderWidth: focused ? 2 : 0,
+                borderColor: '#FFD700',
+                borderRadius: 8,
+                padding: 4,
+              }}
+            />
+          ),
         }}
       />
       <Tabs.Screen
         name="more"
         options={{
           title: '',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="ellipsis" color={color} />,
+          tabBarIcon: ({ color, focused }) => (
+            <IconSymbol 
+              size={28} 
+              name="ellipsis" 
+              color={color}
+              style={{
+                borderWidth: focused ? 2 : 0,
+                borderColor: '#FFD700',
+                borderRadius: 8,
+                padding: 4,
+              }}
+            />
+          ),
         }}
       />
     </Tabs>
