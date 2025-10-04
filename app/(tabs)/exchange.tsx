@@ -31,6 +31,7 @@ export default function ExchangeScreen() {
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [selectedTab, setSelectedTab] = useState('KRW');
   const [searchText, setSearchText] = useState('');
+  const [sortBy, setSortBy] = useState('volume'); // volume, change, name
 
   useEffect(() => {
     (async () => {
@@ -46,29 +47,47 @@ export default function ExchangeScreen() {
     })();
   }, [currency]);
 
-  const filteredMarkets = mockMarkets.filter(market => 
-    market.base.toLowerCase().includes(searchText.toLowerCase()) ||
-    market.quote.toLowerCase().includes(searchText.toLowerCase())
-  );
+  const filteredMarkets = mockMarkets
+    .filter(market => 
+      market.base.toLowerCase().includes(searchText.toLowerCase()) ||
+      market.name.toLowerCase().includes(searchText.toLowerCase())
+    )
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'volume':
+          return b.volume24h - a.volume24h;
+        case 'change':
+          return b.change24hPct - a.change24hPct;
+        case 'name':
+          return a.base.localeCompare(b.base);
+        default:
+          return 0;
+      }
+    });
 
   return (
     <ThemedView style={{ flex: 1 }}>
       <TopBar 
-        title="Exchange" 
+        title="거래소" 
         onMenuPress={() => setMenuOpen(true)}
         avatarUri={avatarUri} 
       />
       
-      <ScrollView style={styles.container}>
-        {/* 검색바 */}
+      <View style={styles.container}>
+        {/* 검색 및 정렬 바 */}
         <View style={styles.searchContainer}>
-          <TextInput
-            style={styles.searchInput}
-            placeholder="코인명/심볼 검색"
-            placeholderTextColor="#666"
-            value={searchText}
-            onChangeText={setSearchText}
-          />
+          <View style={styles.searchRow}>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="코인명/심볼 검색"
+              placeholderTextColor="#666"
+              value={searchText}
+              onChangeText={setSearchText}
+            />
+            <TouchableOpacity style={styles.sortButton}>
+              <ThemedText style={styles.sortText}>정렬</ThemedText>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* 탭 메뉴 */}
@@ -88,10 +107,30 @@ export default function ExchangeScreen() {
 
         {/* 마켓 리스트 헤더 */}
         <View style={styles.listHeader}>
-          <ThemedText style={styles.headerText}>코인명</ThemedText>
-          <ThemedText style={styles.headerText}>현재가</ThemedText>
-          <ThemedText style={styles.headerText}>24h 변동</ThemedText>
-          <ThemedText style={styles.headerText}>거래량</ThemedText>
+          <TouchableOpacity 
+            style={styles.headerColumn}
+            onPress={() => setSortBy('name')}
+          >
+            <ThemedText style={styles.headerText}>코인명</ThemedText>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.headerColumn}
+            onPress={() => setSortBy('volume')}
+          >
+            <ThemedText style={styles.headerText}>현재가</ThemedText>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.headerColumn}
+            onPress={() => setSortBy('change')}
+          >
+            <ThemedText style={styles.headerText}>24h 변동</ThemedText>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.headerColumn}
+            onPress={() => setSortBy('volume')}
+          >
+            <ThemedText style={styles.headerText}>거래량</ThemedText>
+          </TouchableOpacity>
         </View>
 
         {/* 마켓 리스트 */}
@@ -107,24 +146,27 @@ export default function ExchangeScreen() {
                     <View style={styles.coinIcon}>
                       <ThemedText style={styles.coinSymbol}>{item.base.charAt(0)}</ThemedText>
                     </View>
-                    <View>
+                    <View style={styles.coinDetails}>
                       <ThemedText style={styles.coinName}>{item.base}</ThemedText>
-                      <ThemedText style={styles.coinPair}>{item.quote}</ThemedText>
+                      <ThemedText style={styles.coinFullName}>{item.name}</ThemedText>
                     </View>
                   </View>
                   
                   <View style={styles.priceInfo}>
                     <ThemedText style={styles.price}>
-                      {formatCurrency(item.price, currency, rates)}
+                      ₩{item.price.toLocaleString()}
                     </ThemedText>
+                  </View>
+                  
+                  <View style={styles.changeInfo}>
                     <ThemedText style={[styles.change, { color: isUp ? '#00C851' : '#FF4444' }]}>
-                      {formatPercentage(item.change24hPct)}
+                      {isUp ? '+' : ''}{item.change24hPct.toFixed(2)}%
                     </ThemedText>
                   </View>
                   
                   <View style={styles.volumeInfo}>
                     <ThemedText style={styles.volume}>
-                      {formatCurrency(item.volume24h, currency, rates)}
+                      ₩{(item.volume24h / 1000000000).toFixed(1)}B
                     </ThemedText>
                   </View>
                 </Pressable>
@@ -133,7 +175,7 @@ export default function ExchangeScreen() {
           }}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
         />
-      </ScrollView>
+      </View>
       
       <HamburgerMenu visible={menuOpen} onClose={() => setMenuOpen(false)} avatarUri={avatarUri} />
     </ThemedView>
@@ -143,26 +185,48 @@ export default function ExchangeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#FFFFFF',
   },
   searchContainer: {
-    padding: 16,
-    backgroundColor: '#1A1A1A',
+    backgroundColor: '#F8F9FA',
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: '#E9ECEF',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   searchInput: {
-    backgroundColor: '#2A2A2A',
-    borderRadius: 8,
-    padding: 12,
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#212529',
+    borderWidth: 1,
+    borderColor: '#DEE2E6',
+    marginRight: 8,
+  },
+  sortButton: {
+    backgroundColor: '#6C757D',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  sortText: {
     color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 12,
+    fontWeight: '500',
   },
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: '#1A1A1A',
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: '#E9ECEF',
   },
   tab: {
     flex: 1,
@@ -175,32 +239,39 @@ const styles = StyleSheet.create({
     borderBottomColor: '#FFD700',
   },
   tabText: {
-    fontSize: 16,
-    color: '#CCCCCC',
-    fontWeight: '600',
+    fontSize: 14,
+    color: '#6C757D',
+    fontWeight: '500',
   },
   activeTabText: {
     color: '#FFD700',
+    fontWeight: '600',
   },
   listHeader: {
     flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#1A1A1A',
+    backgroundColor: '#F8F9FA',
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: '#E9ECEF',
+    paddingVertical: 8,
+  },
+  headerColumn: {
+    flex: 1,
+    paddingHorizontal: 8,
+    alignItems: 'center',
   },
   headerText: {
-    fontSize: 12,
-    color: '#999',
-    fontWeight: '600',
+    fontSize: 11,
+    color: '#6C757D',
+    fontWeight: '500',
   },
   marketRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F8F9FA',
   },
   coinInfo: {
     flex: 2,
@@ -208,38 +279,44 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   coinIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     backgroundColor: '#FFD700',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: 8,
   },
   coinSymbol: {
-    color: '#000',
+    color: '#000000',
     fontWeight: 'bold',
-    fontSize: 14,
+    fontSize: 10,
+  },
+  coinDetails: {
+    flex: 1,
   },
   coinName: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#FFFFFF',
+    color: '#212529',
     marginBottom: 2,
   },
-  coinPair: {
-    fontSize: 12,
-    color: '#999',
+  coinFullName: {
+    fontSize: 11,
+    color: '#6C757D',
   },
   priceInfo: {
-    flex: 1.5,
+    flex: 1,
     alignItems: 'flex-end',
   },
   price: {
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 2,
+    color: '#212529',
+  },
+  changeInfo: {
+    flex: 1,
+    alignItems: 'flex-end',
   },
   change: {
     fontSize: 12,
@@ -250,13 +327,11 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   volume: {
-    fontSize: 12,
-    color: '#CCCCCC',
+    fontSize: 11,
+    color: '#6C757D',
   },
   separator: {
-    height: 1,
-    backgroundColor: '#333',
-    marginLeft: 60,
+    height: 0,
   },
 });
 
