@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import {
     Dimensions,
     FlatList,
+    Image,
     Pressable,
     StyleSheet,
     TextInput,
@@ -368,7 +369,11 @@ export default function ExchangeScreen() {
                     <Link href={{ pathname: '/market/[id]', params: { id: item.id } }} asChild>
                       <Pressable style={styles.coinInfoLink}>
                         <View style={styles.coinIcon}>
-                          <ThemedText style={styles.coinSymbol}>{item.base.charAt(0)}</ThemedText>
+                          <Image 
+                            source={{ uri: `https://static.upbit.com/logos/${item.base}.png` }}
+                            style={styles.coinLogo}
+                            defaultSource={{ uri: `https://static.upbit.com/logos/${item.base}.png` }}
+                          />
                         </View>
                         <View style={styles.coinDetails}>
                           <ThemedText style={styles.coinName}>
@@ -655,7 +660,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   favoriteButton: {
-    marginRight: 4,
+    marginRight: 8,
     padding: 2,
     position: 'absolute',
     left: 0,
@@ -664,7 +669,7 @@ const styles = StyleSheet.create({
   coinInfoLink: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginLeft: 20,
+    marginLeft: 24,
     flex: 1,
   },
   favoriteIcon: {
@@ -682,6 +687,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 8,
+  },
+  coinLogo: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
   },
   coinSymbol: {
     color: '#000000',
