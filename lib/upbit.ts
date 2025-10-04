@@ -174,7 +174,7 @@ export async function getUpbitKRWMarkets(): Promise<UpbitTicker[]> {
       timestamp: Date.now()
     };
 
-    return [...sortedTickers, yoyMock].sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h).slice(0, 100);
+    return [yoyMock, ...sortedTickers].slice(0, 100);
   } catch (error) {
     console.error('Failed to fetch Upbit KRW markets:', error);
     return [];
@@ -245,7 +245,7 @@ export async function getUpbitUSDTMarkets(): Promise<UpbitTicker[]> {
       timestamp: Date.now()
     };
 
-    return [...sortedTickers, yoyUSDT].sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h).slice(0, 100);
+    return [yoyUSDT, ...sortedTickers].slice(0, 100);
   } catch (error) {
     console.error('Failed to fetch Upbit USDT markets:', error);
     return [];
@@ -318,7 +318,7 @@ export async function getUpbitBTCMarkets(): Promise<UpbitTicker[]> {
       timestamp: Date.now()
     };
 
-    return [...sortedTickers, yoyBTC].sort((a: UpbitTicker, b: UpbitTicker) => b.acc_trade_price_24h - a.acc_trade_price_24h).slice(0, 100);
+    return [yoyBTC, ...sortedTickers].slice(0, 100);
   } catch (error) {
     console.error('Failed to fetch Upbit BTC markets:', error);
     return [];
@@ -338,13 +338,21 @@ export async function getBinanceETHMarkets(): Promise<any[]> {
       .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
       .slice(0, 100);
 
+    // YOY 코인 추가 (ETH 마켓용)
+    const yoyETH = {
+      symbol: 'YOYETH',
+      lastPrice: YOY_INFO.priceFeed.usd.toString(),
+      priceChangePercent: '3.45',
+      quoteVolume: (YOY_INFO.liquidityUSD * 0.1).toString()
+    };
+
     console.log('Binance ETH top 10 by trading volume:', ethMarkets.slice(0, 10).map(t => ({
       symbol: t.symbol,
       volume: t.quoteVolume
     })));
     
     console.log('Binance ETH markets found:', ethMarkets.length);
-    return ethMarkets;
+    return [yoyETH, ...ethMarkets].slice(0, 100);
   } catch (error) {
     console.error('Failed to fetch Binance ETH markets:', error);
     return [];
