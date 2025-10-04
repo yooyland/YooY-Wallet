@@ -23,14 +23,19 @@ export default function TabLayout() {
         tabBarStyle: {
           borderTopWidth: 2,
           borderTopColor: '#FFD700',
+          paddingBottom: 0,
+          paddingTop: 0,
+          height: 60,
         },
         tabBarLabelStyle: {
           display: 'none',
+          height: 0,
         },
         tabBarItemStyle: {
-          justifyContent: 'flex-end',
+          justifyContent: 'center',
           alignItems: 'center',
-          paddingBottom: 4,
+          paddingBottom: 0,
+          paddingTop: 0,
         },
       }}>
       <Tabs.Screen
