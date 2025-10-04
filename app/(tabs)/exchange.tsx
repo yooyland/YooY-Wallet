@@ -18,9 +18,10 @@ import {
   TouchableOpacity,
   TextInput,
   Dimensions,
-  Image
+  Image,
+  Animated
 } from 'react-native';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 
 const { width } = Dimensions.get('window');
 
@@ -35,6 +36,8 @@ export default function ExchangeScreen() {
   const [searchText, setSearchText] = useState('');
   const [sortBy, setSortBy] = useState('volume');
   const [showNotice, setShowNotice] = useState(true);
+  const [isScrolled, setIsScrolled] = useState(false);
+  const scrollY = useRef(new Animated.Value(0)).current;
 
   // 사용자 보유자산 데이터 (mock)
   const userAssets = {
@@ -76,10 +79,34 @@ export default function ExchangeScreen() {
       }
     });
 
+  const handleScroll = Animated.event(
+    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+    { 
+      useNativeDriver: false,
+      listener: (event: any) => {
+        const offsetY = event.nativeEvent.contentOffset.y;
+        setIsScrolled(offsetY > 50);
+      }
+    }
+  );
+
   return (
     <ThemedView style={{ flex: 1 }}>
-      {/* 거래소 상단바 */}
-      <View style={styles.exchangeTopBar}>
+      {/* 거래소 상단바 - 스크롤 시 숨김 */}
+      <Animated.View 
+        style={[
+          styles.exchangeTopBar,
+          {
+            transform: [{
+              translateY: scrollY.interpolate({
+                inputRange: [0, 100],
+                outputRange: [0, -100],
+                extrapolate: 'clamp',
+              })
+            }]
+          }
+        ]}
+      >
         <TouchableOpacity 
           style={[styles.exchangeTab, selectedTab === '거래소' && styles.activeExchangeTab]}
           onPress={() => setSelectedTab('거래소')}
@@ -106,12 +133,25 @@ export default function ExchangeScreen() {
             <ThemedText style={styles.iconText}>💬</ThemedText>
           </TouchableOpacity>
         </View>
-      </View>
+      </Animated.View>
 
       {selectedTab === '거래소' && (
         <View style={styles.container}>
-          {/* 검색바 */}
-          <View style={styles.searchContainer}>
+          {/* 검색바 - 스크롤 시 숨김 */}
+          <Animated.View 
+            style={[
+              styles.searchContainer,
+              {
+                transform: [{
+                  translateY: scrollY.interpolate({
+                    inputRange: [0, 100],
+                    outputRange: [0, -100],
+                    extrapolate: 'clamp',
+                  })
+                }]
+              }
+            ]}
+          >
             <View style={styles.searchInputContainer}>
               <ThemedText style={styles.searchIcon}>🔍</ThemedText>
               <TextInput
@@ -122,10 +162,23 @@ export default function ExchangeScreen() {
                 onChangeText={setSearchText}
               />
             </View>
-          </View>
+          </Animated.View>
 
-          {/* 마켓 탭 */}
-          <View style={styles.marketTabContainer}>
+          {/* 마켓 탭 - 스크롤 시 숨김 */}
+          <Animated.View 
+            style={[
+              styles.marketTabContainer,
+              {
+                transform: [{
+                  translateY: scrollY.interpolate({
+                    inputRange: [0, 100],
+                    outputRange: [0, -100],
+                    extrapolate: 'clamp',
+                  })
+                }]
+              }
+            ]}
+          >
             {['USDT', 'KRW', 'ETH', 'BTC', 'MY', 'FAV'].map((market) => (
               <TouchableOpacity
                 key={market}
@@ -137,10 +190,10 @@ export default function ExchangeScreen() {
                 </ThemedText>
               </TouchableOpacity>
             ))}
-          </View>
+          </Animated.View>
 
-          {/* 마켓 리스트 헤더 - 고정 */}
-          <View style={styles.listHeader}>
+          {/* 마켓 리스트 헤더 - 상단 고정 */}
+          <View style={[styles.listHeader, styles.fixedHeader]}>
             <TouchableOpacity style={styles.headerColumn}>
               <ThemedText style={styles.headerText}>한글명</ThemedText>
               <ThemedText style={styles.sortIcon}>↕</ThemedText>
@@ -163,6 +216,9 @@ export default function ExchangeScreen() {
           <FlatList
             data={filteredMarkets}
             keyExtractor={(m) => m.id}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            contentContainerStyle={{ paddingTop: 50 }}
             renderItem={({ item }) => {
               const isUp = item.change24hPct >= 0;
               return (
@@ -332,6 +388,14 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#333',
+  },
+  fixedHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
+    elevation: 1000,
   },
   headerColumn: {
     flex: 1,
