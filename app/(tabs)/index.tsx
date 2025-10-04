@@ -67,6 +67,13 @@ export default function HomeScreen() {
       }, 0);
       return { amount: ethTotal, symbol: 'ETH' };
     } else {
+      // For fiat currencies, show the actual fiat amount
+      const fiatBalance = mockBalances.find(balance => balance.symbol === currency);
+      if (fiatBalance) {
+        return { amount: fiatBalance.amount, symbol: currency };
+      }
+      
+      // Fallback to USD conversion if fiat currency not found
       const total = mockBalances.reduce((sum, balance) => sum + balance.valueUSD, 0);
       const converted = rates ? total * rates[currency] : total;
       return { amount: converted, symbol: currency };
@@ -153,9 +160,12 @@ export default function HomeScreen() {
                 {formatNumber(getTotalInCurrency(selectedCurrency).amount)} {getTotalInCurrency(selectedCurrency).symbol}
               </ThemedText>
               <ThemedText style={styles.assetCount}>
-                {mockBalances.filter(balance => 
-                  ['YOY', 'BTC', 'ETH', 'SOL', 'DOT', 'BNB', 'AVAX', 'XMR', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC'].includes(balance.symbol)
-                ).length} {t('assets', language)}
+                {selectedCurrency === 'Crypto' 
+                  ? mockBalances.filter(balance => 
+                      ['YOY', 'BTC', 'ETH', 'SOL', 'DOT', 'BNB', 'AVAX', 'XMR', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC'].includes(balance.symbol)
+                    ).length
+                  : 1
+                } {t('assets', language)}
               </ThemedText>
             </View>
             
