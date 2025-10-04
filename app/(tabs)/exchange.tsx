@@ -34,7 +34,7 @@ export default function ExchangeScreen() {
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-  const [nameLanguage, setNameLanguage] = useState<'en' | 'ko'>('ko');
+  const [nameLanguage, setNameLanguage] = useState<'en' | 'ko'>('en');
   const [upbitPrices, setUpbitPrices] = useState<Record<string, UpbitPrice>>({});
   const [upbitMarkets, setUpbitMarkets] = useState<{
     KRW: UpbitTicker[];
@@ -104,6 +104,18 @@ export default function ExchangeScreen() {
       setSortBy(column);
       setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
     }
+  };
+
+  // 거래대금 포맷팅 함수
+  const formatVolume = (volume: number, market: string) => {
+    if (volume >= 1000000000) {
+      return `${(volume / 1000000000).toFixed(1)}B`;
+    } else if (volume >= 1000000) {
+      return `${(volume / 1000000).toFixed(1)}M`;
+    } else if (volume >= 1000) {
+      return `${(volume / 1000).toFixed(1)}K`;
+    }
+    return volume.toFixed(0);
   };
 
   // 업비트 데이터를 Market 형식으로 변환
@@ -394,7 +406,15 @@ export default function ExchangeScreen() {
                     <ThemedText style={styles.volume}>
                       {isMyTab ? 
                         `₩${(currentPrice * 1.5).toLocaleString()}` : 
-                        `₩${(item.volume24h / 100000000).toFixed(0)}백만`
+                        selectedMarket === 'KRW' ? 
+                          `₩${formatVolume(item.volume24h, selectedMarket)}` :
+                          selectedMarket === 'USDT' ?
+                            `$${formatVolume(item.volume24h, selectedMarket)}` :
+                            selectedMarket === 'ETH' ?
+                              `${formatVolume(item.volume24h, selectedMarket)} ETH` :
+                              selectedMarket === 'BTC' ?
+                                `${formatVolume(item.volume24h, selectedMarket)} BTC` :
+                                `$${formatVolume(item.volume24h, selectedMarket)}`
                       }
                     </ThemedText>
                   </View>
@@ -695,7 +715,8 @@ const styles = StyleSheet.create({
   },
   volume: {
     fontSize: 11,
-    color: '#CCCCCC',
+    color: '#00BFFF',
+    fontWeight: 'bold',
   },
   buyPrice: {
     fontSize: 10,
