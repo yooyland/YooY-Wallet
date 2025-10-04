@@ -54,17 +54,18 @@ export default function HomeScreen() {
   // Calculate total assets in different currencies
   const getTotalInCurrency = (currency: string) => {
     if (currency === 'Crypto') {
-      // Convert all assets to YOY equivalent (YOY is the base currency)
-      const yoyTotal = mockBalances.reduce((sum, balance) => {
-        if (balance.symbol === 'YOY') {
+      // Convert all crypto assets to ETH equivalent (ETH is the base currency)
+      const ethTotal = mockBalances.reduce((sum, balance) => {
+        if (balance.symbol === 'ETH') {
           return sum + balance.amount;
-        } else {
-          // Convert other cryptos to YOY: assume 1 YOY = $0.05
-          const yoyRate = 0.05;
-          return sum + (balance.valueUSD / yoyRate);
+        } else if (['YOY', 'BTC', 'SOL', 'DOT', 'BNB', 'AVAX', 'XMR', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC'].includes(balance.symbol)) {
+          // Convert other cryptos to ETH: assume 1 ETH = $3,800
+          const ethRate = 3800;
+          return sum + (balance.valueUSD / ethRate);
         }
+        return sum;
       }, 0);
-      return { amount: yoyTotal, symbol: 'YOY' };
+      return { amount: ethTotal, symbol: 'ETH' };
     } else {
       const total = mockBalances.reduce((sum, balance) => sum + balance.valueUSD, 0);
       const converted = rates ? total * rates[currency] : total;

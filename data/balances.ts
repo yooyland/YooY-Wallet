@@ -1,7 +1,7 @@
 export type Balance = { symbol: string; name: string; amount: number; valueUSD: number };
 
 export const mockBalances: Balance[] = [
-  // 가상화폐 (18종)
+  // 가상화폐 (18종) - ETH 기준으로 환산 (1 ETH = $3,800 가정)
   { symbol: 'YOY', name: 'YooY Land', amount: 20000000, valueUSD: 1000000 },
   { symbol: 'BTC', name: 'Bitcoin', amount: 2.436, valueUSD: 150000 },
   { symbol: 'ETH', name: 'Ethereum', amount: 3.16, valueUSD: 12000 },
@@ -23,7 +23,7 @@ export const mockBalances: Balance[] = [
   { symbol: 'USDT', name: 'Tether', amount: 533, valueUSD: 533 },
   { symbol: 'USDC', name: 'USD Coin', amount: 239, valueUSD: 239 },
   
-  // 법정화폐 (5종) - USD 기준으로 환산
+  // 법정화폐 (5종) - 정확한 금액으로 표기
   { symbol: 'KRW', name: 'Korean Won', amount: 160122080, valueUSD: 120000 },
   { symbol: 'USD', name: 'US Dollar', amount: 84500, valueUSD: 84500 },
   { symbol: 'JPY', name: 'Japanese Yen', amount: 1840140, valueUSD: 12000 },
