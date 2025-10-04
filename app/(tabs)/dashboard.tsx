@@ -329,70 +329,89 @@ export default function DashboardScreen() {
 
           {/* Asset Cards Grid */}
           <View style={styles.assetCardsGrid}>
-            {realTimeBalances.map((balance, index) => {
-              // 각 자산별 색상 정의
-              const getCardColor = (symbol: string) => {
-                const colors = [
-                  '#FFD700', // YOY - 골드
-                  '#FF8C00', // BTC - 오렌지
-                  '#8A2BE2', // ETH - 보라
-                  '#4169E1', // SOL - 파랑
-                  '#32CD32', // DOT - 라임
-                  '#FFD700', // BNB - 골드
-                  '#FF4500', // AVAX - 레드오렌지
-                  '#FF69B4', // XMR - 핫핑크
-                  '#C0C0C0', // LTC - 실버
-                  '#00CED1', // LINK - 다크터콰이즈
-                  '#1E90FF', // ADA - 도저블루
-                  '#FF6347', // ATOM - 토마토
-                  '#9370DB', // XLM - 미디엄퍼플
-                  '#20B2AA', // XRP - 라이트시그린
-                  '#FFA500', // DOGE - 오렌지
-                  '#DC143C', // TRX - 크림슨
-                  '#00FF00', // USDT - 라임
-                  '#0000FF', // USDC - 블루
-                  '#FF0000', // KRW - 레드
-                  '#008000', // USD - 그린
-                  '#800080', // JPY - 퍼플
-                  '#FFC0CB', // CNY - 핑크
-                  '#FFFF00', // EUR - 옐로우
-                ];
-                return colors[index % colors.length];
-              };
-
-              const cardColor = getCardColor(balance.symbol);
-              const isPositive = Math.random() > 0.5; // 랜덤으로 상승/하락 표시
-              const changePercent = (Math.random() * 10 - 5).toFixed(2); // -5% ~ +5% 랜덤
-
-              return (
-                <View key={index} style={[styles.assetCard, { backgroundColor: cardColor }]}>
-                  <View style={styles.cardHeader}>
-                    <ThemedText style={styles.cardSymbol}>{balance.symbol} ★</ThemedText>
-                    <View style={styles.priceChangeContainer}>
-                      <ThemedText style={[styles.priceChange, { color: isPositive ? '#00FF00' : '#FF4444' }]}>
-                        {isPositive ? '+' : ''}{changePercent}%
-                      </ThemedText>
-                      <ThemedText style={[styles.priceChangeIcon, { color: isPositive ? '#00FF00' : '#FF4444' }]}>
-                        {isPositive ? '↑' : '↓'}
-                      </ThemedText>
-                    </View>
-                  </View>
-                  <View style={styles.cardContent}>
-                    <ThemedText style={styles.cardAmount}>
-                      {formatNumber(balance.amount, balance.symbol)} {balance.symbol}
-                    </ThemedText>
-                    <ThemedText style={styles.cardValue}>
-                      ${formatNumber(balance.valueUSD, 'USD')}
-                    </ThemedText>
-                  </View>
-                  <View style={styles.cardIcon}>
-                    <View style={[styles.iconCircle, { backgroundColor: cardColor }]}>
-                      <ThemedText style={styles.iconText}>{balance.symbol.charAt(0)}</ThemedText>
-                    </View>
-                  </View>
+            {/* YOY Card */}
+            <View style={[styles.assetCard, { backgroundColor: '#FFD700' }]}>
+              <View style={styles.cardHeader}>
+                <ThemedText style={styles.cardSymbol}>YOY ★</ThemedText>
+                <View style={styles.priceChangeContainer}>
+                  <ThemedText style={styles.priceChange}>-2.88%</ThemedText>
+                  <ThemedText style={styles.priceChangeIcon}>↓</ThemedText>
                 </View>
-              );
-            })}
+              </View>
+              <View style={styles.cardContent}>
+                <ThemedText style={styles.cardAmount}>20.00M YOY</ThemedText>
+                <ThemedText style={styles.cardValue}>₩6677.09B</ThemedText>
+                <ThemedText style={styles.cardValue}>$1.00M</ThemedText>
+              </View>
+              <View style={styles.cardIcon}>
+                <View style={[styles.iconCircle, { backgroundColor: '#FFD700' }]}>
+                  <ThemedText style={styles.iconText}>Y</ThemedText>
+                </View>
+              </View>
+            </View>
+
+            {/* BTC Card */}
+            <View style={[styles.assetCard, { backgroundColor: '#FF8C00' }]}>
+              <View style={styles.cardHeader}>
+                <ThemedText style={styles.cardSymbol}>BTC ★</ThemedText>
+                <View style={styles.priceChangeContainer}>
+                  <ThemedText style={styles.priceChange}>-2.50%</ThemedText>
+                  <ThemedText style={styles.priceChangeIcon}>↓</ThemedText>
+                </View>
+              </View>
+              <View style={styles.cardContent}>
+                <ThemedText style={styles.cardAmount}>2.44 BTC</ThemedText>
+                <ThemedText style={styles.cardValue}>₩539.93B</ThemedText>
+                <ThemedText style={styles.cardValue}>$150.00K</ThemedText>
+              </View>
+              <View style={styles.cardIcon}>
+                <View style={[styles.iconCircle, { backgroundColor: '#FF8C00' }]}>
+                  <ThemedText style={styles.iconText}>B</ThemedText>
+                </View>
+              </View>
+            </View>
+
+            {/* ETH Card */}
+            <View style={[styles.assetCard, { backgroundColor: '#8A2BE2' }]}>
+              <View style={styles.cardHeader}>
+                <ThemedText style={styles.cardSymbol}>ETH ★</ThemedText>
+                <View style={styles.priceChangeContainer}>
+                  <ThemedText style={[styles.priceChange, { color: '#00FF00' }]}>+1.80%</ThemedText>
+                  <ThemedText style={[styles.priceChangeIcon, { color: '#00FF00' }]}>↑</ThemedText>
+                </View>
+              </View>
+              <View style={styles.cardContent}>
+                <ThemedText style={styles.cardAmount}>3.16 ETH</ThemedText>
+                <ThemedText style={styles.cardValue}>₩289.11M</ThemedText>
+                <ThemedText style={styles.cardValue}>$12.00K</ThemedText>
+              </View>
+              <View style={styles.cardIcon}>
+                <View style={[styles.iconCircle, { backgroundColor: '#8A2BE2' }]}>
+                  <ThemedText style={styles.iconText}>E</ThemedText>
+                </View>
+              </View>
+            </View>
+
+            {/* SOL Card */}
+            <View style={[styles.assetCard, { backgroundColor: '#4169E1' }]}>
+              <View style={styles.cardHeader}>
+                <ThemedText style={styles.cardSymbol}>SOL ★</ThemedText>
+                <View style={styles.priceChangeContainer}>
+                  <ThemedText style={styles.priceChange}>-5.20%</ThemedText>
+                  <ThemedText style={styles.priceChangeIcon}>↓</ThemedText>
+                </View>
+              </View>
+              <View style={styles.cardContent}>
+                <ThemedText style={styles.cardAmount}>34.00 SOL</ThemedText>
+                <ThemedText style={styles.cardValue}>₩5.72M</ThemedText>
+                <ThemedText style={styles.cardValue}>$8.50K</ThemedText>
+              </View>
+              <View style={styles.cardIcon}>
+                <View style={[styles.iconCircle, { backgroundColor: '#4169E1' }]}>
+                  <ThemedText style={styles.iconText}>S</ThemedText>
+                </View>
+              </View>
+            </View>
           </View>
         </View>
 
