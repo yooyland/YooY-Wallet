@@ -210,7 +210,7 @@ export default function ExchangeScreen() {
         }
       });
       
-      tickers = Object.values(myMarkets);
+      tickers = Object.values(myMarkets).filter(ticker => ticker && ticker.market);
     } else if (selectedMarket === 'ETH') {
       // ETH 마켓: 바이낸스 데이터 사용
       return upbitMarkets.ETH.map(convertBinanceToMarket);

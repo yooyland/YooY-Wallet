@@ -68,6 +68,13 @@ export default function MarketDetailScreen() {
 
     findCoin();
   }, [id]);
+
+  useEffect(() => {
+    (async () => {
+      const exchangeRates = await getExchangeRates();
+      setRates(exchangeRates);
+    })();
+  }, []);
   
   if (loading) {
     return (
@@ -84,13 +91,6 @@ export default function MarketDetailScreen() {
       </ThemedView>
     );
   }
-
-  useEffect(() => {
-    (async () => {
-      const exchangeRates = await getExchangeRates();
-      setRates(exchangeRates);
-    })();
-  }, []);
 
   // 호가 데이터 (mock)
   const orderBookData = {
