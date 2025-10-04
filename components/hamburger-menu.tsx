@@ -62,6 +62,7 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
   }, [visible]);
 
   const handleSignOut = async () => {
+    console.log('Sign out button pressed');
     Alert.alert(
       'Sign Out',
       'Are you sure you want to sign out?',
@@ -72,7 +73,9 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
           style: 'destructive',
           onPress: async () => {
             try {
+              console.log('Starting sign out process');
               await signOut();
+              console.log('Sign out successful');
               onClose();
             } catch (error) {
               console.error('Sign out error:', error);
@@ -323,7 +326,13 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
 
             {/* Sign Out Button */}
             <View style={styles.signOutSection}>
-              <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
+              <TouchableOpacity 
+                style={styles.signOutButton} 
+                onPress={() => {
+                  console.log('Sign out TouchableOpacity pressed');
+                  handleSignOut();
+                }}
+              >
                 <ThemedText style={styles.signOutText}>Sign Out</ThemedText>
               </TouchableOpacity>
             </View>
