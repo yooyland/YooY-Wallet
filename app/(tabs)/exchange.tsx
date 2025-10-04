@@ -7,7 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { mockMarkets } from '@/data/markets';
 import { formatCurrency, getExchangeRates, formatPercentage } from '@/lib/currency';
-import { getUpbitPrices, UpbitPrice } from '@/lib/upbit';
+import { getUpbitPrices, UpbitPrice, getAllUpbitMarkets, UpbitTicker } from '@/lib/upbit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link } from 'expo-router';
 import { 
@@ -42,6 +42,12 @@ export default function ExchangeScreen() {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [nameLanguage, setNameLanguage] = useState<'en' | 'ko'>('ko');
   const [upbitPrices, setUpbitPrices] = useState<Record<string, UpbitPrice>>({});
+  const [upbitMarkets, setUpbitMarkets] = useState<{
+    KRW: UpbitTicker[];
+    USDT: UpbitTicker[];
+    BTC: UpbitTicker[];
+  }>({ KRW: [], USDT: [], BTC: [] });
+  const [userHoldings] = useState<string[]>(['BTC', 'ETH', 'SOL', 'YOY']); // 사용자 보유 코인
 
   // 사용자 보유자산 데이터 (mock)
   const userAssets = {
@@ -65,26 +71,22 @@ export default function ExchangeScreen() {
     })();
   }, [currency]);
 
-  // 업비트 가격 가져오기
+  // 업비트 마켓 데이터 가져오기
   useEffect(() => {
-    const fetchUpbitPrices = async () => {
+    const fetchUpbitMarkets = async () => {
       try {
-        const symbols = ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'AVAX', 'DOT', 'LINK', 'LTC', 'ATOM', 'NEAR', 'FTM', 'ALGO', 'VET', 'ICP', 'FLOW', 'MANA', 'SAND', 'AXS', 'CHZ', 'ENJ', 'BAT', 'ZRX', 'COMP', 'MKR', 'SNX', 'YFI', 'UMA', 'LRC', 'REN', 'KNC', 'BAL', 'CRV', '1INCH', 'SUSHI', 'UNI', 'AAVE', 'GRT', 'LUNA', 'MIR', 'ANC', 'UST', 'KAVA', 'BAND', 'WBTC', 'USDT', 'USDC', 'DAI', 'YOY'];
-        const prices = await getUpbitPrices(symbols);
-        const priceMap: Record<string, UpbitPrice> = {};
-        prices.forEach(price => {
-          priceMap[price.symbol] = price;
-        });
-        setUpbitPrices(priceMap);
-        console.log('Upbit prices loaded:', priceMap);
+        console.log('Fetching Upbit market data...');
+        const markets = await getAllUpbitMarkets();
+        setUpbitMarkets(markets);
+        console.log('Upbit markets loaded:', markets);
       } catch (error) {
-        console.error('Failed to fetch Upbit prices:', error);
+        console.error('Failed to fetch Upbit markets:', error);
       }
     };
 
-    fetchUpbitPrices();
-    // 30초마다 가격 업데이트
-    const interval = setInterval(fetchUpbitPrices, 30000);
+    fetchUpbitMarkets();
+    // 5분마다 마켓 데이터 업데이트
+    const interval = setInterval(fetchUpbitMarkets, 300000);
     return () => clearInterval(interval);
   }, []);
 
@@ -105,29 +107,53 @@ export default function ExchangeScreen() {
     }
   };
 
-  const filteredMarkets = mockMarkets
-    .filter(market => {
-      if (selectedMarket === 'FAV') {
-        return favorites.includes(market.id);
-      }
-      if (selectedMarket === 'MY') {
-        // 사용자 보유 자산이 있는 코인만 표시 (mock)
-        return ['BTC-KRW', 'ETH-KRW', 'SOL-KRW'].includes(market.id);
-      }
-      if (selectedMarket === 'USDT') {
-        // USDT 마켓: USDT 페어 또는 주요 코인들
-        return market.quote === 'USDT' || ['BTC', 'ETH', 'SOL', 'BNB', 'XRP'].includes(market.base);
-      }
-      if (selectedMarket === 'ETH') {
-        // ETH 마켓: ETH 페어 또는 주요 코인들
-        return market.quote === 'ETH' || ['BTC', 'SOL', 'BNB', 'XRP', 'ADA'].includes(market.base);
-      }
-      if (selectedMarket === 'BTC') {
-        // BTC 마켓: BTC 페어 또는 주요 코인들
-        return market.quote === 'BTC' || ['ETH', 'SOL', 'BNB', 'XRP', 'ADA'].includes(market.base);
-      }
-      return market.quote === selectedMarket;
-    })
+  // 업비트 데이터를 Market 형식으로 변환
+  const convertUpbitToMarket = (ticker: UpbitTicker): Market => {
+    const base = ticker.market.split('-')[1];
+    const quote = ticker.market.split('-')[0];
+    return {
+      id: ticker.market,
+      base,
+      quote,
+      symbol: `${base}/${quote}`,
+      name: base, // 업비트에서는 한글명이 별도로 필요
+      price: ticker.trade_price,
+      change: ticker.signed_change_rate * 100,
+      change24hPct: ticker.signed_change_rate * 100,
+      volume24h: ticker.acc_trade_price_24h
+    };
+  };
+
+  // 현재 선택된 마켓의 데이터 가져오기
+  const getCurrentMarketData = (): Market[] => {
+    let tickers: UpbitTicker[] = [];
+    
+    if (selectedMarket === 'FAV') {
+      // 즐겨찾기: 모든 마켓에서 즐겨찾기된 코인 찾기
+      const allTickers = [...upbitMarkets.KRW, ...upbitMarkets.USDT, ...upbitMarkets.BTC];
+      tickers = allTickers.filter(ticker => favorites.includes(ticker.market));
+    } else if (selectedMarket === 'MY') {
+      // 내 보유 코인: 모든 마켓에서 보유 코인 찾기
+      const allTickers = [...upbitMarkets.KRW, ...upbitMarkets.USDT, ...upbitMarkets.BTC];
+      tickers = allTickers.filter(ticker => {
+        const base = ticker.market.split('-')[1];
+        return userHoldings.includes(base);
+      });
+    } else if (selectedMarket === 'ETH') {
+      // ETH 마켓: KRW 마켓에서 ETH 관련 코인들 (업비트에는 ETH 페어가 제한적)
+      tickers = upbitMarkets.KRW.filter(ticker => {
+        const base = ticker.market.split('-')[1];
+        return ['ETH', 'BTC', 'SOL', 'BNB', 'XRP', 'ADA', 'AVAX', 'DOT', 'LINK', 'LTC', 'ATOM', 'NEAR', 'FTM', 'ALGO', 'VET', 'ICP', 'FLOW', 'MANA', 'SAND', 'AXS', 'CHZ', 'ENJ', 'BAT', 'ZRX', 'COMP', 'MKR', 'SNX', 'YFI', 'UMA', 'LRC', 'REN', 'KNC', 'BAL', 'CRV', '1INCH', 'SUSHI', 'UNI', 'AAVE', 'GRT', 'LUNA', 'MIR', 'ANC', 'UST', 'KAVA', 'BAND', 'WBTC', 'YOY'].includes(base);
+      });
+    } else {
+      // KRW, USDT, BTC 마켓
+      tickers = upbitMarkets[selectedMarket as keyof typeof upbitMarkets] || [];
+    }
+
+    return tickers.map(convertUpbitToMarket);
+  };
+
+  const filteredMarkets = getCurrentMarketData()
     .filter(market => 
       market.base.toLowerCase().includes(searchText.toLowerCase()) ||
       market.name.toLowerCase().includes(searchText.toLowerCase())
@@ -250,9 +276,8 @@ export default function ExchangeScreen() {
             showsVerticalScrollIndicator={true}
             renderItem={({ item }) => {
               // 실제 업비트 가격 사용
-              const upbitPrice = upbitPrices[item.base];
-              const currentPrice = upbitPrice?.price || item.price;
-              const currentChange = upbitPrice?.change24h || item.change24hPct;
+              const currentPrice = item.price;
+              const currentChange = item.change24hPct;
               const isUp = currentChange >= 0;
               const isFavorite = favorites.includes(item.id);
               const isMyTab = selectedMarket === 'MY';
@@ -260,12 +285,12 @@ export default function ExchangeScreen() {
               const displayPrice = selectedMarket === 'KRW' ? 
                 `₩${currentPrice.toLocaleString()}` : 
                 selectedMarket === 'USDT' ? 
-                  `$${(currentPrice / 1300).toFixed(2)}` :
+                  `$${currentPrice.toFixed(2)}` :
                   selectedMarket === 'ETH' ?
-                    `${(currentPrice / (upbitPrices['ETH']?.price || 3200000)).toFixed(4)} ETH` :
+                    `${currentPrice.toFixed(4)} ETH` :
                     selectedMarket === 'BTC' ?
-                      `${(currentPrice / (upbitPrices['BTC']?.price || 45000000)).toFixed(6)} BTC` :
-                      `$${(currentPrice / 1300).toFixed(2)}`;
+                      `${currentPrice.toFixed(6)} BTC` :
+                      `$${currentPrice.toFixed(2)}`;
               
               return (
                 <View style={styles.marketRow}>
