@@ -309,7 +309,7 @@ export default function ExchangeScreen() {
               onPress={() => handleSort('name')}
             >
               <ThemedText style={[styles.headerText, nameLanguage === 'ko' && styles.activeHeaderText]}>
-                {selectedMarket === 'MY' ? 'Coin/Market' : 'Coin/Market'}
+                {nameLanguage === 'ko' ? '코인/마켓' : 'Coin/Market'}
               </ThemedText>
               <ThemedText style={styles.sortIcon}>↕</ThemedText>
             </TouchableOpacity>
@@ -320,10 +320,10 @@ export default function ExchangeScreen() {
               <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'price' && styles.activeHeaderText]}>
                 {selectedMarket === 'MY' ? (
                   <View style={styles.headerTwoLine}>
-                    <ThemedText style={styles.headerText}>현재가</ThemedText>
-                    <ThemedText style={[styles.headerTextSmall, styles.headerTextRight]}>매수가</ThemedText>
+                    <ThemedText style={styles.headerText}>Price</ThemedText>
+                    <ThemedText style={[styles.headerTextSmall, styles.headerTextRight]}>Buy Price</ThemedText>
                   </View>
-                ) : '현재가'}
+                ) : 'Price'}
               </ThemedText>
             </TouchableOpacity>
             <TouchableOpacity 
@@ -333,10 +333,10 @@ export default function ExchangeScreen() {
               <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'change' && styles.activeHeaderText]}>
                 {selectedMarket === 'MY' ? (
                   <View style={styles.headerTwoLine}>
-                    <ThemedText style={styles.headerText}>수익률</ThemedText>
-                    <ThemedText style={[styles.headerTextSmall, styles.headerTextRight]}>수익금</ThemedText>
+                    <ThemedText style={styles.headerText}>Change</ThemedText>
+                    <ThemedText style={[styles.headerTextSmall, styles.headerTextRight]}>P&L</ThemedText>
                   </View>
-                ) : '전일대비'}
+                ) : 'Change'}
               </ThemedText>
             </TouchableOpacity>
             <TouchableOpacity 
@@ -344,7 +344,7 @@ export default function ExchangeScreen() {
               onPress={() => handleSort('volume')}
             >
               <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'volume' && styles.activeHeaderText]}>
-                {selectedMarket === 'MY' ? '총보유금액' : '거래금액'}
+                {selectedMarket === 'MY' ? 'Total Value' : 'Volume'}
               </ThemedText>
             </TouchableOpacity>
           </View>
@@ -645,7 +645,7 @@ const styles = StyleSheet.create({
   },
   headerText: {
     fontSize: 12,
-    color: '#999',
+    color: '#FFFFFF',
     fontWeight: '500',
     marginRight: 4,
     lineHeight: 14,
