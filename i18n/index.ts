@@ -99,6 +99,7 @@ const dict: Record<Lang, Record<string, string>> = {
     password: 'パスワード',
     slogan: 'YooY Landは、あなたと共に新しい黄金時代を始めます。',
     assets: '資産',
+    transactions: '取引',
   },
   zh: {
     home: '首页',
@@ -114,6 +115,7 @@ const dict: Record<Lang, Record<string, string>> = {
     password: '密码',
     slogan: 'YooY Land 正与您一起开启新的黄金时代。',
     assets: '资产',
+    transactions: '交易',
   },
 };
 
