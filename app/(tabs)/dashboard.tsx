@@ -1,5 +1,5 @@
-import ProfileSheet from '@/components/profile-sheet';
 import HamburgerMenu from '@/components/hamburger-menu';
+import ProfileSheet from '@/components/profile-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import TopBar from '@/components/top-bar';
@@ -7,22 +7,20 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { mockBalances } from '@/data/balances';
 import { mockMarkets } from '@/data/markets';
-import { formatCurrency, getExchangeRates, formatPercentage, formatCrypto } from '@/lib/currency';
-import { getUpbitPrices, convertKRWToUSD, getUSDKRWRate } from '@/lib/upbit';
 import { t } from '@/i18n';
+import { formatCurrency, formatPercentage, getExchangeRates } from '@/lib/currency';
+import { convertKRWToUSD, getUpbitPrices, getUSDKRWRate } from '@/lib/upbit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Link } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { 
-  Button, 
-  StyleSheet, 
-  View, 
-  ScrollView, 
-  TouchableOpacity, 
-  Dimensions,
-  Image
+import {
+    Image,
+    ScrollView,
+    StyleSheet,
+    TouchableOpacity,
+    View
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 
 const PHOTO_KEY = 'profile.photoUri';
 

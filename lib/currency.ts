@@ -98,6 +98,9 @@ export function formatCrypto(amount: number, symbol: string = 'YOY'): string {
 }
 
 export function formatPercentage(value: number): string {
+  if (value === undefined || value === null || isNaN(value)) {
+    return '+0.00%';
+  }
   const sign = value >= 0 ? '+' : '';
   return `${sign}${value.toFixed(2)}%`;
 }
