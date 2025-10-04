@@ -220,60 +220,62 @@ export default function ExchangeScreen() {
                 `$${item.price.toLocaleString()}`;
               
               return (
-                <Link href={{ pathname: '/market/[id]', params: { id: item.id } }} asChild>
-                  <Pressable style={styles.marketRow}>
-                    <View style={styles.coinInfo}>
-                      <TouchableOpacity 
-                        style={styles.favoriteButton}
-                        onPress={() => toggleFavorite(item.id)}
-                      >
-                        <ThemedText style={[styles.favoriteIcon, isFavorite && styles.favoriteActive]}>
-                          {isFavorite ? '★' : '☆'}
-                        </ThemedText>
-                      </TouchableOpacity>
-                      <View style={styles.coinIcon}>
-                        <ThemedText style={styles.coinSymbol}>{item.base.charAt(0)}</ThemedText>
-                      </View>
-                      <View style={styles.coinDetails}>
-                        <ThemedText style={styles.coinName}>
-                          {nameLanguage === 'ko' ? item.name : item.base}
-                        </ThemedText>
-                        <ThemedText style={styles.coinPair}>{item.base}/{item.quote}</ThemedText>
-                      </View>
-                    </View>
-                    
-                    <View style={styles.priceInfo}>
-                      <ThemedText style={styles.price}>
-                        {displayPrice}
+                <View style={styles.marketRow}>
+                  <View style={styles.coinInfo}>
+                    <TouchableOpacity 
+                      style={styles.favoriteButton}
+                      onPress={() => toggleFavorite(item.id)}
+                    >
+                      <ThemedText style={[styles.favoriteIcon, isFavorite && styles.favoriteActive]}>
+                        {isFavorite ? '★' : '☆'}
                       </ThemedText>
-                      {isMyTab && (
-                        <ThemedText style={styles.buyPrice}>
-                          매수가: {displayPrice}
-                        </ThemedText>
-                      )}
-                    </View>
-                    
-                    <View style={styles.changeInfo}>
-                      <ThemedText style={[styles.change, { color: isUp ? '#FF4444' : '#00C851' }]}>
-                        {isUp ? '+' : ''}{item.change24hPct.toFixed(2)}%
+                    </TouchableOpacity>
+                    <Link href={{ pathname: '/market/[id]', params: { id: item.id } }} asChild>
+                      <Pressable style={styles.coinInfoLink}>
+                        <View style={styles.coinIcon}>
+                          <ThemedText style={styles.coinSymbol}>{item.base.charAt(0)}</ThemedText>
+                        </View>
+                        <View style={styles.coinDetails}>
+                          <ThemedText style={styles.coinName}>
+                            {nameLanguage === 'ko' ? item.name : item.base}
+                          </ThemedText>
+                          <ThemedText style={styles.coinPair}>{item.base}/{item.quote}</ThemedText>
+                        </View>
+                      </Pressable>
+                    </Link>
+                  </View>
+                  
+                  <View style={styles.priceInfo}>
+                    <ThemedText style={styles.price}>
+                      {displayPrice}
+                    </ThemedText>
+                    {isMyTab && (
+                      <ThemedText style={styles.buyPrice}>
+                        매수가: {displayPrice}
                       </ThemedText>
-                      {isMyTab && (
-                        <ThemedText style={[styles.profit, { color: isUp ? '#FF4444' : '#00C851' }]}>
-                          {isUp ? '+' : ''}₩{(item.price * 0.1).toFixed(0)}
-                        </ThemedText>
-                      )}
-                    </View>
-                    
-                    <View style={styles.volumeInfo}>
-                      <ThemedText style={styles.volume}>
-                        {isMyTab ? 
-                          `₩${(item.price * 1.5).toLocaleString()}` : 
-                          `₩${(item.volume24h / 100000000).toFixed(0)}백만`
-                        }
+                    )}
+                  </View>
+                  
+                  <View style={styles.changeInfo}>
+                    <ThemedText style={[styles.change, { color: isUp ? '#FF4444' : '#00C851' }]}>
+                      {isUp ? '+' : ''}{item.change24hPct.toFixed(2)}%
+                    </ThemedText>
+                    {isMyTab && (
+                      <ThemedText style={[styles.profit, { color: isUp ? '#FF4444' : '#00C851' }]}>
+                        {isUp ? '+' : ''}₩{(item.price * 0.1).toFixed(0)}
                       </ThemedText>
-                    </View>
-                  </Pressable>
-                </Link>
+                    )}
+                  </View>
+                  
+                  <View style={styles.volumeInfo}>
+                    <ThemedText style={styles.volume}>
+                      {isMyTab ? 
+                        `₩${(item.price * 1.5).toLocaleString()}` : 
+                        `₩${(item.volume24h / 100000000).toFixed(0)}백만`
+                      }
+                    </ThemedText>
+                  </View>
+                </View>
               );
             }}
             ItemSeparatorComponent={() => <View style={styles.separator} />}
@@ -424,11 +426,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
-    backgroundColor: '#05113a',
+    backgroundColor: '#010925',
   },
   activeMarketTab: {
     borderBottomColor: '#FFD700',
-    backgroundColor: '#05113a',
+    backgroundColor: '#010925',
   },
   marketTabText: {
     fontSize: 14,
@@ -483,8 +485,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   favoriteButton: {
-    marginRight: 8,
-    padding: 4,
+    marginRight: 4,
+    padding: 2,
+    position: 'absolute',
+    left: 0,
+    zIndex: 10,
+  },
+  coinInfoLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 20,
+    flex: 1,
   },
   favoriteIcon: {
     color: '#666',
