@@ -221,8 +221,8 @@ export default function ExchangeScreen() {
             keyExtractor={(m) => m.id}
             onScroll={handleScroll}
             scrollEventThrottle={16}
-            contentContainerStyle={{ paddingTop: 100, paddingBottom: 80 }}
-            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingTop: 0, paddingBottom: 80 }}
+            style={{ flex: 1, marginTop: 100 }}
             renderItem={({ item }) => {
               const isUp = item.change24hPct >= 0;
               return (
