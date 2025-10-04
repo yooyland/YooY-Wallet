@@ -310,15 +310,15 @@ export default function DashboardScreen() {
               <ThemedText style={styles.legendText}>즐겨찾기</ThemedText>
             </View>
             <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#FF69B4' }]} />
+              <View style={[styles.legendDot, { backgroundColor: '#FF8C00' }]} />
               <ThemedText style={styles.legendText}>보유 1위</ThemedText>
             </View>
             <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#90EE90' }]} />
+              <View style={[styles.legendDot, { backgroundColor: '#8A2BE2' }]} />
               <ThemedText style={styles.legendText}>보유 2위</ThemedText>
             </View>
             <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#87CEEB' }]} />
+              <View style={[styles.legendDot, { backgroundColor: '#4169E1' }]} />
               <ThemedText style={styles.legendText}>보유 3위</ThemedText>
             </View>
             <View style={styles.legendItem}>
