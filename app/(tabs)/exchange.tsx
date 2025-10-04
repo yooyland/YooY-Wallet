@@ -217,7 +217,7 @@ export default function ExchangeScreen() {
               const isMyTab = selectedMarket === 'MY';
               const displayPrice = selectedMarket === 'KRW' ? 
                 `₩${item.price.toLocaleString()}` : 
-                `$${(item.price / 1300).toFixed(2)}`;
+                `$${item.price.toLocaleString()}`;
               
               return (
                 <Link href={{ pathname: '/market/[id]', params: { id: item.id } }} asChild>
@@ -424,11 +424,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
-    backgroundColor: '#1A237E',
+    backgroundColor: '#05113a',
   },
   activeMarketTab: {
     borderBottomColor: '#FFD700',
-    backgroundColor: '#3F51B5',
+    backgroundColor: '#05113a',
   },
   marketTabText: {
     fontSize: 14,
