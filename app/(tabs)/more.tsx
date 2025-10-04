@@ -1,20 +1,19 @@
+import HamburgerMenu from '@/components/hamburger-menu';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import TopBar from '@/components/top-bar';
-import HamburgerMenu from '@/components/hamburger-menu';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
-import { t } from '@/i18n';
 import { Link } from 'expo-router';
 import { useState } from 'react';
-import { 
-  StyleSheet, 
-  View, 
-  ScrollView, 
-  TouchableOpacity,
-  Dimensions
+import {
+    Dimensions,
+    ScrollView,
+    StyleSheet,
+    TouchableOpacity,
+    View
 } from 'react-native';
-import { IconSymbol } from '@/components/ui/icon-symbol';
 
 const { width } = Dimensions.get('window');
 
