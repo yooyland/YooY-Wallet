@@ -121,6 +121,9 @@ export default function ExchangeScreen() {
 
   // 업비트 데이터를 Market 형식으로 변환
   const convertUpbitToMarket = (ticker: UpbitTicker): Market => {
+    if (!ticker.market) {
+      throw new Error('Invalid ticker: market is undefined');
+    }
     const base = ticker.market.split('-')[1];
     const quote = ticker.market.split('-')[0];
     return {
@@ -138,6 +141,9 @@ export default function ExchangeScreen() {
 
   // 바이낸스 데이터를 Market 형식으로 변환
   const convertBinanceToMarket = (ticker: any): Market => {
+    if (!ticker.symbol) {
+      throw new Error('Invalid ticker: symbol is undefined');
+    }
     const base = ticker.symbol.replace('ETH', '');
     return {
       id: ticker.symbol,
@@ -166,33 +172,41 @@ export default function ExchangeScreen() {
       
       // 1. USDT 마켓 우선
       upbitMarkets.USDT.forEach(ticker => {
-        const base = ticker.market.split('-')[1];
-        if (userHoldings.includes(base) && !myMarkets[base]) {
-          myMarkets[base] = ticker;
+        if (ticker.market) {
+          const base = ticker.market.split('-')[1];
+          if (userHoldings.includes(base) && !myMarkets[base]) {
+            myMarkets[base] = ticker;
+          }
         }
       });
       
       // 2. KRW 마켓 (USDT에 없는 경우만)
       upbitMarkets.KRW.forEach(ticker => {
-        const base = ticker.market.split('-')[1];
-        if (userHoldings.includes(base) && !myMarkets[base]) {
-          myMarkets[base] = ticker;
+        if (ticker.market) {
+          const base = ticker.market.split('-')[1];
+          if (userHoldings.includes(base) && !myMarkets[base]) {
+            myMarkets[base] = ticker;
+          }
         }
       });
       
       // 3. ETH 마켓 (USDT, KRW에 없는 경우만)
       upbitMarkets.ETH.forEach(ticker => {
-        const base = ticker.symbol.replace('ETH', '');
-        if (userHoldings.includes(base) && !myMarkets[base]) {
-          myMarkets[base] = ticker;
+        if (ticker.symbol) {
+          const base = ticker.symbol.replace('ETH', '');
+          if (userHoldings.includes(base) && !myMarkets[base]) {
+            myMarkets[base] = ticker;
+          }
         }
       });
       
       // 4. BTC 마켓 (USDT, KRW, ETH에 없는 경우만)
       upbitMarkets.BTC.forEach(ticker => {
-        const base = ticker.market.split('-')[1];
-        if (userHoldings.includes(base) && !myMarkets[base]) {
-          myMarkets[base] = ticker;
+        if (ticker.market) {
+          const base = ticker.market.split('-')[1];
+          if (userHoldings.includes(base) && !myMarkets[base]) {
+            myMarkets[base] = ticker;
+          }
         }
       });
       
