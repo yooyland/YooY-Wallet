@@ -50,19 +50,26 @@ export default function HomeScreen() {
           .filter(balance => ['YOY', 'BTC', 'ETH', 'SOL', 'DOT', 'BNB', 'AVAX', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC'].includes(balance.symbol))
           .map(balance => balance.symbol);
         
+        console.log('Fetching prices for symbols:', cryptoSymbols);
         const upbitPrices = await getUpbitPrices(cryptoSymbols);
         const usdKrwRate = await getUSDKRWRate();
+        
+        console.log('Upbit prices received:', upbitPrices);
+        console.log('USD/KRW rate:', usdKrwRate);
         
         const updatedBalances = mockBalances.map(balance => {
           const upbitPrice = upbitPrices.find(price => price.symbol === balance.symbol);
           if (upbitPrice) {
             const usdPrice = convertKRWToUSD(upbitPrice.price, usdKrwRate);
+            const newValueUSD = balance.amount * usdPrice;
+            console.log(`${balance.symbol}: ${balance.amount} * ${usdPrice} = ${newValueUSD}`);
             return {
               ...balance,
-              valueUSD: balance.amount * usdPrice,
+              valueUSD: newValueUSD,
               currentPrice: usdPrice
             };
           }
+          console.log(`No price found for ${balance.symbol}, using original value`);
           return balance;
         });
         
@@ -632,6 +639,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: 8,
+    paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#333',
   },

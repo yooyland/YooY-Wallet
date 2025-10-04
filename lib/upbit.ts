@@ -67,6 +67,7 @@ export async function getUpbitPrices(symbols: string[]): Promise<UpbitPrice[]> {
       return [];
     }
 
+    console.log('Fetching Upbit prices for markets:', markets);
     const response = await fetch(`${UPBIT_API_BASE}/ticker?markets=${markets.join(',')}`);
     
     if (!response.ok) {
@@ -74,6 +75,7 @@ export async function getUpbitPrices(symbols: string[]): Promise<UpbitPrice[]> {
     }
 
     const tickers: UpbitTicker[] = await response.json();
+    console.log('Upbit API response:', tickers);
     
     return tickers.map(ticker => {
       const symbol = ticker.market.replace('KRW-', '');
