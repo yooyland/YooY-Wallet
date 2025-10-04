@@ -36,6 +36,7 @@ export default function TabLayout() {
           alignItems: 'center',
           paddingBottom: 0,
           paddingTop: 0,
+          marginBottom: 0,
         },
       }}>
       <Tabs.Screen
