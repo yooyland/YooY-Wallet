@@ -309,7 +309,7 @@ export default function ExchangeScreen() {
               onPress={() => handleSort('name')}
             >
               <ThemedText style={[styles.headerText, nameLanguage === 'ko' && styles.activeHeaderText]}>
-                {nameLanguage === 'ko' ? '코인/마켓' : 'Coin/Market'}
+                Coin/Market
               </ThemedText>
               <ThemedText style={styles.sortIcon}>↕</ThemedText>
             </TouchableOpacity>
@@ -403,7 +403,10 @@ export default function ExchangeScreen() {
                         </View>
                         <View style={styles.coinDetails}>
                           <ThemedText style={styles.coinName}>
-                            {nameLanguage === 'ko' ? item.name : item.base}
+                            {nameLanguage === 'ko' ? 
+                              (item.base === 'YOY' ? '유이랜드' : item.name) : 
+                              item.base
+                            }
                           </ThemedText>
                           <ThemedText style={styles.coinPair}>{item.base}/{item.quote}</ThemedText>
                         </View>
