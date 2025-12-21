@@ -17,6 +17,7 @@ const MAPPING = {
   'house.fill': 'home',
   'paperplane.fill': 'send',
   'chevron.left.forwardslash.chevron.right': 'code',
+  'chevron.left': 'chevron-left',
   'chevron.right': 'chevron-right',
   'chart.bar.fill': 'bar-chart',
   'wallet.pass.fill': 'account-balance-wallet',
@@ -24,6 +25,7 @@ const MAPPING = {
   'bubble.left.and.bubble.right.fill': 'chat',
   'checklist': 'checklist',
   'ellipsis': 'more-horiz',
+  'ellipsis.circle': 'more-horiz',
 } as IconMapping;
 
 /**

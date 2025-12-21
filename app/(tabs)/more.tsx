@@ -1,12 +1,14 @@
 import HamburgerMenu from '@/components/hamburger-menu';
+import ProfileSheet from '@/components/profile-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import TopBar from '@/components/top-bar';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     Dimensions,
     ScrollView,
@@ -21,6 +23,33 @@ export default function MoreScreen() {
   const { currentUser } = useAuth();
   const { language } = usePreferences();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [username, setUsername] = useState<string>('');
+  const [avatarUri, setAvatarUri] = useState<string | null>(null);
+  const [profileUpdated, setProfileUpdated] = useState(false);
+  
+  // Load username and avatar on component mount
+  useEffect(() => {
+    (async () => {
+      if (currentUser?.uid) {
+        const info = await AsyncStorage.getItem(`u:${currentUser.uid}:profile.info`);
+        const photo = await AsyncStorage.getItem(`u:${currentUser.uid}:profile.photoUri`);
+        
+        if (info) {
+          try {
+            const parsedInfo = JSON.parse(info);
+            setUsername(parsedInfo.username || currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
+          } catch {
+            setUsername(currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
+          }
+        } else {
+          setUsername(currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
+        }
+        
+        setAvatarUri(photo);
+      }
+    })();
+  }, [currentUser?.uid, profileUpdated]);
 
   const moreMenuItems = [
     {
@@ -64,9 +93,11 @@ export default function MoreScreen() {
   return (
     <ThemedView style={{ flex: 1 }}>
       <TopBar 
-        title="More" 
-        onProfilePress={() => setMenuOpen(true)}
-        avatarUri={null}
+        title={username}
+        onProfilePress={() => setProfileOpen(true)}
+        onMenuPress={() => setMenuOpen(true)}
+        avatarUri={avatarUri}
+        profileUpdated={profileUpdated}
       />
       
       <ScrollView style={styles.container}>
@@ -109,7 +140,30 @@ export default function MoreScreen() {
       <HamburgerMenu 
         visible={menuOpen}
         onClose={() => setMenuOpen(false)}
-        avatarUri={null}
+        avatarUri={avatarUri}
+      />
+      
+      <ProfileSheet 
+        visible={profileOpen} 
+        onClose={() => setProfileOpen(false)} 
+        onSaved={async (newAvatarUri) => {
+          setAvatarUri(newAvatarUri);
+          setProfileOpen(false);
+          setProfileUpdated(prev => !prev); // 프로필 업데이트 상태 토글
+          
+          // username도 다시 로드
+          if (currentUser?.uid) {
+            const info = await AsyncStorage.getItem(`u:${currentUser.uid}:profile.info`);
+            if (info) {
+              try {
+                const parsedInfo = JSON.parse(info);
+                setUsername(parsedInfo.username || currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
+              } catch {
+                setUsername(currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
+              }
+            }
+          }
+        }}
       />
     </ThemedView>
   );

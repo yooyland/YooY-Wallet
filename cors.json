@@ -1,0 +1,29 @@
+[
+    {
+      "origin": [
+        "http://localhost:8081",
+        "http://127.0.0.1:8081",
+        "http://localhost:19006",
+        "http://127.0.0.1:19006",
+        "http://121.138.168.224:8081",
+        "https://yooyland-dev.web.app",
+        "https://yooyland-dev.firebaseapp.com",
+        "https://yooyland.com"
+      ],
+      "method": ["GET", "HEAD", "PUT", "POST", "DELETE", "PATCH", "OPTIONS"],
+      "responseHeader": [
+        "Content-Type",
+        "Authorization",
+        "Origin",
+        "x-goog-meta-*",
+        "x-goog-resumable",
+        "X-Goog-Upload-Protocol",
+        "X-Goog-Upload-Command",
+        "X-Goog-Upload-Header-Content-Length",
+        "X-Goog-Upload-Offset",
+        "X-Goog-Upload-File-Name"
+      ],
+      "maxAgeSeconds": 3600
+    }
+  ]
+  

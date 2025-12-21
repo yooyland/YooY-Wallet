@@ -1,0 +1,49 @@
+{
+  "cli": {
+    "version": ">= 16.20.4",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "node": "20.19.4",
+      "env": {
+        "EXPO_PUBLIC_BARCODE_ENABLED": "true"
+      },
+      "android": {
+        "gradleCommand": ":app:assembleDebug"
+      }
+    },
+    "preview": {
+      "distribution": "internal"
+    },
+    "production": {
+      "autoIncrement": true
+    },
+    "store": {
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_SOCIAL_LOGIN_ENABLED": "false",
+        "EXPO_PUBLIC_ORDER_ENABLED": "true",
+        "EXPO_PUBLIC_STAKING_ENABLED": "true",
+        "EXPO_PUBLIC_NFT_TRADE_ENABLED": "false",
+        "EXPO_PUBLIC_SHOP_ENABLED": "false",
+        "EXPO_PUBLIC_BARCODE_ENABLED": "true",
+        "EXPO_PUBLIC_CHAIN": "mainnet",
+        "EXPO_PUBLIC_RPC_MAINNET": "https://ethereum.publicnode.com"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "android": {
+        "track": "internal",
+        "serviceAccountKeyPath": "./keys/play-service-account.json"
+      }
+    }
+  }
+}

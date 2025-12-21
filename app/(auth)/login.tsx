@@ -5,9 +5,10 @@ import { AntDesign, Ionicons } from '@expo/vector-icons';
 import { Link, Redirect } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, Image, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { SOCIAL_LOGIN_ENABLED } from '@/lib/featureFlags';
 
 export default function LoginScreen() {
-  const { isAuthenticated, isLoading, signIn, signInWithGoogle } = useAuth();
+  const { isAuthenticated, isLoading, signIn, signInWithGoogle, signInWithApple } = useAuth();
   const { language } = usePreferences();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -16,14 +17,15 @@ export default function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false);
 
   if (isAuthenticated) {
-    return <Redirect href="/(tabs)" />;
+    return <Redirect href="/(tabs)/dashboard" />;
   }
 
   return (
     <View style={styles.container}>
       <View style={styles.contentShift}>
         <View style={styles.topArea}>
-          <Text style={styles.sloganLarge}>{t('slogan', language as any)}</Text>
+          <Text style={[styles.sloganLarge, styles.sloganTopSpacing]}>{t('sloganLine1', language as any)}</Text>
+          <Text style={[styles.sloganLarge, styles.sloganSecondLine]}>{t('sloganLine2', language as any)}</Text>
         </View>
 
         <View style={styles.formArea}>
@@ -31,15 +33,15 @@ export default function LoginScreen() {
           {(isLoading || submitting) ? <ActivityIndicator /> : null}
           <TextInput
             style={styles.input}
-            placeholder="Email"
+            placeholder={t('email', language as any)}
             placeholderTextColor="#9BA1A6"
             autoCapitalize="none"
             value={username}
             onChangeText={setUsername}
           />
           <View style={styles.labelRow}>
-            <Text style={styles.label}>Password</Text>
-            <Link href="/(auth)/forgot" style={styles.linkSmall}>Forgot Password ?</Link>
+            <Text style={styles.label}>{t('password', language as any)}</Text>
+            <Link href="/(auth)/forgot" style={styles.linkSmall}>{t('forgotPassword', language as any)}</Link>
           </View>
           <View style={styles.inputRow}>
             <TextInput
@@ -74,38 +76,34 @@ export default function LoginScreen() {
                 setSubmitting(false);
               }
             }}>
-            <Text style={styles.ctaText}>Login</Text>
+            <Text style={styles.ctaText}>{t('login', language as any)}</Text>
           </TouchableOpacity>
 
-          <View style={{ height: 8 }} />
-          <View style={styles.dividerRow}>
-            <View style={styles.divider} />
-            <Text style={{ color: '#9BA1A6', marginHorizontal: 8 }}>Or</Text>
-            <View style={styles.divider} />
-          </View>
-
-          <View style={styles.providersRow}>
-            <TouchableOpacity style={[styles.providerCircle, { backgroundColor: '#fff' }]} onPress={async () => { try { await signInWithGoogle(); } catch (e) {} }}>
-              <AntDesign name="google" size={20} color="#DB4437" />
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.providerCircle, { backgroundColor: '#000' }]} onPress={() => {}}>
-              <Ionicons name="logo-apple" size={22} color="#fff" />
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.providerCircle, { backgroundColor: '#1DA1F2' }]} onPress={() => {}}>
-              <AntDesign name="twitter" size={20} color="#fff" />
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.providerCircle, { backgroundColor: '#FEE500', overflow: 'hidden' }]} onPress={() => {}}>
-              <Image source={{ uri: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQnOACrRJyk-4693gXNbbpXfQ4OVXSWm3sl5g&s' }} style={{ width: '100%', height: '100%', borderRadius: 22 }} />
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.providerCircle, { backgroundColor: '#1877F2', overflow: 'hidden' }]} onPress={() => {}}>
-              <Image source={{ uri: 'https://img.freepik.com/premium-vector/facebook-illustration_1073073-2143.jpg?semt=ais_hybrid&w=740&q=80' }} style={{ width: '100%', height: '100%', borderRadius: 22 }} />
-            </TouchableOpacity>
-          </View>
+          {SOCIAL_LOGIN_ENABLED ? (
+            <>
+              <View style={{ height: 8 }} />
+              <View style={styles.dividerRow}>
+                <View style={styles.divider} />
+                <Text style={{ color: '#9BA1A6', marginHorizontal: 8 }}>{t('or', language as any)}</Text>
+                <View style={styles.divider} />
+              </View>
+              <View style={styles.providersRow}>
+                <TouchableOpacity style={[styles.providerCircle, { backgroundColor: '#fff' }]} onPress={async () => { try { await signInWithGoogle(); } catch (e) {} }}>
+                  <AntDesign name="google" size={20} color="#DB4437" />
+                </TouchableOpacity>
+                {Platform.OS === 'ios' ? (
+                  <TouchableOpacity style={[styles.providerCircle, { backgroundColor: '#000' }]} onPress={async () => { try { await signInWithApple(); } catch (e) {} }}>
+                    <Ionicons name="logo-apple" size={22} color="#fff" />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </>
+          ) : null}
 
           <View style={{ height: 12 }} />
           <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }}>
-            <Text style={{ color: '#9BA1A6' }}>Don’t have an account? </Text>
-            <Link href="/(auth)/register" style={styles.link}>Sign Up</Link>
+            <Text style={{ color: '#9BA1A6' }}>{t('noAccountQuestion', language as any)} </Text>
+            <Link href="/(auth)/register" style={styles.link}>{t('signUp', language as any)}</Link>
           </View>
         </View>
       </View>
@@ -121,9 +119,11 @@ const styles = StyleSheet.create({
     padding: 16,
     backgroundColor: '#000000',
   },
-  contentShift: { flex: 1, transform: [{ translateY: -70 }] },
+  contentShift: { flex: 1, transform: [{ translateY: -20 }] },
   topArea: { paddingTop: 24, alignItems: 'center' },
-  sloganLarge: { color: '#D4AF37', textAlign: 'center', marginTop: 100, marginBottom: 0, fontSize: 25, lineHeight: 30, fontWeight: '700' },
+  sloganLarge: { color: '#D4AF37', textAlign: 'center', fontSize: 25, lineHeight: 28, fontWeight: '700' },
+  sloganTopSpacing: { marginTop: 40 },
+  sloganSecondLine: { marginTop: 6 },
   logo: { width: 160, height: 80, marginTop: 0, marginBottom: 20, alignSelf: 'center' },
   formArea: { flex: 1, justifyContent: 'center' },
   input: {
@@ -147,8 +147,8 @@ const styles = StyleSheet.create({
   ctaText: { color: '#000000', fontWeight: '700' },
   dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 8 },
   divider: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: '#333' },
-  providersRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12 },
-  providerCircle: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#333' },
+  providersRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 18 },
+  providerCircle: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#333' },
   googleBtn: { backgroundColor: '#ffffff', paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
   googleText: { color: '#111', fontWeight: '600' },
   copyright: { textAlign: 'center', color: '#555', fontSize: 12, paddingBottom: 8 },

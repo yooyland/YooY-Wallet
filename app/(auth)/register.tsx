@@ -27,7 +27,8 @@ export default function RegisterScreen() {
     <View style={styles.container}>
       <View style={styles.contentShift}>
         <View style={styles.topArea}>
-          <Text style={styles.sloganLarge}>{t('slogan', language as any)}</Text>
+          <Text style={[styles.sloganLarge, styles.sloganTopSpacing]}>{t('sloganLine1', language as any)}</Text>
+          <Text style={[styles.sloganLarge, styles.sloganSecondLine]}>{t('sloganLine2', language as any)}</Text>
         </View>
 
         <View style={styles.formArea}>
@@ -36,7 +37,7 @@ export default function RegisterScreen() {
 
           <TextInput
             style={styles.input}
-            placeholder="Email"
+            placeholder={t('email', language as any)}
             placeholderTextColor="#9BA1A6"
             autoCapitalize="none"
             keyboardType="email-address"
@@ -46,7 +47,7 @@ export default function RegisterScreen() {
           <View style={styles.inputRow}>
             <TextInput
               style={styles.inputRowField}
-              placeholder="Password"
+              placeholder={t('password', language as any)}
               placeholderTextColor="#9BA1A6"
               secureTextEntry={!showPassword}
               value={password}
@@ -59,7 +60,7 @@ export default function RegisterScreen() {
           <View style={styles.inputRow}>
             <TextInput
               style={styles.inputRowField}
-              placeholder="Confirm Password"
+              placeholder={t('confirmPassword', language as any)}
               placeholderTextColor="#9BA1A6"
               secureTextEntry={!showConfirm}
               value={confirm}
@@ -84,21 +85,21 @@ export default function RegisterScreen() {
               setSubmitting(true);
               setError(null);
               try {
-                if (password !== confirm) throw new Error('Passwords do not match');
+                if (password !== confirm) throw new Error(t('passwordsNoMatch', language as any));
                 await signUp({ email, password });
               } catch (e: any) {
-                setError(e?.message ?? 'Sign up failed');
+                setError(e?.message ?? t('signUpFailed', language as any));
               } finally {
                 setSubmitting(false);
               }
             }}>
-            <Text style={styles.ctaText}>Create Account</Text>
+            <Text style={styles.ctaText}>{t('createAccount', language as any)}</Text>
           </TouchableOpacity>
 
           <View style={{ height: 8 }} />
           <View style={styles.dividerRow}>
             <View style={styles.divider} />
-            <Text style={{ color: '#9BA1A6', marginHorizontal: 8 }}>Or</Text>
+            <Text style={{ color: '#9BA1A6', marginHorizontal: 8 }}>{t('or', language as any)}</Text>
             <View style={styles.divider} />
           </View>
 
@@ -122,8 +123,8 @@ export default function RegisterScreen() {
 
           <View style={{ height: 12 }} />
           <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }}>
-            <Text style={{ color: '#9BA1A6' }}>Already have an account? </Text>
-            <Link href="/(auth)/login" style={styles.link}>Sign In</Link>
+            <Text style={{ color: '#9BA1A6' }}>{t('alreadyHaveAccount', language as any)} </Text>
+            <Link href="/(auth)/login" style={styles.link}>{t('signIn', language as any)}</Link>
           </View>
         </View>
       </View>
@@ -141,7 +142,9 @@ const styles = StyleSheet.create({
   },
   contentShift: { flex: 1, transform: [{ translateY: -70 }] },
   topArea: { paddingTop: 24, alignItems: 'center' },
-  sloganLarge: { color: '#ffffff', textAlign: 'center', marginTop: 100, marginBottom: 0, fontSize: 25, lineHeight: 30, fontWeight: '700' },
+  sloganLarge: { color: '#ffffff', textAlign: 'center', fontSize: 25, lineHeight: 28, fontWeight: '700' },
+  sloganTopSpacing: { marginTop: 70 },
+  sloganSecondLine: { marginTop: 6 },
   logo: { width: 160, height: 80, marginTop: 0, marginBottom: 20, alignSelf: 'center' },
   formArea: { flex: 1, justifyContent: 'center' },
   input: {
@@ -160,8 +163,8 @@ const styles = StyleSheet.create({
   link: { color: '#D4AF37', fontWeight: '600' },
   ctaButton: { backgroundColor: '#00ffff', paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
   ctaText: { color: '#000000', fontWeight: '700' },
-  providersRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 12 },
-  providerCircle: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#333' },
+  providersRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 18 },
+  providerCircle: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#333' },
   dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 12 },
   divider: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: '#2a2a2a' },
   copyright: { textAlign: 'center', color: '#555', fontSize: 12, paddingBottom: 8 },

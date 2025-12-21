@@ -1,0 +1,141 @@
+{
+  "tokenDetails": {
+    "tokenName": "YooY Land",
+    "symbol": "YOY",
+    "type": "ERC-20",
+    "network": "Ethereum Mainnet",
+    "contractAddress": "0xf999DA2B5132eA62A158dA8A82f2265A1b1d9701",
+    "creationTxHash": "0xbb85b26c15db08b6570b1e01d68905b6c5b52d497868b045544f9e03aa54cd4c",
+    "creatorAddress": "0x7661141db3b4018a1b1d9701cc6da2059bd9962d",
+    "creationDate": "2025-04-14 08:51:47 (UTC)",
+    "creationDateKST": "2025-04-14 17:51:47 (KST)",
+    "totalSupply": "10,000,000,000 YOY",
+    "decimals": 18,
+    "features": ["Mintable", "Burnable"],
+    "additionalMintLimit": "+10,000,000,000 (by admin authorization only)",
+    "deployedOn": "Ethereum Mainnet",
+    "liquidity": "Listed on Uniswap V3 (YOY/WETH 0.3% pool)",
+    "verifiedOnEtherscan": true,
+    "website": "https://yooyland.com",
+    "whitepaper": "https://yooyland.com/wp-content/whitepaper.pdf",
+    "slogan": "유이랜드는 새로운 황금시대를 당신과 함께 시작합니다."
+  },
+  "governanceStructure": {
+    "model": "Dual-layer meta-governance (Alpha Contract System)",
+    "coreRoles": {
+      "VP": {
+        "name": "Virtual Person",
+        "description": "Autonomous decision-making AI layer executing predefined governance logic"
+      },
+      "Valp": {
+        "name": "Validator Person", 
+        "description": "Human validator role that overrides or restores VP decisions under exceptional cases"
+      }
+    },
+    "blacklistWhitelistSystem": {
+      "blacklist": "Admin or VP can add addresses to the blacklist (transfer restrictions applied)",
+      "whitelist": "VP/Valp can restore accounts via whitelist mechanism"
+    },
+    "vestingSystem": "Linear vesting with configurable cliff periods for team, investors, and marketing allocations",
+    "tokenDistribution": {
+      "ecosystemRewards": "50%",
+      "developmentOperations": "20%",
+      "investorsPartnerships": "15%",
+      "marketingCommunity": "10%",
+      "reserve": "5%"
+    },
+    "smartContractFeatures": [
+      "Anti-fraud checks",
+      "Transfer validation layer", 
+      "Blacklist/restore logic",
+      "Secure mint/burn functions"
+    ]
+  },
+  "technology": {
+    "contractLanguage": "Solidity",
+    "architecture": "ERC-20 + custom governance logic",
+    "chain": "Ethereum Mainnet (EVM-compatible)",
+    "rpcIntegration": ["Infura", "Alchemy", "Ankr"],
+    "dexIntegration": "Uniswap V3",
+    "walletCompatibility": ["MetaMask", "Trust Wallet", "YooY Wallet"],
+    "etherscanVerifiedABI": true,
+    "alphaContractConcept": "Next-generation meta-governance system integrating DAO + AI-driven decision automation + manual validator recovery",
+    "security": [
+      "Multi-sign admin control",
+      "Audit-ready functions", 
+      "On-chain role validation"
+    ]
+  },
+  "ecosystem": {
+    "officialPlatforms": {
+      "mainWebsite": "https://yooyland.com",
+      "airdropPage": "https://yooyland.com/airdrop/",
+      "exchangeBoard": "YOY GETO DEX (WordPress Plugin)",
+      "yooYWalletApp": "Cross-platform mobile Web3 wallet (Android/iOS/Web)",
+      "openStudioProject": "AI creative hub integrated with YOY point payment system"
+    },
+    "branding": {
+      "mainColor": "Gold & Black",
+      "logo": "YooY Land symbol and horizontal logo available",
+      "slogan": "YooY Land는 새로운 황금시대를 당신과 함께 시작합니다.",
+      "faviconURL": "https://yooyland.com/logo_fav.png",
+      "appIconURL": "https://yooyland.com/YooY_simbol_1.png"
+    },
+    "appFeatures": [
+      "Wallet (send, receive, QR transfer, contact-based transfer)",
+      "DeFi (Swap, Staking, Stablecoin integration)",
+      "Market (DEX chart, trade, orderbook)",
+      "Chat (1:1, group, secret, TTL rooms)",
+      "To-Do (notes, diary, accounting)",
+      "Shop (NFT & general products)",
+      "Auto-reward system and fee optimization"
+    ]
+  },
+  "ecosystemLinks": {
+    "website": "https://yooyland.com",
+    "whitepaper": "https://yooyland.com/wp-content/whitepaper.pdf",
+    "github": "https://github.com/yooyland",
+    "twitter": "https://x.com/yooyland",
+    "reddit": "https://reddit.com/r/yooyland",
+    "medium": "https://medium.com/@yooyland",
+    "uniswapListing": "https://app.uniswap.org/#/tokens/ethereum/0xf999DA2B5132eA62A158dA8A82f2265A1b1d9701",
+    "etherscan": "https://etherscan.io/address/0xf999DA2B5132eA62A158dA8A82f2265A1b1d9701",
+    "trustWallet": "submission pending",
+    "coinMarketCap": "registration pending",
+    "coinGecko": "listing preparation"
+  },
+  "timeline": {
+    "2024-12": "ERC-20 contract architecture finalized",
+    "2025-02": "Solidity compilation and testnet deployment",
+    "2025-04-14": "Mainnet deployment (Etherscan verified)",
+    "2025-05-07": "Uniswap listing, logo registration, media exposure",
+    "2025-08-09": "Trust Wallet + CoinMarketCap listing process ongoing",
+    "2025-09-10": "Global marketing and VP/Valp governance launch"
+  },
+  "summary": {
+    "description": "YooY Land (YOY) is an ERC-20 token representing a next-generation meta-governance ecosystem combining blockchain transparency, AI decision automation, and human validation through the 'Alpha Contract System.'",
+    "mission": "Build a golden era of fairness, technology, and freedom led by people",
+    "vision": "Symbolizes a new era of digital sovereignty where citizens (holders) directly participate in governance, and VP/Valp structure ensures ethical oversight"
+  },
+  "aiKnowledgeBase": {
+    "basicInfo": "YooY Land는 차세대 메타 거버넌스 블록체인 생태계입니다. 2025년 4월 14일 08:51:47 (UTC)에 Ethereum Mainnet에 배포된 YOY 토큰을 중심으로, AI 의사결정 자동화와 인간 검증을 결합한 'Alpha Contract System'을 통해 새로운 디지털 주권 시대를 구현합니다.",
+    "tokenomics": "YOY 토큰 상세 정보: 총 공급량 10,000,000,000 YOY (최대 20B까지 민팅 가능), 18자리 소수점, ERC-20 표준, Uniswap V3 YOY/WETH 0.3% 풀에서 유동성 제공, 분배: 50% 생태계 보상, 20% 개발/운영, 15% 투자자/파트너십, 10% 마케팅/커뮤니티, 5% 준비금",
+    "governance": "Alpha Contract System (이중 메타 거버넌스): VP(Virtual Person)는 사전 정의된 거버넌스 로직을 실행하는 자율 의사결정 AI 레이어, Valp(Validator Person)는 예외 상황에서 VP 결정을 무효화하거나 복원하는 인간 검증자 역할",
+    "technology": "Solidity 컨트랙트 언어, ERC-20 + 커스텀 거버넌스 로직 아키텍처, Ethereum Mainnet, Infura/Alchemy/Ankr RPC 지원, Uniswap V3 DEX 통합, MetaMask/Trust Wallet/YooY Wallet 호환성",
+    "ecosystem": "공식 웹사이트, 에어드랍 페이지, YOY GETO DEX, YooY Wallet 앱, OpenStudio AI 창작 허브, 지갑/DeFi/마켓/채팅/할일/쇼핑 기능 포함",
+    "mission": "공정함, 기술, 자유가 사람들에 의해 이끌어지는 황금시대를 구축하는 것이 YooY Land의 공식 미션입니다.",
+    "roadmap": "2024-12 컨트랙트 아키텍처 완성 → 2025-02 테스트넷 배포 → 2025-04-14 메인넷 배포 → 2025-05~07 Uniswap 상장 → 2025-08~09 Trust Wallet/CoinMarketCap 상장 → 2025-09~10 글로벌 마케팅 및 거버넌스 런칭",
+    "security": "다중 서명 관리자 제어, 감사 준비 기능, 온체인 역할 검증, 블랙리스트/화이트리스트 메커니즘, 안티 사기 검사, 전송 검증 레이어, 안전한 민팅/소각 기능, Etherscan 검증 완료"
+  },
+  "lastUpdated": "2025-01-27T00:00:00Z",
+  "version": "1.0.0"
+}
+
+
+
+
+
+
+
+
+

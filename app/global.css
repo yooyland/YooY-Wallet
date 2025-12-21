@@ -1,0 +1,24 @@
+/* Hide default disclosure triangle markers on web */
+details > summary::-webkit-details-marker { display: none; }
+details > summary { list-style: none; }
+
+/* Hide native select dropdown arrows (if any are rendered by web platform) */
+select { appearance: none; -webkit-appearance: none; -moz-appearance: none; background-image: none !important; }
+
+/* Defensive: any small caret icons that might leak inside tab bar container */
+[role="tablist"] summary::-webkit-details-marker { display: none; }
+[role="tablist"] summary { list-style: none; }
+
+/* Disable browser pull-to-refresh / overscroll glow to avoid white overlay with caret */
+html, body {
+  overscroll-behavior: none;
+  overscroll-behavior-y: none;
+  touch-action: manipulation;
+}
+
+/* Ensure the main app container doesn't show overscroll UI */
+#root, #app, body > div:first-child {
+  overscroll-behavior: none;
+}
+
+

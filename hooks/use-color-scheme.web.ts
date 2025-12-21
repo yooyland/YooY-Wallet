@@ -17,5 +17,6 @@ export function useColorScheme() {
     return colorScheme;
   }
 
-  return 'light';
+  // 웹에서도 초기 페인트를 어둡게 시작해 깜빡임/흰 배경 노출 방지
+  return 'dark';
 }

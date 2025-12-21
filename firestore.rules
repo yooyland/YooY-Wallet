@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    // DEV: 전면 오픈 (테스트 안정화). 실서비스 전 반드시 엄격 규칙으로 복원하세요.
+    match /rooms/{roomId} {
+      allow read, write: if true;
+      match /messages/{messageId} {
+        allow read, write: if true;
+      }
+      match /members/{uid} {
+        allow read, write: if true;
+      }
+    }
+
+    // DEV: 채팅/친구 기능에서 사용하는 경로들 전면 오픈
+    // 사용자 루트 및 하위 서브콜렉션
+    match /users/{uid} {
+      allow read, write: if true;
+
+      match /friends/{friendId} {
+        allow read, write: if true;
+      }
+      match /followers/{followerId} {
+        allow read, write: if true;
+      }
+      match /following/{followingId} {
+        allow read, write: if true;
+      }
+    // 사용자별 참여방 목록
+      match /joinedRooms/{roomId} {
+        allow read, write: if true;
+      }
+    }
+
+    // 초대 컬렉션
+    match /invites/{inviteId} {
+      allow read, write: if true;
+    }
+
+    // 사용자명 유니크 인덱스 (usernames/{lower})
+    match /usernames/{nameId} {
+      allow read, write: if true;
+    }
+  }
+}
+
+

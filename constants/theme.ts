@@ -16,8 +16,9 @@ const tintColorDark = gold;
 
 export const Colors = {
   light: {
-    text: '#11181C',
-    background: '#ffffff',
+    text: '#F5F5F5',
+    // 라이트 모드도 블랙 테마 유지(일관된 디자인)
+    background: darkBg,
     tint: tintColorLight,
     icon: muted,
     tabIconDefault: muted,

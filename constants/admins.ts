@@ -7,7 +7,7 @@ export type AdminUser = {
 };
 
 export const ADMINS: AdminUser[] = [
-  { email: 'admin@yooylandl.com', role: 'super_admin', description: 'Super administrator' },
+  { email: 'admin@yooyland.com', role: 'super_admin', description: 'Super administrator' },
   { email: 'jch4389@gmail.com', role: 'rewards_admin', description: '이벤트 보상 YOY 지급' },
   { email: 'landyooy@gmail.com', role: 'fees_admin', description: 'App에서 발생한 수수료' },
 ];

@@ -1,12 +1,19 @@
 import { ThemedText } from '@/components/themed-text';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getAdminRoleByEmail, isAdmin } from '@/constants/admins';
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
+import { useMarket } from '@/contexts/MarketContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
-import { mockBalances } from '@/data/balances';
 import { formatCurrency, getExchangeRates } from '@/lib/currency';
+import { getMockBalancesForUser } from '@/lib/userBalances';
+import { BlurView } from 'expo-blur';
+import QuickActionsSettings from '@/components/QuickActionsSettings';
+import { t } from '@/i18n';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
+import { useWalletConnect } from '@/contexts/WalletConnectContext';
+import { useTodoStore } from '@/src/features/todo/todo.store';
 import {
     Alert,
     Animated,
@@ -21,6 +28,7 @@ import {
 } from 'react-native';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+const BOTTOM_BAR_HEIGHT = 50; // matches tab bar height
 
 interface HamburgerMenuProps {
   visible: boolean;
@@ -30,21 +38,33 @@ interface HamburgerMenuProps {
 
 export default function HamburgerMenu({ visible, onClose, avatarUri }: HamburgerMenuProps) {
   const { currentUser, signOut } = useAuth();
+  const { yoyPriceKRW, yoyPriceUSD } = useMarket();
   const { language, currency, setLanguage, setCurrency } = usePreferences();
+  const wc = (() => { try { return useWalletConnect(); } catch { return null as any; } })();
   const [rates, setRates] = useState<any>(null);
   const [slideAnim] = useState(new Animated.Value(screenWidth));
   const [selectedTab, setSelectedTab] = useState('APP');
+  const [signingOut, setSigningOut] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [quickActionsVisible, setQuickActionsVisible] = useState(false);
+  // 실시간 To-Do 미완료 개수
+  const { items: todoItems } = useTodoStore();
+  const todoPendingCount = (todoItems || []).filter((i:any) => !i.completed).length;
 
-  const total = mockBalances.reduce((s, b) => s + b.valueUSD, 0);
+  // 총자산 계산: 대시보드와 동일한 방식으로 계산
+  const total = (() => {
+    const yoyUSD = yoyPriceUSD ?? 0;
+    const userBalances = getMockBalancesForUser(currentUser?.email);
+    const cryptoOnlyBalances = userBalances.filter(b => !['KRW', 'USD', 'JPY', 'CNY', 'EUR'].includes(b.symbol));
+    const valued = cryptoOnlyBalances.map(b => b.symbol === 'YOY' && yoyUSD ? ({ ...b, valueUSD: b.amount * yoyUSD }) : b);
+    return valued.reduce((s, b) => s + b.valueUSD, 0);
+  })();
   const isUserAdmin = currentUser?.email ? isAdmin(currentUser.email) : false;
   const adminRole = currentUser?.email ? getAdminRoleByEmail(currentUser.email) : null;
 
   const tabs = [
-    { id: 'APP', label: 'App' },
-    { id: 'DEX', label: 'Dex' },
-    { id: 'CHAT', label: 'Chat' },
-    { id: 'TODO', label: 'To-Do' },
-    { id: 'SHOP', label: 'Shop' }
+    { id: 'APP', label: 'App Setting' },
   ];
 
   useEffect(() => {
@@ -70,25 +90,33 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
     }
   }, [visible]);
 
-  const handleSignOut = async () => {
-    console.log('Sign out button pressed');
+  const handleSignOut = () => {
+    if (signingOut || confirming) return;
+    setConfirming(true);
     Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out?',
+      t('logout', language),
+      t('confirmLogout', language) || 'Are you sure you want to log out?',
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('cancel', language), style: 'cancel', onPress: () => setConfirming(false) },
         { 
-          text: 'Sign Out', 
+          text: t('logout', language), 
           style: 'destructive',
           onPress: async () => {
             try {
-              console.log('Starting sign out process');
+              setSigningOut(true);
               await signOut();
-              console.log('Sign out successful');
+              // 채팅 로컬 스토어/프로필 캐시 강제 정리
+              try { await AsyncStorage.removeItem('yoo-kakao-rooms-store'); } catch {}
+              try { await AsyncStorage.removeItem('yoo-chat-profile-store'); } catch {}
+              try { await AsyncStorage.removeItem('yoo-chat-settings-store'); } catch {}
               onClose();
+              try { router.replace('/(auth)/login'); } catch {}
             } catch (error) {
               console.error('Sign out error:', error);
-              Alert.alert('Error', 'Failed to sign out. Please try again.');
+              Alert.alert(t('error', language), t('signoutFailed', language) || 'Failed to sign out. Please try again.');
+            } finally {
+              setSigningOut(false);
+              setConfirming(false);
             }
           }
         }
@@ -96,179 +124,107 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
     );
   };
 
-  const menuSections = [
-    {
-      title: 'Account',
-      items: [
-        { 
-          title: 'Profile', 
-          icon: '👤', 
-          onPress: () => { onClose(); /* Profile sheet will be handled by parent */ }
-        },
-        { 
-          title: 'Security', 
-          icon: '🔒', 
-          onPress: () => { onClose(); router.push('/(tabs)/security'); }
-        },
-        { 
-          title: 'Notifications', 
-          icon: '🔔', 
-          onPress: () => { onClose(); router.push('/(tabs)/notifications'); }
-        },
-      ]
-    },
-    {
-      title: 'Trading',
-      items: [
-        { 
-          title: 'Exchange', 
-          icon: '📈', 
-          onPress: () => { onClose(); router.push('/(tabs)/exchange'); }
-        },
-        { 
-          title: 'Wallet', 
-          icon: '💼', 
-          onPress: () => { onClose(); router.push('/(tabs)/wallet'); }
-        },
-        { 
-          title: 'Payments', 
-          icon: '💳', 
-          onPress: () => { onClose(); router.push('/(tabs)/payments'); }
-        },
-        { 
-          title: 'Portfolio', 
-          icon: '📊', 
-          onPress: () => { onClose(); router.push('/(tabs)/portfolio'); }
-        },
-      ]
-    },
-    {
-      title: 'Social',
-      items: [
-        { 
-          title: 'Chat', 
-          icon: '💬', 
-          onPress: () => { onClose(); router.push('/(tabs)/chat'); }
-        },
-        { 
-          title: 'Friends', 
-          icon: '👥', 
-          onPress: () => { onClose(); router.push('/(tabs)/friends'); }
-        },
-        { 
-          title: 'Groups', 
-          icon: '🏘️', 
-          onPress: () => { onClose(); router.push('/(tabs)/groups'); }
-        },
-      ]
-    },
-    {
-      title: 'Tools',
-      items: [
-        { 
-          title: 'To-Do', 
-          icon: '✅', 
-          onPress: () => { onClose(); router.push('/(tabs)/todo'); }
-        },
-        { 
-          title: 'Calendar', 
-          icon: '📅', 
-          onPress: () => { onClose(); router.push('/(tabs)/calendar'); }
-        },
-        { 
-          title: 'Diary', 
-          icon: '📝', 
-          onPress: () => { onClose(); router.push('/(tabs)/diary'); }
-        },
-        { 
-          title: 'Ledger', 
-          icon: '📋', 
-          onPress: () => { onClose(); router.push('/(tabs)/ledger'); }
-        },
-      ]
-    },
-    {
-      title: 'Shopping',
-      items: [
-        { 
-          title: 'Shop', 
-          icon: '🛍️', 
-          onPress: () => { onClose(); router.push('/(tabs)/shop'); }
-        },
-        { 
-          title: 'NFT', 
-          icon: '🎨', 
-          onPress: () => { onClose(); router.push('/(tabs)/nft'); }
-        },
-        { 
-          title: 'Orders', 
-          icon: '📦', 
-          onPress: () => { onClose(); router.push('/(tabs)/orders'); }
-        },
-      ]
-    },
-    {
-      title: 'Settings',
-      items: [
-        { 
-          title: 'Language', 
-          icon: '🌐', 
-          onPress: () => { onClose(); router.push('/(tabs)/language'); }
-        },
-        { 
-          title: 'Currency', 
-          icon: '💰', 
-          onPress: () => { onClose(); router.push('/(tabs)/currency'); }
-        },
-        { 
-          title: 'Theme', 
-          icon: '🎨', 
-          onPress: () => { onClose(); router.push('/(tabs)/theme'); }
-        },
-        { 
-          title: 'About', 
-          icon: 'ℹ️', 
-          onPress: () => { onClose(); router.push('/(tabs)/about'); }
-        },
-      ]
-    }
-  ];
+  type MenuItem = { title: string; icon: string; onPress: () => void; adminOnly?: boolean };
+  type MenuSection = { title: string; items: MenuItem[] };
 
-  // Add admin section if user is admin
-  if (isUserAdmin) {
-    menuSections.push({
-      title: 'Admin',
-      items: [
-        { 
-          title: 'Dashboard', 
-          icon: '📊', 
-          onPress: () => { onClose(); router.push('/(admin)/dashboard'); }
-        },
-        { 
-          title: 'Users', 
-          icon: '👥', 
-          onPress: () => { onClose(); router.push('/(admin)/users'); }
-        },
-        { 
-          title: 'Transactions', 
-          icon: '💸', 
-          onPress: () => { onClose(); router.push('/(admin)/transactions'); }
-        },
-        { 
-          title: 'Reports', 
-          icon: '📈', 
-          onPress: () => { onClose(); router.push('/(admin)/reports'); }
-        },
-        ...(adminRole === 'super_admin' ? [
-          { 
-            title: 'System', 
-            icon: '⚙️', 
-            onPress: () => { onClose(); router.push('/(admin)/system'); }
-          }
-        ] : []),
-      ]
-    });
-  }
+  const getMenuSections = (tab: string): MenuSection[] => {
+    const filterAdmin = (items: MenuItem[]) => items.filter(i => !i.adminOnly || isUserAdmin);
+
+    if (tab === 'APP') {
+      return [
+        { title: t('account', language), items: [
+          { title: t('profile', language), icon: '👤', onPress: () => { onClose(); try { router.push('/settings/profile' as any); } catch {} } },
+          { title: t('security', language) || 'Security', icon: '🔒', onPress: () => { onClose(); try { router.push('/settings/security' as any); } catch {} } },
+          { title: t('notifications', language), icon: '🔔', onPress: () => { onClose(); try { router.push('/settings/notifications' as any); } catch {} } },
+        ]},
+        { title: 'Wallet', items: [
+          { title: wc?.state?.connected ? `외부 지갑: ${String(wc?.state?.address||'').slice(0,6)}…${String(wc?.state?.address||'').slice(-4)}` : '외부 지갑: 미연결', icon: wc?.state?.connected ? '🟢' : '⚪', onPress: () => { onClose(); try { router.push('/settings/walletconnect' as any); } catch {} } },
+          { title: wc?.state?.connected ? '외부 지갑 연결 해제' : '외부 지갑 연결', icon: '🔗', onPress: async () => { try { if (wc) { if (wc.state.connected) { await wc.disconnect(); } else { await wc.connect(); } } } catch {} } },
+          { title: t('wallet', language) || 'Wallet', icon: '💼', onPress: () => { onClose(); router.push('/(tabs)/wallet'); } },
+        ]},
+        { title: t('preferences', language), items: [
+          { title: `${t('language', language)}: ${language?.toUpperCase?.() || ''}`, icon: '🌐', onPress: () => { setIsDirty(true); onClose(); try { router.push('/settings/language' as any); } catch {} } },
+          { title: `${t('currency', language)}: ${currency}`, icon: '💰', onPress: () => { setIsDirty(true); onClose(); try { router.push('/settings/currency' as any); } catch {} } },
+          { title: t('theme', language) || 'Theme', icon: '🎨', onPress: () => { setIsDirty(true); onClose(); try { router.push('/settings/theme' as any); } catch {} } },
+          { title: t('quickActionsSettings', language), icon: '⚡', onPress: () => { onClose(); try { router.push('/settings/quick-actions' as any); } catch {} } },
+          { title: 'Wallet Connect', icon: '🔗', onPress: () => { onClose(); try { router.push('/settings/walletconnect' as any); } catch {} } },
+        ]},
+        { title: (language==='ko'?'고객지원':language==='ja'?'サポート':language==='zh'?'客服支持':'Support'), items: [
+          { title: (language==='ko'?'버그 신고':language==='ja'?'バグ報告':language==='zh'?'错误反馈':'Bug report'), icon: '🐞', onPress: () => { onClose(); try { router.push('/support/bug' as any); } catch {} } },
+          { title: (language==='ko'?'문의하기':language==='ja'?'お問い合わせ':language==='zh'?'咨询':'Inquiry'), icon: '✉️', onPress: () => { onClose(); try { router.push('/support/inquiry' as any); } catch {} } },
+          { title: (language==='ko'?'신고하기':language==='ja'?'通報':language==='zh'?'举报':'Report'), icon: '🚨', onPress: () => { onClose(); try { router.push('/support/report' as any); } catch {} } },
+        ]},
+      ];
+    }
+
+    if (tab === 'DEX') {
+      return [
+        { title: t('trading', language) || 'Trading', items: [
+          { title: t('exchangeTab', language), icon: '📈', onPress: () => { onClose(); router.push('/(tabs)/exchange'); } },
+          { title: t('wallet', language) || 'Wallet', icon: '💼', onPress: () => { onClose(); router.push('/(tabs)/wallet'); } },
+        ]},
+        { title: t('management', language) || 'Management', items: filterAdmin([
+          { title: t('notices', language) + ' (' + (t('manage', language) || 'Manage') + ')', icon: '📰', onPress: () => { onClose(); router.push('/exchange/notices'); }, adminOnly: true },
+          { title: t('favoritesBackup', language) || 'Favorites Backup', icon: '💾', onPress: () => { onClose(); try { router.push('/(tabs)/backup' as any); } catch {} }, adminOnly: true },
+          { title: t('system', language) || 'System', icon: '⚙️', onPress: () => { onClose(); router.push('/(admin)/system'); }, adminOnly: true },
+        ])},
+      ];
+    }
+
+    if (tab === 'CHAT') {
+      return [
+        { title: t('chat', language), items: [
+          { title: t('openChat', language) || 'Open Chat', icon: '💬', onPress: () => { onClose(); router.push('/(tabs)/chat'); } },
+        ]},
+        { title: t('settings', language) || 'Settings', items: [
+          { title: t('presenceTyping', language) || 'Presence/Typing', icon: '👀', onPress: () => { onClose(); try { router.push('/settings/chat-settings' as any); } catch {} } },
+        ]},
+      ];
+    }
+
+    if (tab === 'TODO') {
+      return [
+        { title: t('tasks', language) || 'Tasks', items: [
+          { title: `${t('todo', language) || 'To-Do'} (${todoPendingCount})`, icon: '✅', onPress: () => { onClose(); router.push('/(tabs)/todo'); } },
+        ]},
+        { title: t('settings', language) || 'Settings', items: [
+          { title: t('preferences', language), icon: '⚙️', onPress: () => { onClose(); try { router.push('/settings/todo-settings' as any); } catch {} } },
+        ]},
+      ];
+    }
+
+    if (tab === 'SHOP') {
+      return [
+        { title: t('shop', language), items: [
+          { title: t('comingSoon', language), icon: '🛍️', onPress: () => { onClose(); } },
+        ]},
+      ];
+    }
+
+    return [];
+  };
+
+  // Compute menu sections for current tab
+  const sectionsForRender: MenuSection[] = (() => {
+    const base = getMenuSections(selectedTab);
+    if (!isUserAdmin) return base;
+    return [
+      ...base,
+      {
+        title: 'Admin',
+        items: [
+          { title: t('dashboard', language) || 'Dashboard', icon: '📊', onPress: () => { onClose(); try { router.push('/(admin)/dashboard' as any); } catch {} } },
+          { title: 'Boards', icon: '🗂️', onPress: () => { onClose(); try { router.push('/(admin)/boards' as any); } catch {} } },
+          { title: t('users', language) || 'Users', icon: '👥', onPress: () => { onClose(); try { router.push('/(admin)/users' as any); } catch {} } },
+          { title: t('transactions', language) || 'Transactions', icon: '💸', onPress: () => { onClose(); try { router.push('/(admin)/transactions' as any); } catch {} } },
+          { title: t('reports', language) || 'Reports', icon: '📈', onPress: () => { onClose(); try { router.push('/(admin)/reports' as any); } catch {} } },
+          ...(adminRole === 'super_admin' ? [
+            { title: t('system', language) || 'System', icon: '⚙️', onPress: () => { onClose(); try { router.push('/system' as any); } catch {} } }
+          ] : []),
+        ]
+      }
+    ];
+  })();
 
   return (
     <Modal
@@ -278,20 +234,22 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
       onRequestClose={onClose}
     >
       <View style={styles.overlay}>
-        <Pressable style={styles.backdrop} onPress={onClose} />
+        <BlurView style={styles.backdrop} intensity={20} tint="dark">
+          <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        </BlurView>
         <Animated.View 
           style={[
             styles.menu, 
             { transform: [{ translateX: slideAnim }] }
           ]}
         >
-          <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+          <ScrollView style={styles.scrollView} showsVerticalScrollIndicator>
             {/* Header */}
             <View style={styles.header}>
               <View style={styles.userInfo}>
                  <View style={styles.avatar}>
                    {avatarUri ? (
-                     <Image source={{ uri: avatarUri }} style={styles.avatarImage} contentFit="cover" />
+                    <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
                    ) : (
                      <ThemedText style={styles.avatarText}>
                        {currentUser?.email?.charAt(0).toUpperCase() || 'A'}
@@ -299,10 +257,11 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
                    )}
                  </View>
                  <View style={styles.userDetails}>
-                   <ThemedText type="defaultSemiBold">{currentUser?.email || 'admin@yooyland.com'}</ThemedText>
-                   <ThemedText style={styles.balance}>
-                     {formatCurrency(total, currency, rates)}
-                   </ThemedText>
+                   <ThemedText type="defaultSemiBold">{currentUser?.email ?? ''}</ThemedText>
+                  <ThemedText style={styles.balance}>
+                    {formatCurrency(total, currency, rates)}
+                  </ThemedText>
+                  {/* YOY 텍스트 노출 제거: 가격은 총자산 계산에만 사용 */}
                    {isUserAdmin && (
                      <ThemedText style={styles.adminBadge}>
                        {adminRole?.replace('_', ' ').toUpperCase()}
@@ -314,6 +273,8 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
                 <ThemedText style={styles.closeIcon}>✕</ThemedText>
               </TouchableOpacity>
             </View>
+
+            {/* Log Out button removed as per requirement */}
 
             {/* Tab Navigation */}
             <View style={styles.tabContainer}>
@@ -336,8 +297,8 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
               ))}
             </View>
 
-            {/* Menu Sections */}
-            {menuSections.map((section, sectionIndex) => (
+            {/* Menu Sections (tab specific; admin-only 항목 포함) */}
+            {sectionsForRender.map((section, sectionIndex) => (
               <View key={sectionIndex} style={styles.section}>
                 <ThemedText style={styles.sectionTitle}>{section.title}</ThemedText>
                 {section.items.map((item, itemIndex) => (
@@ -358,21 +319,24 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
               </View>
             ))}
 
-            {/* Sign Out Button */}
-            <View style={styles.signOutSection}>
+            {/* Save button (when settings changed) */}
+            <View style={styles.saveSection}>
               <TouchableOpacity 
-                style={styles.signOutButton} 
+                style={[styles.saveButton, !isDirty && { opacity: 0.5 }]}
+                disabled={!isDirty}
                 onPress={() => {
-                  console.log('Sign out TouchableOpacity pressed');
-                  handleSignOut();
+                  // 향후 설정 페이지에서 변경사항이 컨텍스트에 반영되므로 여기서는 알림만
+                  setIsDirty(false);
+                  Alert.alert(t('saved', language) || 'Saved', t('preferencesSaved', language) || 'Preferences have been saved.');
                 }}
               >
-                <ThemedText style={styles.signOutText}>Sign Out</ThemedText>
+                <ThemedText style={styles.saveText}>{t('save', language)}</ThemedText>
               </TouchableOpacity>
             </View>
           </ScrollView>
         </Animated.View>
       </View>
+      <QuickActionsSettings visible={quickActionsVisible} onClose={() => setQuickActionsVisible(false)} />
     </Modal>
   );
 }
@@ -381,6 +345,7 @@ const styles = StyleSheet.create({
   overlay: {
     flex: 1,
     flexDirection: 'row',
+    paddingBottom: BOTTOM_BAR_HEIGHT,
   },
   backdrop: {
     flex: 1,
@@ -388,7 +353,7 @@ const styles = StyleSheet.create({
   },
   menu: {
     width: screenWidth * 0.85,
-    height: screenHeight,
+    height: screenHeight - BOTTOM_BAR_HEIGHT,
     backgroundColor: Colors.dark.background,
     borderRightWidth: 1,
     borderRightColor: '#FFD700',
@@ -443,6 +408,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginTop: 2,
   },
+  yoyPrice: {
+    fontSize: 12,
+    color: '#FFD700',
+    fontWeight: '700',
+    marginTop: 2,
+  },
   closeButton: {
     width: 30,
     height: 30,
@@ -453,6 +424,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: Colors.dark.text,
   },
+  // removed menu icon styles
   section: {
     marginTop: 20,
   },
@@ -522,20 +494,33 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   signOutSection: {
-    marginTop: 30,
+    marginTop: 16,
     paddingHorizontal: 20,
-    paddingBottom: 20,
   },
   signOutButton: {
-    backgroundColor: '#e74c3c',
     paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 8,
+    borderRadius: 10,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#D4AF37',
+    backgroundColor: '#2A2A2A',
   },
   signOutText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '600',
+    color: '#FFD700',
+    fontWeight: 'bold',
+  },
+  saveSection: {
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+  },
+  saveButton: {
+    paddingVertical: 14,
+    backgroundColor: '#D4AF37',
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  saveText: {
+    color: '#0C0C0C',
+    fontWeight: 'bold',
   },
 });

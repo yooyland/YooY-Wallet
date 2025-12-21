@@ -1,12 +1,19 @@
+import AdminCEVInline from '@/components/AdminCEVInline';
+import CEVInline from '@/components/CEVInline';
 import HamburgerMenu from '@/components/hamburger-menu';
+import NFTInline from '@/components/NFTInline';
 import { ThemedText } from '@/components/themed-text';
+import { t } from '@/i18n';
 import { ThemedView } from '@/components/themed-view';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { getExchangeRates } from '@/lib/currency';
+import { getAllActiveCoins, getCoinDisplayName } from '@/lib/managedCoins';
+import { loadCustomCoins, onCustomCoinsChange } from '@/lib/customCoins';
+import { useMarket } from '@/contexts/MarketContext';
 import { getAllUpbitMarkets, UpbitPrice, UpbitTicker } from '@/lib/upbit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Link } from 'expo-router';
+import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
     Dimensions,
@@ -21,20 +28,39 @@ import {
 
 const { width } = Dimensions.get('window');
 
+interface Market {
+  id: string;
+  symbol: string;
+  name: string;
+  current_price?: number;
+  price_change_percentage_24h?: number;
+  market_cap?: number;
+  volume24h: number;
+  image?: string;
+  base?: string;
+  quote?: string;
+  price?: number;
+  change24hPct?: number;
+  change?: number;
+}
+
 export default function ExchangeScreen() {
+  const router = useRouter();
+  const { tab: tabParam } = useLocalSearchParams<{ tab?: string }>();
   const { currentUser } = useAuth();
   const { currency, language } = usePreferences();
+  const { usdkrw, yoyPriceUSD } = useMarket();
   const [rates, setRates] = useState<any>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [selectedTab, setSelectedTab] = useState('거래소');
-  const [selectedMarket, setSelectedMarket] = useState('KRW');
+  const [selectedMarket, setSelectedMarket] = useState('USDT');
   const [searchText, setSearchText] = useState('');
-  const [sortBy, setSortBy] = useState('volume');
+  const [sortBy, setSortBy] = useState('price');
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-  const [nameLanguage, setNameLanguage] = useState<'en' | 'ko'>(language === 'ko' ? 'ko' : 'en');
+  const [nameLanguage, setNameLanguage] = useState<'en' | 'ko'>('en');
   const [upbitPrices, setUpbitPrices] = useState<Record<string, UpbitPrice>>({});
   const [upbitMarkets, setUpbitMarkets] = useState<{
     KRW: UpbitTicker[];
@@ -42,7 +68,8 @@ export default function ExchangeScreen() {
     BTC: UpbitTicker[];
     ETH: any[];
   }>({ KRW: [], USDT: [], BTC: [], ETH: [] });
-  const [userHoldings] = useState<string[]>(['YOY', 'BTC', 'ETH', 'SOL', 'DOT', 'BNB', 'AVAX', 'XMR', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC']); // 사용자 보유 코인
+  const [userHoldings] = useState<string[]>(getAllActiveCoins().map(coin => coin.symbol)); // 지갑 생성 가능한 모든 코인
+  const [customSymbols, setCustomSymbols] = useState<string[]>([]);
 
   // 사용자 보유자산 데이터 (mock)
   const userAssets = {
@@ -51,6 +78,20 @@ export default function ExchangeScreen() {
     totalValue: 0,
     returnRate: 0.00
   };
+
+  useEffect(() => {
+    // URL의 ?tab=CEV 등으로 초기 탭 선택 지원
+    try {
+      if (tabParam && typeof tabParam === 'string') {
+        const normalized = decodeURIComponent(tabParam).toUpperCase();
+        if (['거래소','NFT','CEV','A-CEV'].includes(normalized)) {
+          setSelectedTab(normalized);
+        } else if (['EXCHANGE','MARKET'].includes(normalized)) {
+          setSelectedTab('거래소');
+        }
+      }
+    } catch {}
+  }, [tabParam]);
 
   useEffect(() => {
     (async () => {
@@ -66,20 +107,479 @@ export default function ExchangeScreen() {
     })();
   }, [currency]);
 
+  // Load custom coins and subscribe to changes
+  useEffect(() => {
+    let unsub = () => {};
+    const load = async () => {
+      const cc = await loadCustomCoins();
+      setCustomSymbols(cc.map(c => c.symbol.toUpperCase()));
+      // Merge synthetic markets for custom coins (USDT & KRW) with admin prices
+      setUpbitMarkets(prev => {
+        const next = { ...prev, KRW: prev.KRW.slice(), USDT: prev.USDT.slice() };
+        const exists = (arr: any[], market: string) => arr.some(t => t.market === market);
+        cc.forEach(c => {
+          const priceUSD = c.symbol.toUpperCase() === 'YOY' && yoyPriceUSD ? yoyPriceUSD : (c.priceUSD || 0);
+          if (priceUSD && !Number.isNaN(priceUSD)) {
+            const usdtMarket = `USDT-${c.symbol.toUpperCase()}`;
+            if (!exists(next.USDT, usdtMarket)) {
+              next.USDT.push({
+                market: usdtMarket,
+                trade_date: '', trade_time: '', trade_date_kst: '', trade_time_kst: '',
+                trade_timestamp: Date.now(),
+                opening_price: priceUSD, high_price: priceUSD, low_price: priceUSD, trade_price: priceUSD,
+                prev_closing_price: priceUSD, change: 'EVEN', change_price: 0, change_rate: 0,
+                signed_change_price: 0, signed_change_rate: 0, trade_volume: 0, acc_trade_volume: 0,
+                acc_trade_volume_24h: 0, acc_trade_price: 0, acc_trade_price_24h: 0,
+                highest_52_week_price: priceUSD, highest_52_week_date: '', lowest_52_week_price: priceUSD,
+                lowest_52_week_date: '', timestamp: Date.now()
+              } as any);
+            }
+            if (usdkrw) {
+              const krwPrice = priceUSD * usdkrw;
+              const krwMarket = `KRW-${c.symbol.toUpperCase()}`;
+              if (!exists(next.KRW, krwMarket)) {
+                next.KRW.push({
+                  market: krwMarket,
+                  trade_date: '', trade_time: '', trade_date_kst: '', trade_time_kst: '',
+                  trade_timestamp: Date.now(),
+                  opening_price: krwPrice, high_price: krwPrice, low_price: krwPrice, trade_price: krwPrice,
+                  prev_closing_price: krwPrice, change: 'EVEN', change_price: 0, change_rate: 0,
+                  signed_change_price: 0, signed_change_rate: 0, trade_volume: 0, acc_trade_volume: 0,
+                  acc_trade_volume_24h: 0, acc_trade_price: 0, acc_trade_price_24h: 0,
+                  highest_52_week_price: krwPrice, highest_52_week_date: '', lowest_52_week_price: krwPrice,
+                  lowest_52_week_date: '', timestamp: Date.now()
+                } as any);
+              }
+            }
+          }
+        });
+        return next;
+      });
+    };
+    load();
+    unsub = onCustomCoinsChange(load);
+    return () => { try { unsub(); } catch {} };
+  }, [usdkrw, yoyPriceUSD]);
+
   // 업비트 마켓 데이터 가져오기
   useEffect(() => {
     const fetchUpbitMarkets = async () => {
       try {
-        console.log('Fetching Upbit market data...');
-        const markets = await getAllUpbitMarkets();
-        setUpbitMarkets(markets);
-        console.log('Upbit markets loaded:', {
-          KRW: markets.KRW.length,
-          USDT: markets.USDT.length,
-          BTC: markets.BTC.length
+        console.log('Fetching market data...');
+        // 화면 공백 방지: API 시도 전에 우선 fallback 데이터 주입
+        const preFallbackMarkets = {
+          KRW: [],
+          USDT: [],
+          BTC: [],
+          ETH: []
+        } as { KRW: UpbitTicker[]; USDT: UpbitTicker[]; BTC: UpbitTicker[]; ETH: any[] };
+        setUpbitMarkets(preFallbackMarkets);
+        
+        // API 문제 진단을 위해 실제 API 호출 시도
+        console.log('Attempting to fetch real API data...');
+        try {
+          const markets = await getAllUpbitMarkets();
+          console.log('✅ API SUCCESS - Real data loaded:', markets);
+          const isValid = markets 
+            && Array.isArray(markets.KRW)
+            && Array.isArray(markets.USDT)
+            && Array.isArray(markets.BTC)
+            && Array.isArray(markets.ETH)
+            && ([...markets.KRW, ...markets.USDT, ...markets.BTC, ...markets.ETH].length > 0);
+          if (!isValid) {
+            throw new Error('API returned invalid/empty structure');
+          }
+          console.log('✅ API VALID - lengths:', {
+            KRW: markets.KRW.length,
+            USDT: markets.USDT.length,
+            BTC: markets.BTC.length,
+            ETH: markets.ETH.length
+          });
+          setUpbitMarkets(markets);
+          return; // API 성공 시 여기서 종료
+        } catch (apiError) {
+          console.log('❌ API FAILED:', apiError);
+          console.log('Error details:', {
+            name: apiError instanceof Error ? apiError.name : 'Unknown',
+            message: apiError instanceof Error ? apiError.message : String(apiError)
+          });
+        }
+        
+        // API 실패 시 fallback 데이터 사용
+        console.log('Using fallback data due to API failure');
+        const fallbackMarkets = {
+          KRW: [
+            {
+              market: 'KRW-BTC',
+              trade_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_date_kst: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time_kst: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_timestamp: Date.now(),
+              opening_price: 150000000,
+              high_price: 155000000,
+              low_price: 148000000,
+              trade_price: 152000000,
+              prev_closing_price: 150000000,
+              change: 'RISE',
+              change_price: 2000000,
+              change_rate: 0.0133,
+              signed_change_price: 2000000,
+              signed_change_rate: 0.0133,
+              trade_volume: 1000,
+              acc_trade_volume: 1000000,
+              acc_trade_volume_24h: 1000000,
+              acc_trade_price: 152000000000,
+              acc_trade_price_24h: 152000000000,
+              highest_52_week_price: 200000000,
+              highest_52_week_date: '20241201',
+              lowest_52_week_price: 100000000,
+              lowest_52_week_date: '20240101',
+              timestamp: Date.now()
+            },
+            {
+              market: 'KRW-ETH',
+              trade_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_date_kst: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time_kst: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_timestamp: Date.now(),
+              opening_price: 5000000,
+              high_price: 5200000,
+              low_price: 4900000,
+              trade_price: 5100000,
+              prev_closing_price: 5000000,
+              change: 'RISE',
+              change_price: 100000,
+              change_rate: 0.02,
+              signed_change_price: 100000,
+              signed_change_rate: 0.02,
+              trade_volume: 5000,
+              acc_trade_volume: 5000000,
+              acc_trade_volume_24h: 5000000,
+              acc_trade_price: 25500000000,
+              acc_trade_price_24h: 25500000000,
+              highest_52_week_price: 8000000,
+              highest_52_week_date: '20241201',
+              lowest_52_week_price: 2000000,
+              lowest_52_week_date: '20240101',
+              timestamp: Date.now()
+            },
+            {
+              market: 'KRW-YOY',
+              trade_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_date_kst: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time_kst: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_timestamp: Date.now(),
+              opening_price: 50,
+              high_price: 55,
+              low_price: 48,
+              trade_price: 52,
+              prev_closing_price: 50,
+              change: 'RISE',
+              change_price: 2,
+              change_rate: 0.04,
+              signed_change_price: 2,
+              signed_change_rate: 0.04,
+              trade_volume: 1000000,
+              acc_trade_volume: 1000000000,
+              acc_trade_volume_24h: 1000000000,
+              acc_trade_price: 52000000,
+              acc_trade_price_24h: 52000000,
+              highest_52_week_price: 100,
+              highest_52_week_date: '20241201',
+              lowest_52_week_price: 20,
+              lowest_52_week_date: '20240101',
+              timestamp: Date.now()
+            },
+            {
+              market: 'KRW-SOL',
+              trade_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_date_kst: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time_kst: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_timestamp: Date.now(),
+              opening_price: 250000,
+              high_price: 260000,
+              low_price: 240000,
+              trade_price: 255000,
+              prev_closing_price: 250000,
+              change: 'RISE',
+              change_price: 5000,
+              change_rate: 0.02,
+              signed_change_price: 5000,
+              signed_change_rate: 0.02,
+              trade_volume: 5000,
+              acc_trade_volume: 5000000,
+              acc_trade_volume_24h: 5000000,
+              acc_trade_price: 1275000000000,
+              acc_trade_price_24h: 1275000000000,
+              highest_52_week_price: 400000,
+              highest_52_week_date: '20241201',
+              lowest_52_week_price: 100000,
+              lowest_52_week_date: '20240101',
+              timestamp: Date.now()
+            },
+            {
+              market: 'KRW-ADA',
+              trade_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_date_kst: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time_kst: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_timestamp: Date.now(),
+              opening_price: 800,
+              high_price: 850,
+              low_price: 780,
+              trade_price: 820,
+              prev_closing_price: 800,
+              change: 'RISE',
+              change_price: 20,
+              change_rate: 0.025,
+              signed_change_price: 20,
+              signed_change_rate: 0.025,
+              trade_volume: 100000,
+              acc_trade_volume: 100000000,
+              acc_trade_volume_24h: 100000000,
+              acc_trade_price: 82000000000,
+              acc_trade_price_24h: 82000000000,
+              highest_52_week_price: 1500,
+              highest_52_week_date: '20241201',
+              lowest_52_week_price: 300,
+              lowest_52_week_date: '20240101',
+              timestamp: Date.now()
+            }
+          ],
+          USDT: [
+            {
+              market: 'USDT-BTC',
+              trade_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_date_kst: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time_kst: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_timestamp: Date.now(),
+              opening_price: 110000,
+              high_price: 115000,
+              low_price: 108000,
+              trade_price: 112000,
+              prev_closing_price: 110000,
+              change: 'RISE',
+              change_price: 2000,
+              change_rate: 0.0182,
+              signed_change_price: 2000,
+              signed_change_rate: 0.0182,
+              trade_volume: 100,
+              acc_trade_volume: 100000,
+              acc_trade_volume_24h: 100000,
+              acc_trade_price: 11200000000,
+              acc_trade_price_24h: 11200000000,
+              highest_52_week_price: 150000,
+              highest_52_week_date: '20241201',
+              lowest_52_week_price: 60000,
+              lowest_52_week_date: '20240101',
+              timestamp: Date.now()
+            },
+            {
+              market: 'USDT-ETH',
+              trade_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_date_kst: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time_kst: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_timestamp: Date.now(),
+              opening_price: 3500,
+              high_price: 3600,
+              low_price: 3400,
+              trade_price: 3550,
+              prev_closing_price: 3500,
+              change: 'RISE',
+              change_price: 50,
+              change_rate: 0.0143,
+              signed_change_price: 50,
+              signed_change_rate: 0.0143,
+              trade_volume: 1000,
+              acc_trade_volume: 1000000,
+              acc_trade_volume_24h: 1000000,
+              acc_trade_price: 3550000000,
+              acc_trade_price_24h: 3550000000,
+              highest_52_week_price: 5000,
+              highest_52_week_date: '20241201',
+              lowest_52_week_price: 1500,
+              lowest_52_week_date: '20240101',
+              timestamp: Date.now()
+            },
+            {
+              market: 'USDT-YOY',
+              trade_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_date_kst: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time_kst: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_timestamp: Date.now(),
+              opening_price: 0.035,
+              high_price: 0.040,
+              low_price: 0.032,
+              trade_price: 0.037,
+              prev_closing_price: 0.035,
+              change: 'RISE',
+              change_price: 0.002,
+              change_rate: 0.0571,
+              signed_change_price: 0.002,
+              signed_change_rate: 0.0571,
+              trade_volume: 10000000,
+              acc_trade_volume: 10000000000,
+              acc_trade_volume_24h: 10000000000,
+              acc_trade_price: 370000,
+              acc_trade_price_24h: 370000,
+              highest_52_week_price: 0.1,
+              highest_52_week_date: '20241201',
+              lowest_52_week_price: 0.01,
+              lowest_52_week_date: '20240101',
+              timestamp: Date.now()
+            },
+            {
+              market: 'USDT-SOL',
+              trade_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_date_kst: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time_kst: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_timestamp: Date.now(),
+              opening_price: 180,
+              high_price: 190,
+              low_price: 170,
+              trade_price: 185,
+              prev_closing_price: 180,
+              change: 'RISE',
+              change_price: 5,
+              change_rate: 0.0278,
+              signed_change_price: 5,
+              signed_change_rate: 0.0278,
+              trade_volume: 500000,
+              acc_trade_volume: 10000000,
+              acc_trade_volume_24h: 10000000,
+              acc_trade_price: 1850000000,
+              acc_trade_price_24h: 1850000000,
+              highest_52_week_price: 260,
+              highest_52_week_date: '20241201',
+              lowest_52_week_price: 80,
+              lowest_52_week_date: '20240101',
+              timestamp: Date.now()
+            },
+            {
+              market: 'USDT-ADA',
+              trade_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_date_kst: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time_kst: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_timestamp: Date.now(),
+              opening_price: 0.62,
+              high_price: 0.66,
+              low_price: 0.60,
+              trade_price: 0.64,
+              prev_closing_price: 0.62,
+              change: 'RISE',
+              change_price: 0.02,
+              change_rate: 0.0323,
+              signed_change_price: 0.02,
+              signed_change_rate: 0.0323,
+              trade_volume: 20000000,
+              acc_trade_volume: 1000000000,
+              acc_trade_volume_24h: 1000000000,
+              acc_trade_price: 6400000,
+              acc_trade_price_24h: 6400000,
+              highest_52_week_price: 1.20,
+              highest_52_week_date: '20241201',
+              lowest_52_week_price: 0.25,
+              lowest_52_week_date: '20240101',
+              timestamp: Date.now()
+            }
+          ],
+          BTC: [
+            {
+              market: 'BTC-ETH',
+              trade_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_date_kst: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time_kst: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_timestamp: Date.now(),
+              opening_price: 0.0315,
+              high_price: 0.0320,
+              low_price: 0.0310,
+              trade_price: 0.0317,
+              prev_closing_price: 0.0315,
+              change: 'RISE',
+              change_price: 0.0002,
+              change_rate: 0.0063,
+              signed_change_price: 0.0002,
+              signed_change_rate: 0.0063,
+              trade_volume: 1000,
+              acc_trade_volume: 1000000,
+              acc_trade_volume_24h: 1000000,
+              acc_trade_price: 31700,
+              acc_trade_price_24h: 31700,
+              highest_52_week_price: 0.05,
+              highest_52_week_date: '20241201',
+              lowest_52_week_price: 0.02,
+              lowest_52_week_date: '20240101',
+              timestamp: Date.now()
+            },
+            {
+              market: 'BTC-YOY',
+              trade_date: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_date_kst: new Date().toISOString().split('T')[0].replace(/-/g, ''),
+              trade_time_kst: new Date().toTimeString().split(' ')[0].replace(/:/g, ''),
+              trade_timestamp: Date.now(),
+              opening_price: 0.00000033,
+              high_price: 0.00000036,
+              low_price: 0.00000030,
+              trade_price: 0.00000034,
+              prev_closing_price: 0.00000033,
+              change: 'RISE',
+              change_price: 0.00000001,
+              change_rate: 0.0303,
+              signed_change_price: 0.00000001,
+              signed_change_rate: 0.0303,
+              trade_volume: 500000000,
+              acc_trade_volume: 10000000000,
+              acc_trade_volume_24h: 10000000000,
+              acc_trade_price: 3.4,
+              acc_trade_price_24h: 3.4,
+              highest_52_week_price: 0.00000100,
+              highest_52_week_date: '20241201',
+              lowest_52_week_price: 0.00000010,
+              lowest_52_week_date: '20240101',
+              timestamp: Date.now()
+            }
+          ],
+          ETH: [
+            {
+              symbol: 'BTCETH',
+              lastPrice: '0.0317',
+              priceChangePercent: '0.63',
+              volume: '1000',
+              quoteVolume: '31700'
+            },
+            {
+              symbol: 'YOYETH',
+              lastPrice: '0.0000104',
+              priceChangePercent: '5.71',
+              volume: '10000000',
+              quoteVolume: '104000'
+            }
+          ]
+        };
+        
+        setUpbitMarkets(fallbackMarkets);
+        console.log('Using fallback data:', {
+          KRW: fallbackMarkets.KRW.length,
+          USDT: fallbackMarkets.USDT.length,
+          BTC: fallbackMarkets.BTC.length,
+          ETH: fallbackMarkets.ETH.length
         });
+        
       } catch (error) {
-        console.error('Failed to fetch Upbit markets:', error);
+        console.error('Failed to fetch markets:', error);
+        // Fallback: 빈 배열로 초기화
+        setUpbitMarkets({ KRW: [], USDT: [], BTC: [], ETH: [] });
       }
     };
 
@@ -89,10 +589,6 @@ export default function ExchangeScreen() {
     return () => clearInterval(interval);
   }, []);
 
-  // 언어 설정 변경 시 nameLanguage 업데이트
-  useEffect(() => {
-    setNameLanguage(language === 'ko' ? 'ko' : 'en');
-  }, [language]);
 
   const toggleFavorite = (coinId: string) => {
     setFavorites(prev => 
@@ -157,6 +653,24 @@ export default function ExchangeScreen() {
     'DAI': '다이'
   };
 
+  // 가격 포맷팅 함수 (천단위 구분 + 자릿수 규칙 유지)
+  const formatPrice = (price: number, _market: string): string => {
+    const decimals =
+      price >= 1000 ? 0 :
+      price >= 100 ? 2 :
+      price >= 10 ? 2 :
+      price >= 1 ? 4 :
+      price >= 0.01 ? 4 : 6;
+    try {
+      return Number(price).toLocaleString(undefined, {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+      });
+    } catch {
+      return price.toFixed(decimals);
+    }
+  };
+
   // 거래대금 포맷팅 함수
   const formatVolume = (volume: number, market: string) => {
     if (volume >= 1000000000) {
@@ -171,22 +685,28 @@ export default function ExchangeScreen() {
 
   // 업비트 데이터를 Market 형식으로 변환
   const convertUpbitToMarket = (ticker: UpbitTicker): Market => {
-    if (!ticker.market) {
-      throw new Error('Invalid ticker: market is undefined');
+    try {
+      if (!ticker.market) {
+        console.error('Invalid ticker: market is undefined', ticker);
+        throw new Error('Invalid ticker: market is undefined');
+      }
+      const base = ticker.market.split('-')[1];
+      const quote = ticker.market.split('-')[0];
+      return {
+        id: ticker.market,
+        base,
+        quote,
+        symbol: `${base}/${quote}`,
+        name: base, // 업비트에서는 한글명이 별도로 필요
+        price: ticker.trade_price,
+        change: ticker.signed_change_rate * 100,
+        change24hPct: ticker.signed_change_rate * 100,
+        volume24h: ticker.acc_trade_price_24h
+      };
+    } catch (error) {
+      console.error('Error converting Upbit ticker to market:', error, ticker);
+      throw error;
     }
-    const base = ticker.market.split('-')[1];
-    const quote = ticker.market.split('-')[0];
-    return {
-      id: ticker.market,
-      base,
-      quote,
-      symbol: `${base}/${quote}`,
-      name: base, // 업비트에서는 한글명이 별도로 필요
-      price: ticker.trade_price,
-      change: ticker.signed_change_rate * 100,
-      change24hPct: ticker.signed_change_rate * 100,
-      volume24h: ticker.acc_trade_price_24h
-    };
   };
 
   // 바이낸스 데이터를 Market 형식으로 변환
@@ -210,7 +730,15 @@ export default function ExchangeScreen() {
 
   // 현재 선택된 마켓의 데이터 가져오기
   const getCurrentMarketData = (): Market[] => {
+    console.log('getCurrentMarketData called for market:', selectedMarket);
+    console.log('upbitMarkets state in getCurrentMarketData:', {
+      KRW: upbitMarkets.KRW.length,
+      USDT: upbitMarkets.USDT.length,
+      BTC: upbitMarkets.BTC.length,
+      ETH: upbitMarkets.ETH.length
+    });
     let tickers: UpbitTicker[] = [];
+    
     
     if (selectedMarket === 'FAV') {
       // 즐겨찾기: 마켓 우선순위에 따라 중복 제거 (USDT > KRW > ETH > BTC)
@@ -308,28 +836,87 @@ export default function ExchangeScreen() {
     } else {
       // KRW, USDT, BTC 마켓
       tickers = upbitMarkets[selectedMarket as keyof typeof upbitMarkets] || [];
-      return tickers.map(convertUpbitToMarket);
+      
+      if (tickers.length === 0) {
+        console.warn(`No tickers found for ${selectedMarket} market`);
+        return [];
+      }
+      
+      try {
+        const markets = tickers.map(convertUpbitToMarket);
+        return markets;
+      } catch (error) {
+        console.error(`Error converting ${selectedMarket} market data:`, error);
+        return [];
+      }
     }
 
     return tickers.map(convertUpbitToMarket);
   };
 
-  const filteredMarkets = getCurrentMarketData()
+  const currentMarketData = getCurrentMarketData();
+  console.log('Current market data:', currentMarketData.length, 'items');
+  console.log('Selected market:', selectedMarket);
+  console.log('Upbit markets state:', {
+    KRW: upbitMarkets.KRW.length,
+    USDT: upbitMarkets.USDT.length,
+    BTC: upbitMarkets.BTC.length,
+    ETH: upbitMarkets.ETH.length
+  });
+  
+  const filteredMarkets = currentMarketData
     .filter(market => 
-      market.base.toLowerCase().includes(searchText.toLowerCase()) ||
+      (market.base || '').toLowerCase().includes(searchText.toLowerCase()) ||
       market.name.toLowerCase().includes(searchText.toLowerCase())
     )
     .sort((a, b) => {
-      const multiplier = sortOrder === 'asc' ? 1 : -1;
+      // 기본 진열 시 (모든 제목탭이 화이트일 때) YOY를 맨 상단에 배치
+      const isDefaultSort = sortBy === 'price' && sortOrder === 'desc' && nameLanguage === 'en';
+      
+      if (isDefaultSort) {
+        // YOY가 맨 상단에 오도록 우선순위 부여
+        if (a.base === 'YOY' && b.base !== 'YOY') return -1;
+        if (b.base === 'YOY' && a.base !== 'YOY') return 1;
+        if (a.base === 'YOY' && b.base === 'YOY') return 0;
+        
+        // YOY가 아닌 나머지는 가격 내림차순으로 정렬 (높은 가격부터)
+        return (b.price || 0) - (a.price || 0);
+      }
+      
+      // 기본 진열이 아닐 때는 기존 정렬 로직 사용
       switch (sortBy) {
         case 'volume':
-          return (b.volume24h - a.volume24h) * multiplier;
+          if (sortOrder === 'desc') {
+            // 내림차순: 높은 값부터
+            return b.volume24h - a.volume24h;
+          } else {
+            // 오름차순: 낮은 값부터
+            return a.volume24h - b.volume24h;
+          }
         case 'change':
-          return (b.change24hPct - a.change24hPct) * multiplier;
+          if (sortOrder === 'desc') {
+            // 내림차순: 높은 값부터
+            return (b.change24hPct || 0) - (a.change24hPct || 0);
+          } else {
+            // 오름차순: 낮은 값부터
+            return (a.change24hPct || 0) - (b.change24hPct || 0);
+          }
         case 'price':
-          return (b.price - a.price) * multiplier;
+          if (sortOrder === 'desc') {
+            // 내림차순: 높은 값부터
+            return (b.price || 0) - (a.price || 0);
+          } else {
+            // 오름차순: 낮은 값부터
+            return (a.price || 0) - (b.price || 0);
+          }
         case 'name':
-          return a.base.localeCompare(b.base) * multiplier;
+          if (sortOrder === 'desc') {
+            // 내림차순: Z부터 A순
+            return (b.base || '').localeCompare(a.base || '');
+          } else {
+            // 오름차순: A부터 Z순
+            return (a.base || '').localeCompare(b.base || '');
+          }
         default:
           return 0;
       }
@@ -344,37 +931,64 @@ export default function ExchangeScreen() {
           style={[styles.exchangeTab, selectedTab === '거래소' && styles.activeExchangeTab]}
           onPress={() => setSelectedTab('거래소')}
         >
-          <ThemedText style={[styles.exchangeTabText, selectedTab === '거래소' && styles.activeExchangeTabText]}>
-            거래소
-          </ThemedText>
+          <ThemedText style={[styles.exchangeTabText, selectedTab === '거래소' && styles.activeExchangeTabText]}>{t('exchangeTab', language)}</ThemedText>
         </TouchableOpacity>
         
         <TouchableOpacity 
           style={[styles.exchangeTab, selectedTab === 'NFT' && styles.activeExchangeTab]}
-          onPress={() => setSelectedTab('NFT')}
+          onPress={() => { setSelectedTab('NFT'); }}
         >
           <ThemedText style={[styles.exchangeTabText, selectedTab === 'NFT' && styles.activeExchangeTabText]}>
             NFT
           </ThemedText>
         </TouchableOpacity>
+
+        {/* CEV / A-CEV tabs styled like NFT */}
+        <TouchableOpacity 
+          style={[styles.exchangeTab, selectedTab === 'CEV' && styles.activeExchangeTab]}
+          onPress={() => setSelectedTab('CEV')}
+        >
+          <ThemedText style={[styles.exchangeTabText, selectedTab === 'CEV' && styles.activeExchangeTabText]}>CEV</ThemedText>
+        </TouchableOpacity>
+
+        {currentUser?.email === 'admin@yooyland.com' && (
+          <TouchableOpacity 
+            style={[styles.exchangeTab, selectedTab === 'A-CEV' && styles.activeExchangeTab]}
+            onPress={() => setSelectedTab('A-CEV')}
+          >
+            <ThemedText style={[styles.exchangeTabText, selectedTab === 'A-CEV' && styles.activeExchangeTabText]}>A-CEV</ThemedText>
+          </TouchableOpacity>
+        )}
         
         <View style={styles.exchangeIcons}>
-          <TouchableOpacity style={styles.exchangeIcon} onPress={() => setShowSearchModal(true)}>
-            <ThemedText style={styles.iconText}>🔍</ThemedText>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.exchangeIcon}>
-            <ThemedText style={styles.iconText}>⚙️</ThemedText>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.exchangeIcon}>
-            <ThemedText style={styles.iconText}>💬</ThemedText>
+          <TouchableOpacity onPress={() => setShowSearchModal(true)} style={{ paddingHorizontal: 6, paddingVertical: 6 }}>
+            <ThemedText style={{ color: '#FFD700', fontSize: 16, fontWeight: '700' }}>🔎</ThemedText>
           </TouchableOpacity>
         </View>
+
+        {/* Absolute search button to ensure visibility on all devices */}
+        <TouchableOpacity onPress={() => setShowSearchModal(true)} style={styles.exchangeSearchButton}>
+          <ThemedText style={styles.exchangeSearchText}>🔎</ThemedText>
+        </TouchableOpacity>
       </View>
 
-      {selectedTab === '거래소' && (
+      {(selectedTab === '거래소' || selectedTab === 'NFT' || selectedTab === 'CEV' || selectedTab === 'A-CEV') && (
         <View style={styles.container}>
-          {/* 마켓 탭 */}
-          <View style={styles.marketTabContainer}>
+          {/* NFT / CEV / A-CEV 탭은 거래소 영역을 숨기고 자체 콘텐츠만 표시 */}
+          {selectedTab === 'NFT' && (
+            <NFTInline />
+          )}
+          {selectedTab === 'CEV' && (
+            <CEVInline />
+          )}
+          {selectedTab === 'A-CEV' && currentUser?.email === 'admin@yooyland.com' && (
+            <AdminCEVInline />
+          )}
+
+          {selectedTab === '거래소' && (
+            <>
+            {/* 마켓 탭 */}
+            <View style={styles.marketTabContainer}>
             {['USDT', 'KRW', 'ETH', 'BTC', 'MY', 'FAV'].map((market) => (
               <TouchableOpacity
                 key={market}
@@ -386,16 +1000,16 @@ export default function ExchangeScreen() {
                 </ThemedText>
               </TouchableOpacity>
             ))}
-          </View>
+            </View>
 
-          {/* 마켓 리스트 헤더 */}
-          <View style={styles.listHeader}>
+            {/* 마켓 리스트 헤더 */}
+            <View style={styles.listHeader}>
             <TouchableOpacity 
               style={styles.headerColumn}
               onPress={() => handleSort('name')}
             >
-              <ThemedText style={[styles.headerText, nameLanguage === 'ko' && styles.activeHeaderText]}>
-                Coin/Market
+              <ThemedText style={[styles.headerText, nameLanguage === 'en' ? styles.headerTextWhite : styles.activeHeaderText]}>
+                {t('coinMarket', language)}
               </ThemedText>
               <ThemedText style={styles.sortIcon}>↕</ThemedText>
             </TouchableOpacity>
@@ -403,62 +1017,63 @@ export default function ExchangeScreen() {
               style={[styles.headerColumn, styles.headerColumnRight]}
               onPress={() => handleSort('price')}
             >
-              <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'price' && styles.activeHeaderText]}>
+              <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'price' && (sortOrder === 'desc' ? styles.headerTextWhite : styles.activeHeaderText)]}>
                 {selectedMarket === 'MY' ? (
                   <View style={styles.headerTwoLine}>
-                    <ThemedText style={styles.headerText}>Price</ThemedText>
-                    <ThemedText style={[styles.headerTextSmall, styles.headerTextRight]}>Buy Price</ThemedText>
+                    <ThemedText style={styles.headerText}>{t('price', language)}</ThemedText>
+                    <ThemedText style={[styles.headerTextSmall, styles.headerTextRight]}>{t('buyPrice', language)}</ThemedText>
                   </View>
-                ) : 'Price'}
+                ) : t('price', language)}
               </ThemedText>
             </TouchableOpacity>
             <TouchableOpacity 
               style={[styles.headerColumn, styles.headerColumnRight]}
               onPress={() => handleSort('change')}
             >
-              <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'change' && styles.activeHeaderText]}>
+              <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'change' && (sortOrder === 'desc' ? styles.headerTextWhite : styles.activeHeaderText)]}>
                 {selectedMarket === 'MY' ? (
                   <View style={styles.headerTwoLine}>
-                    <ThemedText style={styles.headerText}>Change</ThemedText>
-                    <ThemedText style={[styles.headerTextSmall, styles.headerTextRight]}>P&L</ThemedText>
+                    <ThemedText style={styles.headerText}>{t('change', language)}</ThemedText>
+                    <ThemedText style={[styles.headerTextSmall, styles.headerTextRight]}>{t('profitRateProfitAmount', language)}</ThemedText>
                   </View>
-                ) : 'Change'}
+                ) : t('change', language)}
               </ThemedText>
             </TouchableOpacity>
             <TouchableOpacity 
               style={[styles.headerColumn, styles.headerColumnRight]}
               onPress={() => handleSort('volume')}
             >
-              <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'volume' && styles.activeHeaderText]}>
-                {selectedMarket === 'MY' ? 'Total Value' : 'Volume'}
+              <ThemedText style={[styles.headerText, styles.headerTextRight, sortBy === 'volume' && (sortOrder === 'desc' ? styles.headerTextWhite : styles.activeHeaderText)]}>
+                {selectedMarket === 'MY' ? t('totalHoldings', language) : t('volume24h', language)}
               </ThemedText>
             </TouchableOpacity>
-          </View>
+            </View>
 
-          {/* 마켓 리스트 */}
-          <FlatList
-            data={filteredMarkets}
-            keyExtractor={(m) => m.id}
-            contentContainerStyle={{ paddingBottom: 80 }}
-            style={{ flex: 1 }}
-            showsVerticalScrollIndicator={true}
-            renderItem={({ item }) => {
+            {/* 마켓 리스트 */}
+            <FlatList
+              data={filteredMarkets}
+              keyExtractor={(m) => m.id}
+              contentContainerStyle={{ paddingBottom: 80 }}
+              style={{ flex: 1 }}
+              showsVerticalScrollIndicator={true}
+              renderItem={({ item }) => {
               // 실제 업비트 가격 사용
-              const currentPrice = item.price;
-              const currentChange = item.change24hPct;
+              const currentPrice = item.price || 0;
+              const currentChange = item.change24hPct || 0;
               const isUp = currentChange >= 0;
               const isFavorite = favorites.includes(item.id);
               const isMyTab = selectedMarket === 'MY';
               
+              const formattedPrice = formatPrice(currentPrice, selectedMarket);
               const displayPrice = selectedMarket === 'KRW' ? 
-                `₩${currentPrice.toLocaleString()}` : 
+                `₩${formattedPrice}` : 
                 selectedMarket === 'USDT' ? 
-                  `$${currentPrice.toFixed(2)}` :
+                  `$${formattedPrice}` :
                   selectedMarket === 'ETH' ?
-                    `${currentPrice.toFixed(2)} ETH` :
+                    `${formattedPrice} ETH` :
                     selectedMarket === 'BTC' ?
-                      `${currentPrice.toFixed(2)} BTC` :
-                      `$${currentPrice.toFixed(2)}`;
+                      `${formattedPrice} BTC` :
+                      `$${formattedPrice}`;
               
               return (
                 <View style={styles.marketRow}>
@@ -489,12 +1104,9 @@ export default function ExchangeScreen() {
                         </View>
                         <View style={styles.coinDetails}>
                           <ThemedText style={styles.coinName}>
-                            {nameLanguage === 'ko' ? 
-                              (coinKoreanNames[item.base] || item.name) : 
-                              item.base
-                            }
+                            {getCoinDisplayName(item.base || '', nameLanguage)}
                           </ThemedText>
-                          <ThemedText style={styles.coinPair}>{item.base}/{item.quote}</ThemedText>
+                          <ThemedText style={styles.coinPair}>{item.base || ''}/{item.quote || ''}</ThemedText>
                         </View>
                       </Pressable>
                     </Link>
@@ -549,9 +1161,11 @@ export default function ExchangeScreen() {
                   </View>
                 </View>
               );
-            }}
-            ItemSeparatorComponent={() => <View style={styles.separator} />}
-          />
+              }}
+              ItemSeparatorComponent={() => <View style={styles.separator} />}
+            />
+            </>
+          )}
         </View>
       )}
 
@@ -563,7 +1177,7 @@ export default function ExchangeScreen() {
               <ThemedText style={styles.searchIcon}>🔍</ThemedText>
               <TextInput
                 style={styles.searchInput}
-                placeholder="코인명/심볼 검색"
+                placeholder={t('coinSearch', language)}
                 placeholderTextColor="#666"
                 value={searchText}
                 onChangeText={setSearchText}
@@ -615,17 +1229,22 @@ const styles = StyleSheet.create({
     color: '#000000',
     fontWeight: '600',
   },
-  exchangeIcons: {
-    flexDirection: 'row',
-    marginLeft: 'auto',
+  exchangeIcons: { flexDirection: 'row', marginLeft: 'auto' },
+  exchangeSearchButton: {
+    position: 'absolute',
+    right: 16,
+    top: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 6,
+    zIndex: 2000,
+    elevation: 2000,
   },
-  exchangeIcon: {
-    marginLeft: 12,
+  exchangeSearchText: {
+    color: '#FFD700',
+    fontSize: 16,
+    fontWeight: '700',
   },
-  iconText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-  },
+  
 
   // 컨테이너
   container: {
@@ -701,6 +1320,7 @@ const styles = StyleSheet.create({
   activeMarketTabText: {
     color: '#FFD700',
     fontWeight: '600',
+
   },
 
   // 리스트 헤더
@@ -858,6 +1478,10 @@ const styles = StyleSheet.create({
     color: '#FFD700',
     fontWeight: 'bold',
   },
+  headerTextWhite: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+  },
   separator: {
     height: 0,
   },
@@ -869,19 +1493,21 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    backgroundColor: 'transparent',
     zIndex: 1000,
     elevation: 1000,
     justifyContent: 'flex-start',
+    alignItems: 'center',
     paddingTop: 100,
   },
   searchModalContent: {
     backgroundColor: '#1A1A1A',
     marginHorizontal: 16,
     borderRadius: 8,
-    padding: 16,
+    padding: 12,
     flexDirection: 'row',
     alignItems: 'center',
+    width: '96%',
   },
   searchCloseButton: {
     marginLeft: 12,
@@ -894,5 +1520,6 @@ const styles = StyleSheet.create({
   },
 
 });
+
 
 

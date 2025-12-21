@@ -1,4 +1,22 @@
 {
+  "workbench.colorCustomizations": {
+    "titleBar.activeBackground": "#0d1f12",
+    "titleBar.activeForeground": "#ffd700",
+    "statusBar.background": "#0d1f12",
+    "statusBar.foreground": "#ffd700",
+    "activityBar.background": "#0d1f12",
+    "activityBar.foreground": "#ffd700",
+    "activityBar.activeBorder": "#ffd700",
+    "editorGroupHeader.tabsBackground": "#0d1f12",
+    "tab.activeBackground": "#13321d",
+    "tab.activeForeground": "#ffd700",
+    "tab.inactiveBackground": "#0d1f12",
+    "tab.inactiveForeground": "#c8c8c8"
+  },
+  "window.title": "[YOY • Green/Gold] ${workspaceFolderBasename} — ${activeEditorShort}"
+}
+
+{
   "editor.codeActionsOnSave": {
     "source.fixAll": "explicit",
     "source.organizeImports": "explicit",
