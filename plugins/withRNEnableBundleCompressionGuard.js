@@ -1,6 +1,6 @@
 // Adds guards into android/app/build.gradle during prebuild to avoid crashes
 // when a tool attempts to set ReactExtension.enableBundleCompression on RN 0.75.
-const { withAppBuildGradle, withGradleProperties } = require('@expo/config-plugins');
+const { withAppBuildGradle, withGradleProperties, withProjectBuildGradle } = require('@expo/config-plugins');
 
 function injectGuards(gradle) {
   if (gradle.includes('ENABLE_BUNDLE_COMPRESSION_GUARD')) {
@@ -90,6 +90,51 @@ const withRNEnableBundleCompressionGuard = (config) => {
       config.modResults.contents = contents;
     } catch (e) {
       // Leave contents unchanged on error; prebuild should still succeed.
+    }
+    return config;
+  });
+
+  // 3) Root build.gradle: before each subproject is evaluated, make sure
+  //    the 'react' extension can accept enableBundleCompression without crashing.
+  config = withProjectBuildGradle(config, (config) => {
+    try {
+      let contents = config.modResults.contents || '';
+      if (!contents.includes('ENABLE_BUNDLE_COMPRESSION_GUARD_ROOT')) {
+        const hook = `
+// ===== ENABLE_BUNDLE_COMPRESSION_GUARD_ROOT (auto-injected) START =====
+gradle.beforeProject { Project p ->
+  try {
+    def _reactExt = p.extensions.findByName("react")
+    if (_reactExt != null) {
+      try {
+        if (!_reactExt.metaClass.respondsTo(_reactExt, "setEnableBundleCompression", Object)) {
+          _reactExt.metaClass.setEnableBundleCompression { Object v ->
+            println("[root] ReactExtension: ignoring unsupported enableBundleCompression=${v} in " + p.path)
+          }
+        }
+        if (!_reactExt.metaClass.respondsTo(_reactExt, "getEnableBundleCompression")) {
+          _reactExt.metaClass.getEnableBundleCompression { -> false }
+        }
+      } catch (Throwable __) { }
+      try {
+        if (_reactExt.hasProperty("extensions") && _reactExt.extensions.hasProperty("extraProperties")) {
+          def ep = _reactExt.extensions.extraProperties
+          if (ep != null && !ep.has("enableBundleCompression")) {
+            ep.set("enableBundleCompression", false)
+          }
+        }
+      } catch (Throwable __) { }
+    }
+  } catch (Throwable __) { }
+}
+// ===== ENABLE_BUNDLE_COMPRESSION_GUARD_ROOT (auto-injected) END =====
+`;
+        // Prepend to keep it early
+        contents = hook + '\n' + contents;
+        config.modResults.contents = contents;
+      }
+    } catch (e) {
+      // ignore
     }
     return config;
   });
