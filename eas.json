@@ -9,8 +9,7 @@
       "distribution": "internal",
       "node": "20.19.4",
       "env": {
-        "EXPO_PUBLIC_BARCODE_ENABLED": "true",
-        "EAS_SKIP_BUNDLE_COMPRESSION": "1"
+        "EXPO_PUBLIC_BARCODE_ENABLED": "true"
       },
       "android": {
         "gradleCommand": ":app:assembleDebug"
@@ -19,13 +18,11 @@
     "preview": {
       "distribution": "internal",
       "env": {
-        "EAS_SKIP_BUNDLE_COMPRESSION": "1"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "EAS_SKIP_BUNDLE_COMPRESSION": "1"
       }
     },
     "store": {
@@ -34,7 +31,6 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EAS_SKIP_BUNDLE_COMPRESSION": "1",
         "EXPO_PUBLIC_SOCIAL_LOGIN_ENABLED": "false",
         "EXPO_PUBLIC_ORDER_ENABLED": "true",
         "EXPO_PUBLIC_STAKING_ENABLED": "true",
