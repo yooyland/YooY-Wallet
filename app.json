@@ -79,6 +79,7 @@
       ],
       "expo-apple-authentication",
       "expo-contacts",
+      "./plugins/withRNEnableBundleCompressionGuard",
       [
         "expo-build-properties",
         {
