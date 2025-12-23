@@ -53,8 +53,16 @@ try {
 }
 
 function stripUnknownPropertyAssignments(gradle) {
-  // Remove or comment out any enableBundleCompression assignments if present.
-  return gradle.replace(/^[ \t]*enableBundleCompression\s*=.*$/gm, '/* enableBundleCompression removed by guard for RN 0.75 */');
+  // Remove any line that contains enableBundleCompression in the gradle file
+  // This covers forms like:
+  //   enableBundleCompression = false
+  //   enableBundleCompression false
+  //   project.ext.react = [ enableBundleCompression: false ]
+  return gradle
+    // remove any standalone lines mentioning enableBundleCompression
+    .replace(/^[^\n]*enableBundleCompression[^\n]*\n/gm, '')
+    // also clean up potential trailing empty lines created
+    .replace(/\n{3,}/g, '\n\n');
 }
 
 const withRNEnableBundleCompressionGuard = (config) => {
