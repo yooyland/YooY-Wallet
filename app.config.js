@@ -49,8 +49,6 @@ module.exports = ({ config }) => ({
     if (!hasBuildProps) {
       list.push(['expo-build-properties', { android: { enableProguardInReleaseBuilds: true, proguardRules: 'proguard-rules.pro' } }]);
     }
-    // 카메라 네이티브 모듈 포함(Expo SDK 54 호환)
-    ensure('expo-camera');
     return list;
   })(),
   extra: {
