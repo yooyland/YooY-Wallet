@@ -1,6 +1,6 @@
 // Adds guards into android/app/build.gradle during prebuild to avoid crashes
 // when a tool attempts to set ReactExtension.enableBundleCompression on RN 0.75.
-const { withAppBuildGradle } = require('@expo/config-plugins');
+const { withAppBuildGradle, withGradleProperties } = require('@expo/config-plugins');
 
 function injectGuards(gradle) {
   if (gradle.includes('ENABLE_BUNDLE_COMPRESSION_GUARD')) {
@@ -58,7 +58,23 @@ function stripUnknownPropertyAssignments(gradle) {
 }
 
 const withRNEnableBundleCompressionGuard = (config) => {
-  return withAppBuildGradle(config, (config) => {
+  // 1) Strip gradle.properties entries so RN plugin doesn't try to map them
+  config = withGradleProperties(config, (config) => {
+    try {
+      const filtered = (config.modResults || []).filter(
+        (item) =>
+          item.name !== 'react.enableBundleCompression' &&
+          item.name !== 'org.gradle.project.react.enableBundleCompression'
+      );
+      config.modResults = filtered;
+    } catch (e) {
+      // ignore
+    }
+    return config;
+  });
+
+  // 2) Add guards and strip any inline assignments in app/build.gradle
+  config = withAppBuildGradle(config, (config) => {
     try {
       let contents = config.modResults.contents || '';
       contents = injectGuards(contents);
@@ -69,6 +85,8 @@ const withRNEnableBundleCompressionGuard = (config) => {
     }
     return config;
   });
+
+  return config;
 };
 
 module.exports = withRNEnableBundleCompressionGuard;
