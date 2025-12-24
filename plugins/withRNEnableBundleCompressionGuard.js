@@ -1,6 +1,6 @@
 // Adds guards into android/app/build.gradle during prebuild to avoid crashes
 // when a tool attempts to set ReactExtension.enableBundleCompression on RN 0.75.
-const { withAppBuildGradle, withGradleProperties, withProjectBuildGradle } = require('@expo/config-plugins');
+const { withAppBuildGradle, withGradleProperties, withProjectBuildGradle, withSettingsGradle } = require('@expo/config-plugins');
 
 function injectGuards(gradle) {
   if (gradle.includes('ENABLE_BUNDLE_COMPRESSION_GUARD')) {
@@ -130,6 +130,31 @@ gradle.beforeProject { Project p ->
 // ===== ENABLE_BUNDLE_COMPRESSION_GUARD_ROOT (auto-injected) END =====
 `;
         // Prepend to keep it early
+        contents = hook + '\n' + contents;
+        config.modResults.contents = contents;
+      }
+    } catch (e) {
+      // ignore
+    }
+    return config;
+  });
+
+  // 4) settings.gradle: earliest place to strip -Preact.enableBundleCompression before projects load
+  config = withSettingsGradle(config, (config) => {
+    try {
+      let contents = config.modResults.contents || '';
+      if (!contents.includes('ENABLE_BUNDLE_COMPRESSION_GUARD_SETTINGS')) {
+        const hook = `
+// ===== ENABLE_BUNDLE_COMPRESSION_GUARD_SETTINGS (auto-injected) START =====
+try {
+  def _keys = ['react.enableBundleCompression', 'org.gradle.project.react.enableBundleCompression']
+  if (gradle != null && gradle.startParameter != null && gradle.startParameter.projectProperties != null) {
+    _keys.each { k -> if (gradle.startParameter.projectProperties.containsKey(k)) { gradle.startParameter.projectProperties.remove(k) } }
+  }
+  _keys.each { k -> if (System.properties.containsKey(k)) { System.properties.remove(k) } }
+} catch (Throwable __) { }
+// ===== ENABLE_BUNDLE_COMPRESSION_GUARD_SETTINGS (auto-injected) END =====
+`;
         contents = hook + '\n' + contents;
         config.modResults.contents = contents;
       }
