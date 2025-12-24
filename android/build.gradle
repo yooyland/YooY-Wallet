@@ -8,7 +8,7 @@ buildscript {
   dependencies {
     classpath('com.android.tools.build:gradle')
     classpath('com.facebook.react:react-native-gradle-plugin')
-    classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')
+    classpath('org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24')
   }
 }
 
@@ -60,11 +60,11 @@ allprojects {
               String text = src.getText("UTF-8")
               String patched = text
                 .replace("UIManagerHelper.getSurfaceId(handler.view!!)", "UIManagerHelper.getSurfaceId(handler.view!!.context)")
-                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*handler\.view\s*\)/, "UIManagerHelper.getSurfaceId(handler.view.context)")
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*handler\.view\s*\)/, "UIManagerHelper.getSurfaceId(handler.view!!.context)")
                 .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*view!!\s*\)/, "UIManagerHelper.getSurfaceId(view!!.context)")
-                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*view\s*\)/, "UIManagerHelper.getSurfaceId(view.context)")
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*view\s*\)/, "UIManagerHelper.getSurfaceId(view!!.context)")
                 .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*([A-Za-z0-9_]+)\.view!!\s*\)/, "UIManagerHelper.getSurfaceId(\$1.view!!.context)")
-                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*([A-Za-z0-9_]+)\.view\s*\)/, "UIManagerHelper.getSurfaceId(\$1.view.context)")
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*([A-Za-z0-9_]+)\.view\s*\)/, "UIManagerHelper.getSurfaceId(\$1.view!!.context)")
               if (patched != text) {
                 src.write(patched, "UTF-8")
                 println("[RNGH patch] Rewrote UIManagerHelper.getSurfaceId(...) to use Context in ${src}")
@@ -84,9 +84,9 @@ allprojects {
   configurations.all {
     resolutionStrategy.eachDependency { details ->
       if (details.requested.group == "org.jetbrains.kotlin" && details.requested.name.startsWith("kotlin-")) {
-        if (details.requested.version != "2.0.21") {
-          details.useVersion "2.0.21"
-          details.because("Align Kotlin stdlib to 2.0.21 for Expo SDK 54 / RN 0.75.x")
+        if (details.requested.version != "1.9.24") {
+          details.useVersion "1.9.24"
+          details.because("Align Kotlin stdlib to 1.9.24 to match compiler (avoid 2.1.x metadata)")
         }
       }
       if (details.requested.group != null && details.requested.group.startsWith("androidx.camera")) {
@@ -94,6 +94,13 @@ allprojects {
         details.because("Force CameraX to 1.4.1 to avoid AGP 8.6 requirement")
       }
     }
+    resolutionStrategy.force(
+      "org.jetbrains.kotlin:kotlin-stdlib:1.9.24",
+      "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.24",
+      "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.24",
+      "org.jetbrains.kotlin:kotlin-reflect:1.9.24",
+      "org.jetbrains.kotlin:kotlin-stdlib-common:1.9.24"
+    )
   }
 }
 
