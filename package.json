@@ -30,7 +30,7 @@
     "cors": "^2.8.5",
     "dayjs": "^1.11.18",
     "ethers": "^6.16.0",
-    "expo": "~55.0.0",
+    "expo": "~54.0.0",
     "expo-apple-authentication": "~8.0.7",
     "expo-auth-session": "~7.0.9",
     "expo-av": "~16.0.7",
@@ -77,9 +77,9 @@
     "qrcode": "^1.5.4",
     "react": "18.2.0",
     "react-dom": "18.2.0",
-    "react-native": "0.76.6",
+    "react-native": "0.75.4",
     "react-native-blob-util": "^0.19.0",
-    "react-native-gesture-handler": "2.17.1",
+    "react-native-gesture-handler": "2.16.1",
     "react-native-get-random-values": "^1.11.0",
     "react-native-qrcode-svg": "^6.3.2",
     "react-native-reanimated": "3.13.0",
@@ -106,9 +106,7 @@
     "typescript": "~5.9.2"
   },
   "overrides": {
-    "expo-image-loader": "~6.0.0",
-    "react-native-gesture-handler": "2.17.1",
-    "expo-modules-core": "^3.2.4"
+    "expo-image-loader": "~6.0.0"
   },
   "private": true,
   "expo": {
