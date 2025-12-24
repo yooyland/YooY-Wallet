@@ -1,0 +1,16 @@
+diff --git a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerTouchEvent.kt b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerTouchEvent.kt
+index 1111111..2222222 100644
+--- a/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerTouchEvent.kt
++++ b/node_modules/react-native-gesture-handler/android/src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerTouchEvent.kt
+@@
+ class RNGestureHandlerTouchEvent private constructor() : Event<RNGestureHandlerTouchEvent>() {
+   private var extraData: WritableMap? = null
+   private var coalescingKey: Short = 0
+   private fun <T : GestureHandler<T>> init(handler: T) {
+-    super.init(UIManagerHelper.getSurfaceId(handler.view!!), handler.view!!.id)
++    // Use Context overload to avoid overload resolution issues across RN versions
++    super.init(UIManagerHelper.getSurfaceId(handler.view!!.context), handler.view!!.id)
+     extraData = createEventData(handler)
+     coalescingKey = handler.eventCoalescingKey
+   }
+
