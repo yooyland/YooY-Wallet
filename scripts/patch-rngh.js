@@ -47,23 +47,27 @@ function main() {
       /UIManagerHelper\.getSurfaceId\(\s*(?:this\.)?context\s*\)/g,
       'UIManagerHelper.getSurfaceId((context as android.content.Context))'
     );
-    // Prefer context variant explicitly to avoid overload mismatch
+    // Prefer context variant explicitly to avoid overload mismatch (use !! when receiver may be nullable)
     patched = patched.replace(
       /UIManagerHelper\.getSurfaceId\(\s*handler\.view!!\s*\)/g,
-      'UIManagerHelper.getSurfaceId(handler.view!!.getContext())'
+      'UIManagerHelper.getSurfaceId(handler.view!!.context)'
+    );
+    patched = patched.replace(
+      /UIManagerHelper\.getSurfaceId\(\s*handler\.view\s*\)/g,
+      'UIManagerHelper.getSurfaceId(handler.view!!.context)'
     );
     patched = patched.replace(
       /UIManagerHelper\.getSurfaceId\(\s*([A-Za-z0-9_]+)\.view!!\s*\)/g,
-      'UIManagerHelper.getSurfaceId($1.view!!.getContext())'
+      'UIManagerHelper.getSurfaceId($1.view!!.context)'
     );
     patched = patched.replace(
       /UIManagerHelper\.getSurfaceId\(\s*([A-Za-z0-9_]+)\.view\s*\)/g,
-      'UIManagerHelper.getSurfaceId($1.view.getContext())'
+      'UIManagerHelper.getSurfaceId($1.view!!.context)'
     );
     // Fallback: plain 'view' symbol
     patched = patched.replace(
       /UIManagerHelper\.getSurfaceId\(\s*view\s*\)/g,
-      'UIManagerHelper.getSurfaceId(view.getContext())'
+      'UIManagerHelper.getSurfaceId(view!!.context)'
     );
     return patched;
   });
