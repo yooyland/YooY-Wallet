@@ -103,7 +103,7 @@
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
     "tsx": "^4.20.6",
-    "typescript": "~5.9.2",
+    "typescript": "~5.9.2"
   },
   "overrides": {
     "expo-image-loader": "~6.0.0",
