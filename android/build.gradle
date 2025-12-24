@@ -24,9 +24,31 @@ allprojects {
       subproj.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
         kotlinOptions {
           jvmTarget = "17"
-          languageVersion = "1.9"
-          apiVersion = "1.9"
-          freeCompilerArgs += ["-Xjvm-default=all", "-Xskip-prerelease-check"]
+          // Align language/api to Kotlin 2.0 toolchain while keeping broad lib compatibility
+          languageVersion = "2.0"
+          apiVersion = "2.0"
+          freeCompilerArgs += ["-Xjvm-default=all-compatibility", "-Xskip-prerelease-check"]
+        }
+      }
+    }
+    // Harden RNGH module compilation flags explicitly (some versions assume different defaults)
+    if (subproj.name == "react-native-gesture-handler") {
+      subproj.plugins.withId("com.android.library") {
+        subproj.android {
+          compileOptions {
+            sourceCompatibility JavaVersion.VERSION_17
+            targetCompatibility JavaVersion.VERSION_17
+          }
+        }
+      }
+      subproj.plugins.withId("org.jetbrains.kotlin.android") {
+        subproj.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+          kotlinOptions {
+            jvmTarget = "17"
+            languageVersion = "2.0"
+            apiVersion = "2.0"
+            freeCompilerArgs += ["-Xjvm-default=all-compatibility", "-Xskip-prerelease-check"]
+          }
         }
       }
     }
