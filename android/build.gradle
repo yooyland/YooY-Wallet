@@ -51,6 +51,34 @@ allprojects {
           }
         }
       }
+      // Ensure RNGH uses Context overload for UIManagerHelper.getSurfaceId to avoid overload mismatch across RN versions
+      subproj.tasks.matching { it.name == "preBuild" }.all { t ->
+        t.doFirst {
+          try {
+            File src = new File(subproj.projectDir, "src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerTouchEvent.kt")
+            if (src.exists()) {
+              String text = src.getText("UTF-8")
+              String patched = text
+                .replace("UIManagerHelper.getSurfaceId(handler.view!!)", "UIManagerHelper.getSurfaceId(handler.view!!.context)")
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*handler\.view\s*\)/, "UIManagerHelper.getSurfaceId(handler.view.context)")
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*view!!\s*\)/, "UIManagerHelper.getSurfaceId(view!!.context)")
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*view\s*\)/, "UIManagerHelper.getSurfaceId(view.context)")
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*([A-Za-z0-9_]+)\.view!!\s*\)/, "UIManagerHelper.getSurfaceId(\$1.view!!.context)")
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*([A-Za-z0-9_]+)\.view\s*\)/, "UIManagerHelper.getSurfaceId(\$1.view.context)")
+              if (patched != text) {
+                src.write(patched, "UTF-8")
+                println("[RNGH patch] Rewrote UIManagerHelper.getSurfaceId(...) to use Context in ${src}")
+              } else {
+                println("[RNGH patch] No changes required for ${src}")
+              }
+            } else {
+              println("[RNGH patch] Source file not found: ${src}")
+            }
+          } catch (Throwable __) {
+            println("[RNGH patch] Skipped due to: ${__.message}")
+          }
+        }
+      }
     }
   }
   configurations.all {
