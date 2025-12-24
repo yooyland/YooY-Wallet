@@ -24,6 +24,9 @@ allprojects {
       subproj.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
         kotlinOptions {
           jvmTarget = "17"
+          languageVersion = "1.9"
+          apiVersion = "1.9"
+          freeCompilerArgs += ["-Xjvm-default=all", "-Xskip-prerelease-check"]
         }
       }
     }
