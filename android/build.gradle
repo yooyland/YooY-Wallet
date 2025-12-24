@@ -51,20 +51,33 @@ allprojects {
           }
         }
       }
-      // Patch source if needed: adapt UIManagerHelper.getSurfaceId argument to Context for RN 0.76+
-      def patchTask = subproj.tasks.findByName("preBuild")
-      if (patchTask != null) {
-        patchTask.doFirst {
-          def src = new File(subproj.projectDir, "src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerTouchEvent.kt")
-          if (src.exists()) {
-            def text = src.getText("UTF-8")
-            def patched = text.replaceAll(/UIManagerHelper\.getSurfaceId\(([^)]*reactContext[^)]*)\)/, "UIManagerHelper.getSurfaceId((\$1) as android.content.Context)")
-            if (patched != text) {
-              src.write(patched, "UTF-8")
-              println("[build.gradle] Patched RNGestureHandlerTouchEvent.kt: coerced getSurfaceId(arg) to Context for RN 0.76+")
+      // Robust patch hook: ensure getSurfaceId(...) receives a Context for RNGH sources that pass a nullable/non-Context
+      def attachPatch = { task ->
+        task.doFirst {
+          try {
+            File src = new File(subproj.projectDir, "src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerTouchEvent.kt")
+            if (src.exists()) {
+              String text = src.getText("UTF-8")
+              String patched = text
+                // reactContext -> cast to Context
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*([^)]*reactContext[^)]*)\s*\)/, 'UIManagerHelper.getSurfaceId(($1) as android.content.Context)')
+                // any *context* arg (excluding explicit View) -> cast to Context
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*(?!.*\bView\b)([^)]*context[^)]*)\s*\)/, 'UIManagerHelper.getSurfaceId(($1) as android.content.Context)')
+              if (patched != text) {
+                src.write(patched, "UTF-8")
+                println("[RNGH patch] Coerced UIManagerHelper.getSurfaceId(...) argument to android.content.Context in ${src}")
+              } else {
+                // no-op
+              }
             }
+          } catch (Throwable __) {
+            println("[RNGH patch] Skipped: ${__.message}")
           }
         }
+      }
+      subproj.tasks.matching { it.name in ["preBuild", "compileDebugKotlin", "compileReleaseKotlin"] }.all { t ->
+        attachPoint = t // just to keep reference
+        attachPatch(t)
       }
     }
   }
