@@ -63,6 +63,8 @@ allprojects {
                 .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*([^)]*reactContext[^)]*)\s*\)/, 'UIManagerHelper.getSurfaceId(($1) as android.content.Context)')
                 // any *context* arg (excluding explicit View) -> cast to Context
                 .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*(?!.*\bView\b)([^)]*context[^)]*)\s*\)/, 'UIManagerHelper.getSurfaceId(($1) as android.content.Context)')
+                // arg named `view` (nullable) -> cast to android.view.View
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*([^)\\s]*view[^)]*)\s*\)/, 'UIManagerHelper.getSurfaceId(($1) as android.view.View)')
               if (patched != text) {
                 src.write(patched, "UTF-8")
                 println("[RNGH patch] Coerced UIManagerHelper.getSurfaceId(...) argument to android.content.Context in ${src}")
