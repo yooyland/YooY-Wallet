@@ -98,7 +98,7 @@
     "@types/node": "^22.18.12",
     "@types/react": "^18.3.27",
     "babel-plugin-transform-import-meta": "^2.3.3",
-    "babel-preset-expo": "~55.0.0",
+    "babel-preset-expo": "~54.0.9",
     "dotenv": "^16.4.5",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
