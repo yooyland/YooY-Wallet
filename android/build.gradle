@@ -18,12 +18,22 @@ allprojects {
     mavenCentral()
     maven { url 'https://www.jitpack.io' }
   }
+  // Ensure Kotlin compiles against Java 17 across subprojects
+  subprojects { subproj ->
+    subproj.plugins.withId("org.jetbrains.kotlin.android") {
+      subproj.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+        kotlinOptions {
+          jvmTarget = "17"
+        }
+      }
+    }
+  }
   configurations.all {
     resolutionStrategy.eachDependency { details ->
       if (details.requested.group == "org.jetbrains.kotlin" && details.requested.name.startsWith("kotlin-")) {
-        if (details.requested.version != "1.9.24") {
-          details.useVersion "1.9.24"
-          details.because("Force Kotlin stdlib to 1.9.24 for RN 0.75 compatibility")
+        if (details.requested.version != "2.0.21") {
+          details.useVersion "2.0.21"
+          details.because("Align Kotlin stdlib to 2.0.21 for Expo SDK 54 / RN 0.75.x")
         }
       }
       if (details.requested.group != null && details.requested.group.startsWith("androidx.camera")) {
