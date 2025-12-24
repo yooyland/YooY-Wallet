@@ -76,7 +76,6 @@ allprojects {
         }
       }
       subproj.tasks.matching { it.name in ["preBuild", "compileDebugKotlin", "compileReleaseKotlin"] }.all { t ->
-        attachPoint = t // just to keep reference
         attachPatch(t)
       }
     }
