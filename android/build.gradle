@@ -8,7 +8,7 @@ buildscript {
   dependencies {
     classpath('com.android.tools.build:gradle')
     classpath('com.facebook.react:react-native-gradle-plugin')
-    classpath('org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21')
+    classpath('org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24')
   }
 }
 
@@ -18,14 +18,14 @@ allprojects {
     mavenCentral()
     maven { url 'https://www.jitpack.io' }
   }
-  // Force Kotlin stdlib to 2.0.21 to match Kotlin Gradle plugin and Expo SDK 55 toolchain
+  // Force Kotlin stdlib to 1.9.24 to match Kotlin Gradle plugin across included builds
   configurations.all {
     resolutionStrategy {
-      force "org.jetbrains.kotlin:kotlin-stdlib:2.0.21",
-            "org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.0.21",
-            "org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.0.21",
-            "org.jetbrains.kotlin:kotlin-reflect:2.0.21",
-            "org.jetbrains.kotlin:kotlin-stdlib-common:2.0.21"
+      force "org.jetbrains.kotlin:kotlin-stdlib:1.9.24",
+            "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.24",
+            "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.24",
+            "org.jetbrains.kotlin:kotlin-reflect:1.9.24",
+            "org.jetbrains.kotlin:kotlin-stdlib-common:1.9.24"
     }
   }
   // Ensure Kotlin compiles against Java 17 across subprojects

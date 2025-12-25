@@ -122,7 +122,7 @@ function main() {
     console.log('[patch-android-gradle] RNGH patch skipped:', e.message);
   }
 
-  // Patch expo-modules-core gradle plugin to use Kotlin 2.0.21 (SDK55 expects 2.0.x toolchain)
+  // Patch expo-modules-core gradle plugin to use Kotlin 1.9.24 (SDK54 baseline / compatible with expo-modules-core@2.x)
   const expoGradlePlugin = path.join(
     process.cwd(),
     'node_modules',
@@ -134,12 +134,12 @@ function main() {
   );
   tryPatch(expoGradlePlugin, (code) => {
     let out = code;
-    // Replace hardcoded kotlin("jvm") version if present (e.g., "1.9.24") with 2.0.21
-    out = out.replace(/kotlin\\("jvm"\\) version "\\d+\\.\\d+\\.\\d+"/, 'kotlin("jvm") version "2.0.21"');
+    // Replace hardcoded kotlin("jvm") version with 1.9.24
+    out = out.replace(/kotlin\\("jvm"\\)\\s*?version\\s*?"[\\d.]+"/, 'kotlin("jvm") version "1.9.24"');
     return out;
   });
 
-  // Patch expo-autolinking gradle plugin (composite build) to pin kotlin plugin version
+  // Patch expo-autolinking gradle plugin (composite build) to pin kotlin plugin version to 1.9.24
   const expoAutolinkPlugin = path.join(
     process.cwd(),
     'node_modules',
@@ -150,8 +150,18 @@ function main() {
   );
   tryPatch(expoAutolinkPlugin, (code) => {
     let out = code;
-    // Ensure kotlin("jvm") plugin uses 2.0.21
-    out = out.replace(/kotlin\\("jvm"\\)\\s+version\\s*"(.*?)"/, 'kotlin("jvm") version "2.0.21"');
+    // Ensure kotlin("jvm") plugin uses 1.9.24 (add or replace version clause)
+    out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"\\s*(apply\\s*false)?/, 'kotlin("jvm") version "1.9.24"$1');
+    out = out.replace(/kotlin\\("jvm"\\)\\s*\\)/g, 'kotlin("jvm") version "1.9.24")');
+    return out;
+  });
+
+  // Patch expo-autolinking plugin shared module to pin kotlin plugins to 1.9.24
+  const expoAutolinkSharedFile = path.join(process.cwd(), 'node_modules', 'expo-modules-autolinking', 'android', 'expo-gradle-plugin', 'expo-autolinking-plugin-shared', 'build.gradle.kts');
+  tryPatch(expoAutolinkSharedFile, (code) => {
+    let out = code;
+    out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"|kotlin\\("jvm"\\)\\b/g, 'kotlin("jvm") version "1.9.24"');
+    out = out.replace(/kotlin\\("plugin\\.serialization"\\)\\s*version\\s*"[\\d.]+"|kotlin\\("plugin\\.serialization"\\)/g, 'kotlin("plugin.serialization") version "1.9.24"');
     return out;
   });
 }
