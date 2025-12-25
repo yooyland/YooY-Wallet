@@ -138,6 +138,22 @@ function main() {
     out = out.replace(/kotlin\\("jvm"\\) version "\\d+\\.\\d+\\.\\d+"/, 'kotlin("jvm") version "2.0.21"');
     return out;
   });
+
+  // Patch expo-autolinking gradle plugin (composite build) to pin kotlin plugin version
+  const expoAutolinkPlugin = path.join(
+    process.cwd(),
+    'node_modules',
+    'expo-modules-autolinking',
+    'android',
+    'expo-gradle-plugin',
+    'build.gradle.kts'
+  );
+  tryPatch(expoAutolinkPlugin, (code) => {
+    let out = code;
+    // Ensure kotlin("jvm") plugin uses 2.0.21
+    out = out.replace(/kotlin\\("jvm"\\)\\s+version\\s*"(.*?)"/, 'kotlin("jvm") version "2.0.21"');
+    return out;
+  });
 }
 
 main();
