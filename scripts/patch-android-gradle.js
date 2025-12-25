@@ -57,6 +57,22 @@ try {
 }
 
 function main() {
+  // Log resolved versions to help diagnose nested dependency resolution on EAS
+  try {
+    const rootCore = path.join(process.cwd(), 'node_modules', 'expo-modules-core', 'package.json');
+    const nestedCore = path.join(process.cwd(), 'node_modules', 'expo', 'node_modules', 'expo-modules-core', 'package.json');
+    if (fs.existsSync(rootCore)) {
+      const v = JSON.parse(fs.readFileSync(rootCore, 'utf8')).version;
+      console.log(`[patch-android-gradle] expo-modules-core (root) version: ${v}`);
+    }
+    if (fs.existsSync(nestedCore)) {
+      const v = JSON.parse(fs.readFileSync(nestedCore, 'utf8')).version;
+      console.log(`[patch-android-gradle] expo-modules-core (expo/node_modules) version: ${v}`);
+    }
+  } catch (e) {
+    console.log('[patch-android-gradle] version log skipped:', e.message);
+  }
+
   const appGradle = path.join(process.cwd(), 'android', 'app', 'build.gradle');
   const gradleProps = path.join(process.cwd(), 'android', 'gradle.properties');
 
