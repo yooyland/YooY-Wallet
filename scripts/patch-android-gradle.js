@@ -151,8 +151,10 @@ function main() {
   tryPatch(expoAutolinkPlugin, (code) => {
     let out = code;
     // Ensure kotlin("jvm") plugin uses 1.9.24 (add or replace version clause)
-    out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"\\s*(apply\\s*false)?/, 'kotlin("jvm") version "1.9.24"$1');
-    out = out.replace(/kotlin\\("jvm"\\)\\s*\\)/g, 'kotlin("jvm") version "1.9.24")');
+    // Case 1: already has a version → normalize to 1.9.24
+    out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"(\\s*\\w*\\s*false)?/g, 'kotlin("jvm") version "1.9.24"$1');
+    // Case 2: no explicit version → append version
+    out = out.replace(/kotlin\\("jvm"\\)(?!\\s*version)/g, 'kotlin("jvm") version "1.9.24"');
     return out;
   });
 
