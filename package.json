@@ -17,7 +17,7 @@
     "deploy:firestore": "powershell -ExecutionPolicy Bypass -File ./scripts/deploy-firestore.ps1 yooyland-dev"
   },
   "engines": {
-    "node": ">=20 <21"
+    "node": ">=18"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
