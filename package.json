@@ -109,7 +109,9 @@
   "overrides": {
     "expo-image-loader": "~6.0.0",
     "expo-modules-core": "^2.0.0",
-    "expo>expo-modules-core": "^2.0.0"
+    "expo": {
+      "expo-modules-core": "^2.0.0"
+    }
   },
   "private": true,
   "expo": {
