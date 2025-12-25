@@ -87,7 +87,7 @@
             "compileSdkVersion": 35,
             "targetSdkVersion": 35,
             "minSdkVersion": 24,
-            "kotlinVersion": "2.1.20",
+            "kotlinVersion": "2.1.0",
             "newArchEnabled": false,
             "dataBindingEnabled": false,
             "kotlinVersionStrategy": "project",
