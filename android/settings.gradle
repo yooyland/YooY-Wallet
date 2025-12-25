@@ -1,12 +1,12 @@
 pluginManagement {
   plugins {
-    id("org.jetbrains.kotlin.android") version "1.9.0"
-    id("org.jetbrains.kotlin.jvm") version "1.9.0"
+    id("org.jetbrains.kotlin.android") version "2.1.0"
+    id("org.jetbrains.kotlin.jvm") version "2.1.0"
   }
   resolutionStrategy {
     eachPlugin {
       if (requested.id.id.startsWith("org.jetbrains.kotlin.")) {
-        useVersion("1.9.0")
+        useVersion("2.1.0")
       }
     }
   }

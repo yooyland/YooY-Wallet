@@ -8,7 +8,8 @@ buildscript {
   dependencies {
     classpath('com.android.tools.build:gradle')
     classpath('com.facebook.react:react-native-gradle-plugin')
-    classpath('org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.0')
+    classpath('org.jetbrains.kotlin:kotlin-compiler-embeddable:2.1.20')
+    classpath('org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.20')
   }
 }
 
@@ -81,7 +82,7 @@ allprojects {
       }
     }
   }
-  // Keep Kotlin toolchain aligned to 1.9.0 to match metadata expected by Expo plugins in SDK 54
+  // Keep Kotlin toolchain aligned to Kotlin 2.1 for Expo SDK 55 toolchain
 }
 
 apply plugin: "expo-root-project"
