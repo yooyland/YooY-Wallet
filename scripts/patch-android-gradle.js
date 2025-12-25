@@ -136,6 +136,24 @@ function main() {
     let out = code;
     // Replace hardcoded kotlin("jvm") version with 1.9.24
     out = out.replace(/kotlin\\("jvm"\\)\\s*?version\\s*?"[\\d.]+"/, 'kotlin("jvm") version "1.9.24"');
+    // Inject configurations resolutionStrategy force for Kotlin stdlibs if not present
+    if (!/kotlin-stdlib:1\\.9\\.24/.test(out)) {
+      out += `
+
+// --- injected by postinstall: force Kotlin stdlibs to 1.9.24
+configurations.configureEach {
+  resolutionStrategy {
+    force(
+      "org.jetbrains.kotlin:kotlin-stdlib:1.9.24",
+      "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.24",
+      "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.24",
+      "org.jetbrains.kotlin:kotlin-reflect:1.9.24",
+      "org.jetbrains.kotlin:kotlin-stdlib-common:1.9.24"
+    )
+  }
+}
+`;
+    }
     return out;
   });
 
@@ -192,6 +210,24 @@ function main() {
     out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"(\\s*\\w*\\s*false)?/g, 'kotlin("jvm") version "1.9.24"$1');
     // Case 2: no explicit version → append version
     out = out.replace(/kotlin\\("jvm"\\)(?!\\s*version)/g, 'kotlin("jvm") version "1.9.24"');
+    // Inject configurations resolutionStrategy force for Kotlin stdlibs if not present
+    if (!/kotlin-stdlib:1\\.9\\.24/.test(out)) {
+      out += `
+
+// --- injected by postinstall: force Kotlin stdlibs to 1.9.24
+configurations.configureEach {
+  resolutionStrategy {
+    force(
+      "org.jetbrains.kotlin:kotlin-stdlib:1.9.24",
+      "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.24",
+      "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.24",
+      "org.jetbrains.kotlin:kotlin-reflect:1.9.24",
+      "org.jetbrains.kotlin:kotlin-stdlib-common:1.9.24"
+    )
+  }
+}
+`;
+    }
     return out;
   });
 
@@ -201,6 +237,24 @@ function main() {
     let out = code;
     out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"|kotlin\\("jvm"\\)\\b/g, 'kotlin("jvm") version "1.9.24"');
     out = out.replace(/kotlin\\("plugin\\.serialization"\\)\\s*version\\s*"[\\d.]+"|kotlin\\("plugin\\.serialization"\\)/g, 'kotlin("plugin.serialization") version "1.9.24"');
+    // Inject configurations resolutionStrategy force for Kotlin stdlibs if not present
+    if (!/kotlin-stdlib:1\\.9\\.24/.test(out)) {
+      out += `
+
+// --- injected by postinstall: force Kotlin stdlibs to 1.9.24
+configurations.configureEach {
+  resolutionStrategy {
+    force(
+      "org.jetbrains.kotlin:kotlin-stdlib:1.9.24",
+      "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.24",
+      "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.24",
+      "org.jetbrains.kotlin:kotlin-reflect:1.9.24",
+      "org.jetbrains.kotlin:kotlin-stdlib-common:1.9.24"
+    )
+  }
+}
+`;
+    }
     return out;
   });
   // Patch expo-autolinking plugin settings and version catalogs
