@@ -1,4 +1,4 @@
-const { existsSync, rmSync } = require('file-system');
+const { existsSync, rmSync } = require('fs');
 const { spawnSync } = require('child_process');
 
 function run(cmd, args, opts = {}) {
