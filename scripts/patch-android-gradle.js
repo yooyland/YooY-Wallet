@@ -136,6 +136,18 @@ function main() {
     let out = code;
     // Replace hardcoded kotlin("jvm") version with 2.1.20
     out = out.replace(/kotlin\\("jvm"\\)\\s*?version\\s*?"[\\d.]+"/, 'kotlin("jvm") version "2.1.20"');
+    // Ensure Kotlin compiler skips metadata version check to tolerate mixed metadata
+    if (!/Xskip-metadata-version-check/.test(out)) {
+      out += `
+
+// --- injected by postinstall: relax Kotlin metadata check for composite builds
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configureEach {
+  kotlinOptions {
+    freeCompilerArgs = freeCompilerArgs + "-Xskip-metadata-version-check"
+  }
+}
+`;
+    }
     return out;
   });
 
@@ -191,6 +203,18 @@ function main() {
     out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"(\\s*\\w*\\s*false)?/g, 'kotlin("jvm") version "2.1.20"$1');
     // Case 2: no explicit version → append version
     out = out.replace(/kotlin\\("jvm"\\)(?!\\s*version)/g, 'kotlin("jvm") version "2.1.20"');
+    // Relax Kotlin metadata check
+    if (!/Xskip-metadata-version-check/.test(out)) {
+      out += `
+
+// --- injected by postinstall: relax Kotlin metadata check for composite builds
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configureEach {
+  kotlinOptions {
+    freeCompilerArgs = freeCompilerArgs + "-Xskip-metadata-version-check"
+  }
+}
+`;
+    }
     return out;
   });
 
@@ -200,6 +224,17 @@ function main() {
     let out = code;
     out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"|kotlin\\("jvm"\\)\\b/g, 'kotlin("jvm") version "2.1.20"');
     out = out.replace(/kotlin\\("plugin\\.serialization"\\)\\s*version\\s*"[\\d.]+"|kotlin\\("plugin\\.serialization"\\)/g, 'kotlin("plugin.serialization") version "2.1.20"');
+    if (!/Xskip-metadata-version-check/.test(out)) {
+      out += `
+
+// --- injected by postinstall: relax Kotlin metadata check for composite builds
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configureEach {
+  kotlinOptions {
+    freeCompilerArgs = freeCompilerArgs + "-Xskip-metadata-version-check"
+  }
+}
+`;
+    }
     return out;
   });
   // Patch expo-autolinking plugin settings and version catalogs
@@ -235,6 +270,17 @@ function main() {
       out = out.replace(/(id\\("org\\.jetbrains\\.kotlin\\.(?:jvm|android)"\\)\\s*version\\s*")([\\d.]+)"/g, '$12.1.20"');
       out = out.replace(/(^\\s*kotlin\\s*=\\s*")([\\d.]+)("\\s*$)/m, '$12.1.20$3');
       out = out.replace(/(^\\s*kotlinSerialization\\s*=\\s*")([\\d.]+)("\\s*$)/m, '$12.1.20$3');
+      if (!/Xskip-metadata-version-check/.test(out)) {
+        out += `
+
+// --- injected by postinstall: relax Kotlin metadata check for composite builds
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configureEach {
+  kotlinOptions {
+    freeCompilerArgs = freeCompilerArgs + "-Xskip-metadata-version-check"
+  }
+}
+`;
+      }
       return out;
     });
   }
