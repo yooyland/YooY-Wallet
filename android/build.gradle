@@ -18,6 +18,16 @@ allprojects {
     mavenCentral()
     maven { url 'https://www.jitpack.io' }
   }
+  // Force Kotlin stdlib to 2.0.21 to match Kotlin Gradle plugin and Expo SDK 55 toolchain
+  configurations.all {
+    resolutionStrategy {
+      force "org.jetbrains.kotlin:kotlin-stdlib:2.0.21",
+            "org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.0.21",
+            "org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.0.21",
+            "org.jetbrains.kotlin:kotlin-reflect:2.0.21",
+            "org.jetbrains.kotlin:kotlin-stdlib-common:2.0.21"
+    }
+  }
   // Ensure Kotlin compiles against Java 17 across subprojects
   subprojects { subproj ->
     subproj.plugins.withId("org.jetbrains.kotlin.android") {
