@@ -6,8 +6,8 @@ buildscript {
     mavenCentral()
   }
   dependencies {
-    classpath('com.android.tools.build:gradle')
-    classpath('com.facebook.react:react-native-gradle-plugin')
+    classpath('com.android.tools.build:gradle:8.5.0')
+    classpath('com.facebook.react:react-native-gradle-plugin:0.75.4')
     classpath('org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24')
   }
 }
@@ -83,7 +83,7 @@ allprojects {
               }
             } else {
               println("[RNGH patch] Source file not found: ${src}")
-            }
+      }
           } catch (Throwable __) {
             println("[RNGH patch] Skipped due to: ${__.message}")
           }
