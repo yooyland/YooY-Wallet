@@ -46,6 +46,7 @@
     "expo-haptics": "~15.0.7",
     "expo-image": "~3.0.10",
     "expo-image-loader": "~6.0.0",
+    "expo-modules-core": "^2.11.0",
     "expo-image-picker": "~17.0.8",
     "expo-linear-gradient": "~15.0.7",
     "expo-linking": "~8.0.11",
@@ -108,9 +109,9 @@
   },
   "overrides": {
     "expo-image-loader": "~6.0.0",
-    "expo-modules-core": "^2.0.0",
+    "expo-modules-core": "^2.11.0",
     "expo": {
-      "expo-modules-core": "^2.0.0"
+      "expo-modules-core": "^2.11.0"
     }
   },
   "private": true,
