@@ -170,6 +170,18 @@ configurations.configureEach {
 }
 `;
     }
+    // Relax metadata version check to tolerate 2.1.x metadata on classpath if any slips through
+    if (!/Xskip-metadata-version-check/.test(out)) {
+      out += `
+
+// --- injected by postinstall: relax Kotlin metadata version check
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configureEach {
+  kotlinOptions {
+    freeCompilerArgs = freeCompilerArgs + "-Xskip-metadata-version-check"
+  }
+}
+`;
+    }
     return out;
   });
 
