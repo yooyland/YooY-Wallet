@@ -25,7 +25,11 @@ pluginManagement {
     }.standardOutput.asText.get().trim(),
     "../android/expo-gradle-plugin"
   ).absolutePath
-  includeBuild(expoPluginsPath)
+
+  // Conditionally include Expo gradle plugin composite build only when not using community autolinking
+  if (System.getenv('EXPO_USE_COMMUNITY_AUTOLINKING') != '1') {
+    includeBuild(expoPluginsPath)
+  }
 }
 
 plugins {
@@ -36,7 +40,10 @@ plugins {
 rootProject.name = 'App-YooYLand'
 
 include ':app'
-includeBuild(expoAutolinking.reactNativeGradlePlugin)
+// Conditionally include RN gradle plugin from expo composite build
+if (System.getenv('EXPO_USE_COMMUNITY_AUTOLINKING') != '1') {
+  includeBuild(expoAutolinking.reactNativeGradlePlugin)
+}
 
 // Configure React Native settings and Expo autolinking after the top-level blocks
 extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
@@ -46,5 +53,7 @@ extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
     ex.autolinkLibrariesFromCommand(expoAutolinking.rnConfigCommand)
   }
 }
-expoAutolinking.useExpoModules()
-expoAutolinking.useExpoVersionCatalog()
+if (System.getenv('EXPO_USE_COMMUNITY_AUTOLINKING') != '1') {
+  expoAutolinking.useExpoModules()
+  expoAutolinking.useExpoVersionCatalog()
+}

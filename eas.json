@@ -31,6 +31,7 @@
         "buildType": "app-bundle"
       },
       "env": {
+        "EXPO_USE_COMMUNITY_AUTOLINKING": "1",
         "EXPO_PUBLIC_SOCIAL_LOGIN_ENABLED": "false",
         "EXPO_PUBLIC_ORDER_ENABLED": "true",
         "EXPO_PUBLIC_STAKING_ENABLED": "true",
