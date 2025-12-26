@@ -138,7 +138,7 @@ function main() {
     console.log('[patch-android-gradle] RNGH patch skipped:', e.message);
   }
 
-  // Patch expo-modules-core gradle plugin to use Kotlin 2.1.20 to align with expo-autolinking plugin metadata
+  // Patch expo-modules-core gradle plugin to use Kotlin 1.9.24 (keeps metadata <= 2.0.0, readable by 1.9.x compilers)
   const expoGradlePlugin = path.join(
     process.cwd(),
     'node_modules',
@@ -150,20 +150,8 @@ function main() {
   );
   tryPatch(expoGradlePlugin, (code) => {
     let out = code;
-    // Replace hardcoded kotlin("jvm") version with 2.1.20
-    out = out.replace(/kotlin\\("jvm"\\)\\s*?version\\s*?"[\\d.]+"/, 'kotlin("jvm") version "2.1.20"');
-    // Ensure Kotlin compiler skips metadata version check to tolerate mixed metadata
-    if (!/Xskip-metadata-version-check/.test(out)) {
-      out += `
-
-// --- injected by postinstall: relax Kotlin metadata check for composite builds
-tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configureEach {
-  kotlinOptions {
-    freeCompilerArgs = freeCompilerArgs + "-Xskip-metadata-version-check"
-  }
-}
-`;
-    }
+    // Replace hardcoded kotlin("jvm") version with 1.9.24
+    out = out.replace(/kotlin\\("jvm"\\)\\s*?version\\s*?"[\\d.]+"/, 'kotlin("jvm") version "1.9.24"');
     return out;
   });
 
@@ -181,9 +169,9 @@ tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configure
     let out = code;
     // Force kotlin plugins to 1.9.24 via pluginManagement resolutionStrategy if plugins DSL not explicit
     if (!/pluginManagement/.test(out)) return out;
-    out = out.replace(/(id\\("org\\.jetbrains\\.kotlin\\.jvm"\\)\\s*version\\s*")([\\d.]+)"/g, '$12.1.20"');
-    out = out.replace(/(id\\("org\\.jetbrains\\.kotlin\\.android"\\)\\s*version\\s*")([\\d.]+)"/g, '$12.1.20"');
-    out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"/g, 'kotlin("jvm") version "2.1.20"');
+    out = out.replace(/(id\\("org\\.jetbrains\\.kotlin\\.jvm"\\)\\s*version\\s*")([\\d.]+)"/g, '$11.9.24"');
+    out = out.replace(/(id\\("org\\.jetbrains\\.kotlin\\.android"\\)\\s*version\\s*")([\\d.]+)"/g, '$11.9.24"');
+    out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"/g, 'kotlin("jvm") version "1.9.24"');
     return out;
   });
   const expoGradleVersionsToml = path.join(
@@ -198,12 +186,12 @@ tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configure
   );
   tryPatch(expoGradleVersionsToml, (code) => {
     let out = code;
-    out = out.replace(/(^\\s*kotlin\\s*=\\s*")([\\d.]+)("\\s*$)/m, '$12.1.20$3');
-    out = out.replace(/(^\\s*kotlinSerialization\\s*=\\s*")([\\d.]+)("\\s*$)/m, '$12.1.20$3');
+    out = out.replace(/(^\\s*kotlin\\s*=\\s*")([\\d.]+)("\\s*$)/m, '$11.9.24$3');
+    out = out.replace(/(^\\s*kotlinSerialization\\s*=\\s*")([\\d.]+)("\\s*$)/m, '$11.9.24$3');
     return out;
   });
 
-  // Patch expo-autolinking gradle plugin (composite build) to pin kotlin plugin version to 2.1.20
+  // Patch expo-autolinking gradle plugin (composite build) to pin kotlin plugin version to 1.9.24
   const expoAutolinkPlugin = path.join(
     process.cwd(),
     'node_modules',
@@ -214,43 +202,20 @@ tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configure
   );
   tryPatch(expoAutolinkPlugin, (code) => {
     let out = code;
-    // Ensure kotlin("jvm") plugin uses 2.1.20 (add or replace version clause)
-    // Case 1: already has a version → normalize to 2.1.20
-    out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"(\\s*\\w*\\s*false)?/g, 'kotlin("jvm") version "2.1.20"$1');
+    // Ensure kotlin("jvm") plugin uses 1.9.24 (add or replace version clause)
+    // Case 1: already has a version → normalize to 1.9.24
+    out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"(\\s*\\w*\\s*false)?/g, 'kotlin("jvm") version "1.9.24"$1');
     // Case 2: no explicit version → append version
-    out = out.replace(/kotlin\\("jvm"\\)(?!\\s*version)/g, 'kotlin("jvm") version "2.1.20"');
-    // Relax Kotlin metadata check
-    if (!/Xskip-metadata-version-check/.test(out)) {
-      out += `
-
-// --- injected by postinstall: relax Kotlin metadata check for composite builds
-tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configureEach {
-  kotlinOptions {
-    freeCompilerArgs = freeCompilerArgs + "-Xskip-metadata-version-check"
-  }
-}
-`;
-    }
+    out = out.replace(/kotlin\\("jvm"\\)(?!\\s*version)/g, 'kotlin("jvm") version "1.9.24"');
     return out;
   });
 
-  // Patch expo-autolinking plugin shared module to pin kotlin plugins to 2.1.20
+  // Patch expo-autolinking plugin shared module to pin kotlin plugins to 1.9.24
   const expoAutolinkSharedFile = path.join(process.cwd(), 'node_modules', 'expo-modules-autolinking', 'android', 'expo-gradle-plugin', 'expo-autolinking-plugin-shared', 'build.gradle.kts');
   tryPatch(expoAutolinkSharedFile, (code) => {
     let out = code;
-    out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"|kotlin\\("jvm"\\)\\b/g, 'kotlin("jvm") version "2.1.20"');
-    out = out.replace(/kotlin\\("plugin\\.serialization"\\)\\s*version\\s*"[\\d.]+"|kotlin\\("plugin\\.serialization"\\)/g, 'kotlin("plugin.serialization") version "2.1.20"');
-    if (!/Xskip-metadata-version-check/.test(out)) {
-      out += `
-
-// --- injected by postinstall: relax Kotlin metadata check for composite builds
-tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configureEach {
-  kotlinOptions {
-    freeCompilerArgs = freeCompilerArgs + "-Xskip-metadata-version-check"
-  }
-}
-`;
-    }
+    out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"|kotlin\\("jvm"\\)\\b/g, 'kotlin("jvm") version "1.9.24"');
+    out = out.replace(/kotlin\\("plugin\\.serialization"\\)\\s*version\\s*"[\\d.]+"|kotlin\\("plugin\\.serialization"\\)/g, 'kotlin("plugin.serialization") version "1.9.24"');
     return out;
   });
   // Patch expo-autolinking plugin settings and version catalogs
@@ -258,16 +223,16 @@ tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configure
   tryPatch(expoAutolinkSettings, (code) => {
     let out = code;
     if (!/pluginManagement/.test(out)) return out;
-    out = out.replace(/(id\\("org\\.jetbrains\\.kotlin\\.jvm"\\)\\s*version\\s*")([\\d.]+)"/g, '$12.1.20"');
-    out = out.replace(/(id\\("org\\.jetbrains\\.kotlin\\.android"\\)\\s*version\\s*")([\\d.]+)"/g, '$12.1.20"');
-    out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"/g, 'kotlin("jvm") version "2.1.20"');
+    out = out.replace(/(id\\("org\\.jetbrains\\.kotlin\\.jvm"\\)\\s*version\\s*")([\\d.]+)"/g, '$11.9.24"');
+    out = out.replace(/(id\\("org\\.jetbrains\\.kotlin\\.android"\\)\\s*version\\s*")([\\d.]+)"/g, '$11.9.24"');
+    out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"/g, 'kotlin("jvm") version "1.9.24"');
     return out;
   });
   const expoAutolinkVersionsToml = path.join(process.cwd(), 'node_modules', 'expo-modules-autolinking', 'android', 'expo-gradle-plugin', 'gradle', 'libs.versions.toml');
   tryPatch(expoAutolinkVersionsToml, (code) => {
     let out = code;
-    out = out.replace(/(^\\s*kotlin\\s*=\\s*")([\\d.]+)("\\s*$)/m, '$12.1.20$3');
-    out = out.replace(/(^\\s*kotlinSerialization\\s*=\\s*")([\\d.]+)("\\s*$)/m, '$12.1.20$3');
+    out = out.replace(/(^\\s*kotlin\\s*=\\s*")([\\d.]+)("\\s*$)/m, '$11.9.24$3');
+    out = out.replace(/(^\\s*kotlinSerialization\\s*=\\s*")([\\d.]+)("\\s*$)/m, '$11.9.24$3');
     return out;
   });
 
@@ -281,22 +246,11 @@ tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configure
   for (const f of altFiles) {
     tryPatch(f, (code) => {
       let out = code;
-      out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"|kotlin\\("jvm"\\)\\b/g, 'kotlin("jvm") version "2.1.20"');
-      out = out.replace(/kotlin\\("plugin\\.serialization"\\)\\s*version\\s*"[\\d.]+"|kotlin\\("plugin\\.serialization"\\)/g, 'kotlin("plugin.serialization") version "2.1.20"');
-      out = out.replace(/(id\\("org\\.jetbrains\\.kotlin\\.(?:jvm|android)"\\)\\s*version\\s*")([\\d.]+)"/g, '$12.1.20"');
-      out = out.replace(/(^\\s*kotlin\\s*=\\s*")([\\d.]+)("\\s*$)/m, '$12.1.20$3');
-      out = out.replace(/(^\\s*kotlinSerialization\\s*=\\s*")([\\d.]+)("\\s*$)/m, '$12.1.20$3');
-      if (!/Xskip-metadata-version-check/.test(out)) {
-        out += `
-
-// --- injected by postinstall: relax Kotlin metadata check for composite builds
-tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class).configureEach {
-  kotlinOptions {
-    freeCompilerArgs = freeCompilerArgs + "-Xskip-metadata-version-check"
-  }
-}
-`;
-      }
+      out = out.replace(/kotlin\\("jvm"\\)\\s*version\\s*"[\\d.]+"|kotlin\\("jvm"\\)\\b/g, 'kotlin("jvm") version "1.9.24"');
+      out = out.replace(/kotlin\\("plugin\\.serialization"\\)\\s*version\\s*"[\\d.]+"|kotlin\\("plugin\\.serialization"\\)/g, 'kotlin("plugin.serialization") version "1.9.24"');
+      out = out.replace(/(id\\("org\\.jetbrains\\.kotlin\\.(?:jvm|android)"\\)\\s*version\\s*")([\\d.]+)"/g, '$11.9.24"');
+      out = out.replace(/(^\\s*kotlin\\s*=\\s*")([\\d.]+)("\\s*$)/m, '$11.9.24$3');
+      out = out.replace(/(^\\s*kotlinSerialization\\s*=\\s*")([\\d.]+)("\\s*$)/m, '$11.9.24$3');
       return out;
     });
   }
