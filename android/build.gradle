@@ -93,5 +93,10 @@ allprojects {
   // Keep Kotlin toolchain aligned to Kotlin 2.0.21 for Expo SDK 55 toolchain
 }
 
-apply plugin: "expo-root-project"
+// Apply Expo root project plugin only if available (community autolinking may skip Expo composite build)
+try {
+  apply plugin: "expo-root-project"
+} catch (Throwable __) {
+  println("[build.gradle] expo-root-project plugin not found. Skipping (community autolinking mode).")
+}
 apply plugin: "com.facebook.react.rootproject"
