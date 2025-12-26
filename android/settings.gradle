@@ -39,10 +39,11 @@ plugins {
 rootProject.name = 'App-YooYLand'
 
 include ':app'
-// Conditionally include RN gradle plugin from expo composite build
+// Always include the React Native Gradle plugin from node (required even with community autolinking)
+includeBuild(reactNativeGradlePlugin)
+// Conditionally include Expo composite build and its settings plugin
 if (System.getenv('EXPO_USE_COMMUNITY_AUTOLINKING') != '1') {
   includeBuild(expoAutolinking.reactNativeGradlePlugin)
-  // Apply expo autolinking settings plugin only when using expo composite build
   pluginManager.apply("expo-autolinking-settings")
 }
 
