@@ -1,4 +1,7 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
+plugins {
+  id("com.facebook.react.rootproject")
+}
 
 buildscript {
   repositories {
@@ -99,4 +102,4 @@ try {
 } catch (Throwable __) {
   println("[build.gradle] expo-root-project plugin not found. Skipping (community autolinking mode).")
 }
-apply plugin: "com.facebook.react.rootproject"
+// rootproject plugin applied via plugins {} above
