@@ -1,0 +1,113 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath('com.android.tools.build:gradle:8.5.0')
+    classpath('org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.24')
+  }
+}
+
+// Provide versions expected by RN root plugin and app module
+ext {
+  buildToolsVersion = "34.0.0"
+  minSdkVersion = 24
+  compileSdkVersion = 34
+  targetSdkVersion = 34
+  ndkVersion = "26.1.10909125"
+}
+
+// Note: Root RN plugin is optional. We skip it to avoid plugin resolution issues on some environments.
+
+allprojects {
+  repositories {
+    google()
+    mavenCentral()
+    maven { url 'https://www.jitpack.io' }
+  }
+  // Force Kotlin stdlib to 1.9.24 to match Kotlin Gradle plugin across included builds
+  configurations.all {
+    resolutionStrategy {
+      force "org.jetbrains.kotlin:kotlin-stdlib:1.9.24",
+            "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.24",
+            "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.24",
+            "org.jetbrains.kotlin:kotlin-reflect:1.9.24",
+            "org.jetbrains.kotlin:kotlin-stdlib-common:1.9.24"
+    }
+  }
+  // Ensure Kotlin compiles against Java 17 across subprojects
+  subprojects { subproj ->
+    subproj.plugins.withId("org.jetbrains.kotlin.android") {
+      subproj.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+        kotlinOptions {
+          jvmTarget = "17"
+          // Use stable Kotlin 1.9 language/api versions to avoid experimental warnings/mismatch
+          languageVersion = "1.9"
+          apiVersion = "1.9"
+          freeCompilerArgs += ["-Xjvm-default=all-compatibility"]
+        }
+      }
+    }
+    // Harden RNGH module compilation flags explicitly (some versions assume different defaults)
+    if (subproj.name == "react-native-gesture-handler") {
+      subproj.plugins.withId("com.android.library") {
+        subproj.android {
+          compileOptions {
+            sourceCompatibility JavaVersion.VERSION_17
+            targetCompatibility JavaVersion.VERSION_17
+          }
+        }
+      }
+      subproj.plugins.withId("org.jetbrains.kotlin.android") {
+        subproj.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+          kotlinOptions {
+            jvmTarget = "17"
+            languageVersion = "1.9"
+            apiVersion = "1.9"
+            freeCompilerArgs += ["-Xjvm-default=all-compatibility"]
+          }
+        }
+      }
+      // Ensure RNGH uses Context overload for UIManagerHelper.getSurfaceId to avoid overload mismatch across RN versions
+      subproj.tasks.matching { it.name == "preBuild" }.all { t ->
+        t.doFirst {
+          try {
+            File src = new File(subproj.projectDir, "src/main/java/com/swmansion/gesturehandler/react/RNGestureHandlerTouchEvent.kt")
+            if (src.exists()) {
+              String text = src.getText("UTF-8")
+              String patched = text
+                .replace("UIManagerHelper.getSurfaceId(handler.view!!)", "UIManagerHelper.getSurfaceId(handler.view!!.context)")
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*handler\.view\s*\)/, "UIManagerHelper.getSurfaceId(handler.view!!.context)")
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*view!!\s*\)/, "UIManagerHelper.getSurfaceId(view!!.context)")
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*view\s*\)/, "UIManagerHelper.getSurfaceId(view!!.context)")
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*([A-Za-z0-9_]+)\.view!!\s*\)/, "UIManagerHelper.getSurfaceId(\$1.view!!.context)")
+                .replaceAll(/UIManagerHelper\.getSurfaceId\(\s*([A-Za-z0-9_]+)\.view\s*\)/, "UIManagerHelper.getSurfaceId(\$1.view!!.context)")
+              if (patched != text) {
+                src.write(patched, "UTF-8")
+                println("[RNGH patch] Rewrote UIManagerHelper.getSurfaceId(...) to use Context in ${src}")
+              } else {
+                println("[RNGH patch] No changes required for ${src}")
+              }
+            } else {
+              println("[RNGH patch] Source file not found: ${src}")
+      }
+          } catch (Throwable __) {
+            println("[RNGH patch] Skipped due to: ${__.message}")
+          }
+        }
+      }
+    }
+  }
+  // Keep Kotlin toolchain aligned to Kotlin 2.0.21 for Expo SDK 55 toolchain
+}
+
+// Apply Expo root project plugin only if available (community autolinking may skip Expo composite build)
+try {
+  apply plugin: "expo-root-project"
+} catch (Throwable __) {
+  println("[build.gradle] expo-root-project plugin not found. Skipping (community autolinking mode).")
+}
+// rootproject plugin applied via plugins {} above

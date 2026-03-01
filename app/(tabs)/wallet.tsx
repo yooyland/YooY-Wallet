@@ -20,7 +20,8 @@ import { getMockBalancesForUser } from '@/lib/userBalances';
 import { useTransactionStore } from '@/src/stores/transaction.store';
 import { createVoucher, buildClaimUri, endVoucher, parseClaimUri, getVoucher, claimVoucher, type ClaimVoucher } from '@/lib/claims';
 import { collection, onSnapshot, orderBy, query, where, deleteDoc, doc as fsDoc } from 'firebase/firestore';
-import { firestore } from '@/lib/firebase';
+import { firestore, firebaseAuth, ensureAppCheckReady } from '@/lib/firebase';
+import { signInAnonymously } from 'firebase/auth';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as FileSystem from 'expo-file-system';
@@ -94,10 +95,21 @@ const ZXingLib: any = (()=>{
 const ZBarWasm: any = null;
 // 브라우저 BarcodeDetector 존재 여부 체크
 const hasBarcodeDetector = (typeof window !== 'undefined') && (window as any).BarcodeDetector && typeof (window as any).BarcodeDetector === 'function';
-// Expo Camera (SDK54): CameraView로 바코드 스캔 지원
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-let ExpoCamera: any = (()=>{ try { return require('expo-camera'); } catch { return null; } })();
-const CameraView: any = ExpoCamera?.CameraView || null;
+// Expo Camera (SDK54): CameraView로 바코드 스캔 지원 (정적 import로 번들 포함 보장)
+// 네이티브 빌드 우선 사용 (웹에서는 분기하여 사용하지 않음)
+import { CameraView as ExpoCameraView, Camera as ExpoCameraModule } from 'expo-camera';
+const CameraView: any = ExpoCameraView || null;
+const LegacyCamera: any = ExpoCameraModule || null;
+// Optional barcode scanner fallback (older API)
+// (제거) expo-barcode-scanner는 SDK54 환경에서 호환성 문제가 있어 사용하지 않음
+const BarCodeScanner: any = null;
+// ML Kit static image barcode scanning (native), optional
+let MLKitBarcode: any = null;
+try {
+  // Try community package first
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  MLKitBarcode = require('@react-native-ml-kit/barcode-scanning');
+} catch {}
 
 // 스캔 텍스트 정규화: 공백 제거, 줄바꿈 제거, 지원 URI만 추출
 function normalizeScannedText(raw: string): string {
@@ -131,6 +143,226 @@ function fromBase64Url(input: string): string {
   } catch { return ''; }
 }
 
+// PNG tEXt chunk helpers for embedding/extracting payload into our saved QR PNGs
+function crc32(bytes: Uint8Array): number {
+  let c = ~0;
+  for (let i = 0; i < bytes.length; i++) {
+    c ^= bytes[i];
+    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xEDB88320 & -(c & 1));
+  }
+  return ~c >>> 0;
+}
+function u32be(n: number): Uint8Array {
+  const out = new Uint8Array(4);
+  out[0] = (n >>> 24) & 0xff;
+  out[1] = (n >>> 16) & 0xff;
+  out[2] = (n >>> 8) & 0xff;
+  out[3] = n & 0xff;
+  return out;
+}
+function concatBytes(...arrs: Uint8Array[]): Uint8Array {
+  const len = arrs.reduce((s, a) => s + a.length, 0);
+  const out = new Uint8Array(len);
+  let o = 0;
+  for (const a of arrs) { out.set(a, o); o += a.length; }
+  return out;
+}
+function strBytes(s: string): Uint8Array {
+  try {
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(s);
+  } catch {}
+  return Buffer.from(s, 'utf8');
+}
+function base64ToBytes(b64: string): Uint8Array {
+  try {
+    if (typeof atob !== 'undefined') {
+      const bin = atob(b64); const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i) & 0xff;
+      return out;
+    }
+  } catch {}
+  return Buffer.from(b64, 'base64');
+}
+function bytesToBase64(bytes: Uint8Array): string {
+  try {
+    if (typeof btoa !== 'undefined') {
+      let s = ''; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      return btoa(s);
+    }
+  } catch {}
+  return Buffer.from(bytes).toString('base64');
+}
+// Fallback: search for embedded ASCII URIs inside PNG bytes when metadata is stripped
+function searchEmbeddedUriFromBase64(b64: string): string | null {
+  try {
+    const text = Buffer.from(b64, 'base64').toString('utf8');
+    // Prefer our scheme
+    const m1 = text.match(/yooy:\/\/pay\?[A-Za-z0-9&=%._\-:]+/);
+    if (m1 && m1[0]) return m1[0];
+    // Common wallet URIs
+    const m2 = text.match(/ethereum:[A-Za-z0-9@:?&=%._\-]+/);
+    if (m2 && m2[0]) return m2[0];
+    const m3 = text.match(/[a-z][a-z0-9+.\-]*:[A-Za-z0-9@:?&=%._\-]+/);
+    if (m3 && m3[0]) return m3[0];
+  } catch {}
+  return null;
+}
+function tryReadPngTextFromDataUrl(pngDataUrl: string, keyword = 'yooy'): string | null {
+  try {
+    const b64 = pngDataUrl.replace(/^data:image\/png;base64,/, '');
+    const buf = base64ToBytes(b64);
+    const sig = new Uint8Array([137,80,78,71,13,10,26,10]);
+    if (buf.length < 8 || !sig.every((v, i) => buf[i] === v)) return null;
+    let off = 8;
+    while (off + 8 <= buf.length) {
+      const len = (buf[off] << 24) | (buf[off+1] << 16) | (buf[off+2] << 8) | buf[off+3];
+      const type = String.fromCharCode(buf[off+4], buf[off+5], buf[off+6], buf[off+7]);
+      const dataStart = off + 8;
+      const dataEnd = dataStart + len;
+      const crcEnd = dataEnd + 4;
+      if (crcEnd > buf.length) break;
+      if (type === 'tEXt') {
+        const data = buf.slice(dataStart, dataEnd);
+        let sep = -1;
+        for (let i = 0; i < data.length; i++) { if (data[i] === 0) { sep = i; break; } }
+        if (sep > 0) {
+          const key = Buffer.from(data.slice(0, sep)).toString('utf8');
+          const val = Buffer.from(data.slice(sep + 1)).toString('utf8');
+          if (key === keyword && val) return val;
+        }
+      }
+      if (type === 'IEND') break;
+      off = crcEnd;
+    }
+    // As a last resort, attempt to locate an embedded URI in the binary
+    const embedded = searchEmbeddedUriFromBase64(b64);
+    if (embedded) return embedded;
+  } catch {}
+  return null;
+}
+function insertPngTextChunk(pngDataUrl: string, keyword: string, text: string): string {
+  try {
+    const sig = new Uint8Array([137,80,78,71,13,10,26,10]);
+    const b64 = pngDataUrl.replace(/^data:image\/png;base64,/, '');
+    const buf = base64ToBytes(b64);
+    if (buf.length < 8 || !sig.every((v, i) => buf[i] === v)) return pngDataUrl;
+    let off = 8;
+    let ihdrEnd = -1;
+    while (off + 8 <= buf.length) {
+      const len = (buf[off] << 24) | (buf[off+1] << 16) | (buf[off+2] << 8) | buf[off+3];
+      const type = String.fromCharCode(buf[off+4], buf[off+5], buf[off+6], buf[off+7]);
+      const dataStart = off + 8;
+      const dataEnd = dataStart + len;
+      const crcEnd = dataEnd + 4;
+      if (crcEnd > buf.length) break;
+      if (type === 'IHDR') ihdrEnd = crcEnd;
+      if (type === 'IEND') break;
+      off = crcEnd;
+    }
+    if (ihdrEnd < 0) return pngDataUrl;
+    const before = buf.slice(0, ihdrEnd);
+    const after = buf.slice(ihdrEnd);
+    const k = strBytes(keyword);
+    const t = strBytes(text);
+    const zero = new Uint8Array([0]);
+    const chunkType = strBytes('tEXt');
+    const chunkData = concatBytes(k, zero, t);
+    const crc = crc32(concatBytes(chunkType, chunkData));
+    const chunk = concatBytes(u32be(chunkData.length), chunkType, chunkData, u32be(crc));
+    const out = concatBytes(before, chunk, after);
+    return 'data:image/png;base64,' + bytesToBase64(out);
+  } catch {
+    return pngDataUrl;
+  }
+}
+async function tryReadPngTextFromUri(uri: string, keyword = 'yooy'): Promise<string | null> {
+  try {
+    let b64 = '';
+    try {
+      if (/^content:\/\//i.test(uri)) {
+        // SAF content:// → 캐시 파일로 복사 후 base64 로드 (권장)
+        const tmp = `${(FileSystem as any)?.cacheDirectory || ''}pngmeta_${Date.now()}.png`;
+        try {
+          await FileSystem.copyAsync({ from: uri, to: tmp });
+          b64 = await FileSystem.readAsStringAsync(tmp, { encoding: FileSystem.EncodingType.Base64 });
+        } catch {
+          // 최후 폴백: 직접 base64 읽기
+          b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+        }
+      } else {
+        b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+      }
+    } catch {
+      try {
+        const RNBU = (()=>{ try { const m = require('react-native-blob-util'); return m?.default ?? m; } catch { return null; } })();
+        if (RNBU?.fs?.readFile) b64 = await RNBU.fs.readFile(uri.replace(/^file:\/\//,''), 'base64');
+      } catch {}
+    }
+    if (!b64) return null;
+    const buf = base64ToBytes(b64.replace(/^data:image\/png;base64,/, ''));
+    const sig = new Uint8Array([137,80,78,71,13,10,26,10]);
+    if (buf.length < 8 || !sig.every((v, i) => buf[i] === v)) return null;
+    let off = 8;
+    while (off + 8 <= buf.length) {
+      const len = (buf[off] << 24) | (buf[off+1] << 16) | (buf[off+2] << 8) | buf[off+3];
+      const type = String.fromCharCode(buf[off+4], buf[off+5], buf[off+6], buf[off+7]);
+      const dataStart = off + 8;
+      const dataEnd = dataStart + len;
+      const crcEnd = dataEnd + 4;
+      if (crcEnd > buf.length) break;
+      if (type === 'tEXt') {
+        const data = buf.slice(dataStart, dataEnd);
+        let sep = -1;
+        for (let i = 0; i < data.length; i++) { if (data[i] === 0) { sep = i; break; } }
+        if (sep > 0) {
+          const key = Buffer.from(data.slice(0, sep)).toString('utf8');
+          const val = Buffer.from(data.slice(sep + 1)).toString('utf8');
+          if (key === keyword && val) return val;
+        }
+      }
+      if (type === 'IEND') break;
+      off = crcEnd;
+    }
+    // Fallback: search embedded URI inside bytes
+    const embedded = searchEmbeddedUriFromBase64(b64.replace(/^data:image\/png;base64,/, ''));
+    if (embedded) return embedded;
+  } catch {}
+  return null;
+}
+// 어떤 이미지(JPEG/PNG 등)든 파일 끝의 임베디드 URI를 검색
+async function trySearchEmbeddedUriAny(uri: string, base64Inline?: string): Promise<string | null> {
+  try {
+    let b64 = base64Inline || '';
+    if (!b64) {
+      try { 
+        if (/^content:\/\//i.test(String(uri||''))) {
+          const tmp = `${(FileSystem as any)?.cacheDirectory || ''}scan_any_${Date.now()}`;
+          try { await FileSystem.copyAsync({ from: uri, to: tmp }); } catch {}
+          try { b64 = await FileSystem.readAsStringAsync(tmp, { encoding: FileSystem.EncodingType.Base64 }); } catch {}
+        } else {
+          b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+        }
+      } catch {}
+    }
+    if (!b64) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const RNBU = (()=>{ try { const m = require('react-native-blob-util'); return m?.default ?? m; } catch { return null; } })();
+        if (RNBU?.fs?.readFile) b64 = await RNBU.fs.readFile(String(uri || '').replace(/^file:\/\//,''), 'base64');
+      } catch {}
+    }
+    if (!b64) return null;
+    const hit = searchEmbeddedUriFromBase64(b64);
+    return hit || null;
+  } catch { return null; }
+}
+async function appendTailTextToFile(uri: string, text: string): Promise<void> {
+  try {
+    const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+    const tail = bytesToBase64(strBytes(`\nYOY:${text}\n`));
+    await FileSystem.writeAsStringAsync(uri, b64 + tail, { encoding: FileSystem.EncodingType.Base64 as any });
+  } catch {}
+}
 // 이미지 전처리 및 멀티 디코더 스캔 (네이티브 + 웹)
 async function scanImageWithAll(uri: string): Promise<string | null> {
   try {
@@ -138,9 +370,42 @@ async function scanImageWithAll(uri: string): Promise<string | null> {
     // 0) 네이티브(안드/iOS): data URL(base64)이면 pngjs/jpeg-js로 직접 디코드 → jsQR
     if (typeof document === 'undefined') {
       try {
-        const m = String(uri || '').match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/i);
+        const src = String(uri || '');
+        let dataUri = '';
+        let mimeGuess = 'image/png';
+        // If it's a file/content URI, load as base64 and convert to data URI for decoding
+        if (!/^data:image\//i.test(src)) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const FS = require('expo-file-system');
+            const ext = (src.split('.').pop() || '').toLowerCase();
+            if (ext === 'jpg' || ext === 'jpeg') mimeGuess = 'image/jpeg';
+            else if (ext === 'png') mimeGuess = 'image/png';
+            else if (ext === 'webp') mimeGuess = 'image/webp';
+            const b64file = await FS.readAsStringAsync(src, { encoding: FS.EncodingType.Base64 });
+            if (b64file && typeof b64file === 'string') {
+              dataUri = `data:${mimeGuess};base64,${b64file}`;
+            }
+          } catch (e) {
+            console.warn('[scanImageWithAll][native][readFile->base64] fail', e);
+            // RNBlobUtil 폴백 (content:// 포함)
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const RNBU = (()=>{ try { const m = require('react-native-blob-util'); return m?.default ?? m; } catch { return null; } })();
+              if (RNBU?.fs?.readFile) {
+                const b64 = await RNBU.fs.readFile(src.replace(/^file:\/\//,''), 'base64');
+                if (b64) dataUri = `data:${mimeGuess};base64,${b64}`;
+              }
+            } catch (e2) {
+              console.warn('[scanImageWithAll][native][blobutil-readFile] fail', e2);
+            }
+          }
+        } else {
+          dataUri = src;
+        }
+        const m = String(dataUri || '').match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/i);
         if (m && m[2]) {
-          const mime = (m[1] || 'image/png').toLowerCase();
+          const mime = (m[1] || mimeGuess).toLowerCase();
           const b64 = m[2];
           const toU8 = (b64str: string): Uint8Array => {
             try {
@@ -186,6 +451,72 @@ async function scanImageWithAll(uri: string): Promise<string | null> {
               const out = (jsQRLib ? jsQRLib(data, width, height, { inversionAttempts: 'attemptBoth' }) : null);
               if (out?.data) return normalizeScannedText(String(out.data));
             } catch (e) { console.warn('[scanImageWithAll][native][jsQR] fail', e); }
+            // ZXing(JS) 픽셀 디코딩 시도 (네이티브에서도 동작 가능한 순수 JS 라이브러리)
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const ZXN = (()=>{ try { return require('@zxing/library'); } catch { return null; } })();
+              if (ZXN && ZXN.RGBLuminanceSource && ZXN.BinaryBitmap && ZXN.HybridBinarizer) {
+                try {
+                  const source = new ZXN.RGBLuminanceSource(data, width, height);
+                  const bitmap = new ZXN.BinaryBitmap(new ZXN.HybridBinarizer(source));
+                  const MF = ZXN.MultiFormatReader || ZXN.BrowserMultiFormatReader || ZXN.BrowserQRCodeReader;
+                  if (MF) {
+                    const reader = new MF();
+                    try {
+                      if (ZXN.DecodeHintType && reader.setHints) {
+                        const hints = new Map();
+                        hints.set(ZXN.DecodeHintType.TRY_HARDER, true);
+                        try { hints.set(ZXN.DecodeHintType.PURE_BARCODE, false); } catch {}
+                        reader.setHints(hints);
+                      }
+                    } catch {}
+                    try {
+                      const res = reader.decode(bitmap);
+                      if (res?.text) return normalizeScannedText(String(res.text));
+                    } catch {}
+                  }
+                } catch (e) { console.warn('[scanImageWithAll][native][zxing] fail', e); }
+              }
+            } catch {}
+            // 2.5) 스크린샷과 같이 가장자리 여백이 큰 이미지: 중앙 컨텐츠 패널을 자동 크롭 후 재시도
+            try {
+              const isWhiteish = (idx: number) => {
+                const r = data[idx], g = data[idx+1], b = data[idx+2];
+                return r > 235 && g > 235 && b > 235;
+              };
+              const col: number[] = new Array(width).fill(0);
+              const row: number[] = new Array(height).fill(0);
+              for (let x=0;x<width;x++){ let c=0; for(let y=0;y<height;y++){ const i=(y*width + x)*4; if (isWhiteish(i)) c++; } col[x]=c/Math.max(1,height); }
+              for (let y=0;y<height;y++){ let c=0; for(let x=0;x<width;x++){ const i=(y*width + x)*4; if (isWhiteish(i)) c++; } row[y]=c/Math.max(1,width); }
+              const need = Math.max(3, Math.floor(Math.min(width, height) * 0.01));
+              const findStart = (arr:number[]) => { let run=0; for (let i=0;i<arr.length;i++){ run = arr[i] > 0.35 ? run+1 : 0; if (run>=need) return Math.max(0, i-run+1); } return 0; };
+              const findEnd = (arr:number[]) => { let run=0; for (let i=arr.length-1;i>=0;i--){ run = arr[i] > 0.35 ? run+1 : 0; if (run>=need) return Math.min(arr.length-1, i); } return arr.length-1; };
+              let left = findStart(col), right = findEnd(col);
+              let top = findStart(row), bottom = findEnd(row);
+              if (right - left > 40 && bottom - top > 40) {
+                const m = Math.floor(Math.min(width, height) * 0.02);
+                left = Math.max(0, left - m); right = Math.min(width-1, right + m);
+                top = Math.max(0, top - m); bottom = Math.min(height-1, bottom + m);
+                const cw = Math.max(10, right - left + 1);
+                const ch = Math.max(10, bottom - top + 1);
+                const cropped = new Uint8ClampedArray(cw * ch * 4);
+                for (let y=0;y<ch;y++){
+                  for (let x=0;x<cw;x++){
+                    const si = ((y + top) * width + (x + left)) * 4;
+                    const di = (y * cw + x) * 4;
+                    cropped[di] = data[si];
+                    cropped[di+1] = data[si+1];
+                    cropped[di+2] = data[si+2];
+                    cropped[di+3] = data[si+3];
+                  }
+                }
+                try {
+                  await ensureJsQRLoaded();
+                  const outCrop = jsQRLib ? jsQRLib(cropped, cw, ch, { inversionAttempts: 'attemptBoth' }) : null;
+                  if (outCrop?.data) return normalizeScannedText(String(outCrop.data));
+                } catch {}
+              }
+            } catch {}
             // 중앙 로고(또는 중심 가려짐)로 인한 실패 대비: 중심 정사각형을 여러 비율로 흰색/검정 마스킹 후 재시도
             try {
               await ensureJsQRLoaded();
@@ -215,6 +546,31 @@ async function scanImageWithAll(uri: string): Promise<string | null> {
                       const masked = makeMasked(data, width, height, r, col === 'white');
                       const out2 = jsQRLib(masked, width, height, { inversionAttempts: 'attemptBoth' });
                       if (out2?.data) return normalizeScannedText(String(out2.data));
+                      // ZXing JS 폴백
+                      try {
+                        // eslint-disable-next-line @typescript-eslint/no-var-requires
+                        const ZXN = (()=>{ try { return require('@zxing/library'); } catch { return null; } })();
+                        if (ZXN && ZXN.RGBLuminanceSource && ZXN.BinaryBitmap && ZXN.HybridBinarizer) {
+                          const src2 = new ZXN.RGBLuminanceSource(masked, width, height);
+                          const bmp2 = new ZXN.BinaryBitmap(new ZXN.HybridBinarizer(src2));
+                          const MF2 = ZXN.MultiFormatReader || ZXN.BrowserMultiFormatReader || ZXN.BrowserQRCodeReader;
+                          if (MF2) {
+                            const reader2 = new MF2();
+                            try {
+                              if (ZXN.DecodeHintType && reader2.setHints) {
+                                const hints2 = new Map();
+                                hints2.set(ZXN.DecodeHintType.TRY_HARDER, true);
+                                try { hints2.set(ZXN.DecodeHintType.PURE_BARCODE, false); } catch {}
+                                reader2.setHints(hints2);
+                              }
+                            } catch {}
+                            try {
+                              const res2 = reader2.decode(bmp2);
+                              if (res2?.text) return normalizeScannedText(String(res2.text));
+                            } catch {}
+                          }
+                        }
+                      } catch {}
                     } catch {}
                   }
                 }
@@ -717,48 +1073,8 @@ export default function WalletScreen() {
 
   // 거래 내역을 기반으로 최종 잔액 계산
   const calculateFinalBalances = (initialBalances: Record<string, number>) => {
-    const transactions = getTransactions();
-    const finalBalances = { ...initialBalances };
-    
-    transactions.forEach(transaction => {
-      if (transaction.type === 'swap') {
-        // 새로운 스왑 거래 구조: symbol과 change 사용 (방어코드 포함)
-        if (transaction.symbol && typeof transaction.change === 'number' && isFinite(transaction.change)) {
-          finalBalances[transaction.symbol] = (finalBalances[transaction.symbol] || 0) + transaction.change;
-        }
-        // 기존 스왑 거래 구조도 지원
-        else if (transaction.fromToken && typeof transaction.fromAmount === 'number' && isFinite(transaction.fromAmount)) {
-          finalBalances[transaction.fromToken] = (finalBalances[transaction.fromToken] || 0) - transaction.fromAmount;
-        }
-        if (transaction.toToken && typeof transaction.toAmount === 'number' && isFinite(transaction.toAmount)) {
-          finalBalances[transaction.toToken] = (finalBalances[transaction.toToken] || 0) + transaction.toAmount;
-        }
-      } else if (transaction.type === 'reward' || transaction.type === 'daily_reward' || transaction.type === 'event_reward') {
-        // 보상 거래: 해당 토큰 증가
-        if (transaction.symbol && transaction.amount) {
-          finalBalances[transaction.symbol] = (finalBalances[transaction.symbol] || 0) + transaction.amount;
-        }
-      } else if (transaction.type === 'staking') {
-        // 스테이킹 거래: 해당 토큰 차감
-        if (transaction.symbol && transaction.amount) {
-          finalBalances[transaction.symbol] = (finalBalances[transaction.symbol] || 0) - transaction.amount;
-        }
-      } else if (transaction.type === 'transfer') {
-        // 일반 입출금: change 필드가 있으면 그 값(+/-)을 누적, 없으면 타입으로 가늠
-        const sym = transaction.symbol;
-        if (sym) {
-          if (typeof transaction.change === 'number' && isFinite(transaction.change)) {
-            finalBalances[sym] = (finalBalances[sym] || 0) + (transaction.change as number);
-          } else if (typeof transaction.amount === 'number' && isFinite(transaction.amount)) {
-            // change가 없으면 amount를 그대로 더하거나 빼야 하지만
-            // transfer 방향 정보를 알 수 없으므로 보수적으로 무시
-            // (우리 앱에서 transfer는 항상 change를 세팅함)
-          }
-        }
-      }
-    });
-    
-    return finalBalances;
+    // 대시보드와 동일하게 기준 잔액을 그대로 신뢰(중복 누적 방지)
+    return { ...initialBalances };
   };
 
   // 코인 클릭 핸들러
@@ -766,6 +1082,8 @@ export default function WalletScreen() {
     setSelectedCoinForDetail(coin);
     setCoinDetailModalVisible(true);
   }, []);
+
+  
 
   // ===== 전송 사전 점검(가스/잔액) =====
   async function preflightTokenGasCheck(params: { to: string; symbol: string; amount: string }): Promise<{ ok: boolean; needEthWei?: bigint; haveEthWei?: bigint }> {
@@ -898,8 +1216,9 @@ export default function WalletScreen() {
     } catch {}
   }, [currentUserEmail]);
 
-  // 주기적으로 잔액 새로고침 (5초마다)
-  useEffect(() => {
+  // 주기적으로 잔액 새로고침 (포커스 중에만 15초 주기)
+  const { useFocusEffect } = require('@react-navigation/native');
+  useFocusEffect(React.useCallback(() => {
     const loadRealTimeBalances = async () => {
       if (!currentUserEmail) return;
       
@@ -941,12 +1260,14 @@ export default function WalletScreen() {
       }
     };
 
-    const interval = setInterval(loadRealTimeBalances, 5000);
+    // 즉시 1회 + 포커스 유지 중 주기 실행
+    void loadRealTimeBalances();
+    const interval = setInterval(loadRealTimeBalances, 15000);
     return () => clearInterval(interval);
-  }, [currentUserEmail, baseBalances]);
+  }, [currentUserEmail, baseBalances]));
   
-  // EVM 온체인 잔액 동기화(ETH/YOY) - 15초 주기
-  useEffect(() => {
+  // EVM 온체인 잔액 동기화(ETH/YOY) - 포커스 중에만 15초 주기
+  useFocusEffect(React.useCallback(() => {
     let cancelled = false;
     const syncOnChain = async () => {
       try {
@@ -971,6 +1292,8 @@ export default function WalletScreen() {
           try { const extra = (Constants as any)?.expoConfig?.extra || {}; return extra.EXPO_PUBLIC_YOY_ERC20_ADDRESS as string; } catch { return undefined; }
         })() || (process as any)?.env?.EXPO_PUBLIC_YOY_ERC20_ADDRESS || null;
         let yoy = 0;
+        // 추가 토큰(USDT/USDC/DAI)도 함께 동기화
+        const erc20Map: Record<string, number> = {};
         if (yoyAddr) {
           try {
             const abi = ['function balanceOf(address) view returns (uint256)'];
@@ -979,6 +1302,19 @@ export default function WalletScreen() {
             yoy = Number(bal) / 1e18;
           } catch {}
         }
+        try {
+          const { getErc20BySymbol } = await import('@/lib/erc20Registry');
+          const chainHex = '0x' + active.chainIdDec.toString(16);
+          const readErc = async (sym: string) => {
+            const meta = getErc20BySymbol(chainHex, sym);
+            if (!meta) return;
+            const erc = new ethers.Contract(meta.address, ['function balanceOf(address) view returns (uint256)'], provider);
+            const bal: bigint = await erc.balanceOf(addr);
+            const val = Number(bal) / Math.pow(10, meta.decimals);
+            erc20Map[sym] = val;
+          };
+          await Promise.allSettled(['USDT','USDC','DAI'].map(readErc));
+        } catch {}
         if (cancelled) return;
         // 저장소 갱신
         const storageKey = `user_balances_${currentUserEmail}`;
@@ -989,6 +1325,7 @@ export default function WalletScreen() {
         } catch {}
         parsed.ETH = eth;
         if (yoyAddr) parsed.YOY = Math.max(parsed.YOY || 0, yoy);
+        Object.entries(erc20Map).forEach(([k,v]) => { parsed[k] = v; });
         await AsyncStorage.setItem(storageKey, JSON.stringify(parsed));
         // 화면 반영
         try {
@@ -1027,7 +1364,7 @@ export default function WalletScreen() {
     void syncOnChain();
     const interval = setInterval(syncOnChain, 15000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [currentUserEmail, baseBalances]);
+  }, [currentUserEmail, baseBalances]));
   
   // 실제 가격 데이터 상태
   const [upbitMarkets, setUpbitMarkets] = useState<{
@@ -1104,11 +1441,23 @@ export default function WalletScreen() {
         );
       }
     };
+    // 최초 진입 시 1회만 로드
     loadPrices();
-    // 1분마다 가격 업데이트
-    const interval = setInterval(loadPrices, 60000);
-    return () => clearInterval(interval);
   }, []);
+  // 포커스 중에만 120초 주기 가격 업데이트
+  useFocusEffect(React.useCallback(() => {
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      try { await updateRealTimePrices(); } catch {}
+      try {
+        const [markets, rates] = await Promise.all([getAllUpbitMarkets(), getExchangeRates()]);
+        if (!cancelled) { setUpbitMarkets(markets); setExchangeRates(rates); setPricesLoaded(true); }
+      } catch { /* ignore */ }
+    };
+    const id = setInterval(tick, 120000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []));
 
   // YOY 입금 모니터 연결 (Alchemy/Infura WS → eth-monitor 서버)
   useEffect(() => {
@@ -1124,7 +1473,12 @@ export default function WalletScreen() {
         const wcAddr = (() => { try { return wc?.state?.connected ? (wc?.state?.address || null) : null; } catch { return null; } })();
         const addr = wcAddr || local?.address || getWalletBySymbol('YOY')?.address;
         if (!addr) return;
-        // Subscribe for YOY + common ERC-20s + custom tokens + native
+        // Register address in yoy-monitor (idempotent)
+        try {
+          const { enrollAddress } = await import('@/lib/monitor');
+          await enrollAddress(addr, (currentUser as any)?.uid || undefined);
+        } catch {}
+        // Subscribe for YOY + common ERC-20s + custom tokens + native (legacy monitor - keep if configured)
         try { await fetch(`${httpUrl}/subscribe`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ address: addr }) }); } catch {}
         try {
           const { getEthChainIdHex } = await import('@/lib/config');
@@ -1210,6 +1564,80 @@ export default function WalletScreen() {
       } catch {}
     })();
     return () => { try { ws?.close(); } catch {} };
+  }, []);
+
+  // Periodically pull balances/transactions from yoy-monitor REST API and merge
+  useEffect(() => {
+    let timer: any;
+    (async () => {
+      try {
+        const { getEthChainIdHex } = await import('@/lib/config');
+        const { enrollAddress, fetchBalances, fetchTransactions, toHumanAmount } = await import('@/lib/monitor');
+        const chainId = await getEthChainIdHex();
+        const { getLocalWallet } = await import('@/src/wallet/wallet');
+        const local = await getLocalWallet().catch(()=>null);
+        const wcAddr = (() => { try { return wc?.state?.connected ? (wc?.state?.address || null) : null; } catch { return null; } })();
+        const addr = (wcAddr || local?.address || getWalletBySymbol('YOY')?.address) as string | undefined;
+        if (!addr) return;
+        await enrollAddress(addr, (currentUser as any)?.uid || undefined);
+        const pull = async () => {
+          try {
+            const bals = await fetchBalances(addr);
+            // Merge YOY/ETH into realTimeBalances
+            setRealTimeBalances(prev => {
+              const next = [...prev];
+              const apply = (sym: string, valStr?: string) => {
+                if (valStr == null) return;
+                const amt = Number(valStr);
+                const idx = next.findIndex(b => b.symbol === sym);
+                if (idx >= 0) {
+                  const base = next[idx];
+                  const usdPerUnit = base.amount ? (base.valueUSD / base.amount) : 0;
+                  next[idx] = { ...base, amount: amt, valueUSD: usdPerUnit ? amt * usdPerUnit : base.valueUSD };
+                } else {
+                  next.push({ symbol: sym, amount: amt, valueUSD: 0, name: sym, change24h: 0, change24hPct: 0 } as any);
+                }
+              };
+              apply('YOY', (bals as any)?.YOY);
+              apply('ETH', (bals as any)?.ETH);
+              return next;
+            });
+            // Import latest transactions (idempotent-ish): skip if same hash already exists in view
+            const txs = await fetchTransactions(addr, 1, 100);
+            const exists = new Set<string>();
+            try {
+              const current = (getTransactions({ limit: 1000 }) as any[]) || [];
+              for (const tx of current) { if (tx?.transactionHash) exists.add(String(tx.transactionHash)); }
+            } catch {}
+            for (const t of txs) {
+              const h = t.tx_hash;
+              if (exists.has(h)) continue;
+              const isRecv = String(t.to_address || '').toLowerCase() === String(addr).toLowerCase();
+              const sym = (t.asset_symbol || (t.is_native ? 'ETH' : 'YOY')) as string;
+              const human = toHumanAmount(sym, t.is_native, t.amount, chainId);
+              const payload: any = {
+                type: isRecv ? 'receive' : 'send',
+                from: t.from_address,
+                to: t.to_address,
+                amount: human,
+                currency: sym,
+                description: `${sym} ${isRecv ? 'Deposit' : 'Transfer'}`,
+                status: t.status === 'success' ? 'completed' : 'failed',
+                hash: t.tx_hash,
+                blockNumber: t.block_number || undefined,
+                network: 'Ethereum',
+                blockTimestamp: t.timestamp
+              };
+              try { await addTransaction(payload); } catch {}
+              try { walletStore.addTransaction({ type:'transfer', success: t.status==='success', status: t.status==='success'?'completed':'failed', symbol: sym, amount: isRecv?human:-human, change: isRecv?human:-human, description: payload.description, transactionHash: h, source: t.source } as any); } catch {}
+            }
+          } catch {}
+        };
+        await pull();
+        timer = setInterval(pull, 60000);
+      } catch {}
+    })();
+    return () => { if (timer) try { clearInterval(timer); } catch {} };
   }, []);
   
   // 정확한 코인 가격 가져오기 함수 (KRW 기준) - EXCHANGE 페이지와 동일한 방식
@@ -1333,6 +1761,7 @@ export default function WalletScreen() {
   const [recvAddress, setRecvAddress] = useState('');
   const [sendAddress, setSendAddress] = useState('');
   const [scanOpen, setScanOpen] = useState(false);
+  const [scanForClaim, setScanForClaim] = useState(false); // 스캔 컨텍스트: true면 claim, false면 pay
   const [hasCamPerm, setHasCamPerm] = useState<boolean | null>(null);
   const [recvSelectedSymbol, setRecvSelectedSymbol] = useState('YOY');
   // 보내기 탭의 선택 코인은 상단 훅/이펙트에서 참조하므로 여기에서 먼저 초기화한다
@@ -1360,6 +1789,27 @@ export default function WalletScreen() {
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [username, setUsername] = useState<string>('');
   const total = useMemo(() => realTimeBalances.reduce((s, b) => s + b.valueUSD, 0), [realTimeBalances]);
+  
+  // QR 스캔 모달이 열릴 때마다 카메라 권한을 즉시 재확인/요청
+  useEffect(() => {
+    if (!scanOpen) return;
+    (async () => {
+      try {
+        if (VisionCamera && typeof VisionCamera.requestCameraPermission === 'function') {
+          const st = await VisionCamera.requestCameraPermission();
+          setHasCamPerm(st === 'authorized');
+          return;
+        }
+        if (ExpoCameraModule?.requestCameraPermissionsAsync) {
+          const perm = await ExpoCameraModule.requestCameraPermissionsAsync();
+          setHasCamPerm(perm?.status === 'granted');
+          return;
+        }
+      } catch {
+        setHasCamPerm(false);
+      }
+    })();
+  }, [scanOpen]);
   
   // Load username on component mount
   useEffect(() => {
@@ -1452,13 +1902,16 @@ export default function WalletScreen() {
           const camStatus = await VisionCamera.requestCameraPermission();
           setHasCamPerm(camStatus === 'authorized');
         } else {
-          // VisionCamera가 없을 때는 Expo Camera 권한으로 대체
+          // VisionCamera가 없을 때는 Expo Camera 또는 BarCodeScanner 권한으로 대체 시도
           try {
-            if (ExpoCamera?.requestCameraPermissionsAsync) {
-              const perm = await ExpoCamera.requestCameraPermissionsAsync();
+            if (ExpoCameraModule?.requestCameraPermissionsAsync) {
+              const perm = await ExpoCameraModule.requestCameraPermissionsAsync();
               setHasCamPerm(perm.status === 'granted');
-        } else {
-          setHasCamPerm(false);
+            } else if (ExpoBarcode?.requestPermissionsAsync) {
+              const perm = await ExpoBarcode.requestPermissionsAsync();
+              setHasCamPerm(perm.status === 'granted');
+            } else {
+              setHasCamPerm(false);
             }
           } catch {
             setHasCamPerm(false);
@@ -1720,21 +2173,526 @@ export default function WalletScreen() {
   
   async function handleSaveQrImage(payload: string, title?: string): Promise<boolean> {
     try {
+      // 저장 단계 로깅 헬퍼
+      const SAVE_DEBUG = false;
+      const saveLog = (...args: any[]) => { try { if (SAVE_DEBUG) console.log('[SAVE]', ...args); } catch {} };
+      const saveErr = (...args: any[]) => { try { if (SAVE_DEBUG) console.error('[SAVE]', ...args); } catch {} };
+      const debugToast = (msg: string) => {
+        try {
+          if (!SAVE_DEBUG) return;
+          if (Platform.OS === 'android') {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { ToastAndroid } = require('react-native');
+            ToastAndroid.show(`[SAVE] ${msg}`, ToastAndroid.SHORT);
+          }
+        } catch {}
+      };
+      saveLog('start', { payloadLength: (payload || '').length });
+      debugToast('start');
+      // ANDROID: 강제 DM-only 경로 (MediaLibrary 완전 우회)
+      if (Platform.OS === 'android') {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const VS = (() => { try { return require('react-native-view-shot'); } catch { return null; } })();
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const RNBU = (()=>{ try { const m = require('react-native-blob-util'); return m?.default ?? m; } catch { return null; } })();
+          // QR PNG base64 생성 헬퍼(뷰샷 불가 시에도 동작)
+          const buildPngBase64 = async (): Promise<{ b64: string; name: string } | null> => {
+            // 0) QR 박스만 뷰샷(base64) 캡처 (react-native-view-shot)
+            try {
+              if (captureRef && (qrShotBoxRef as any)?.current) {
+                const b64 = await captureRef((qrShotBoxRef as any).current, { format: 'png', quality: 1, result: 'base64' });
+                if (b64) {
+                  const n0 = `yooy-qr-${Date.now()}.png`;
+                  return { b64, name: n0 };
+                }
+              }
+            } catch {}
+            // 1) QR 컴포넌트 toDataURL
+            try {
+              // 이미 상단에서 base64 변수를 만들었는지 확인
+              let b64FromRef: string | null = null;
+              try {
+                if ((qrRef as any)?.current?.toDataURL) {
+                  b64FromRef = await new Promise<string>((resolve) => (qrRef as any).current.toDataURL((d: string) => resolve(d)));
+                  if (b64FromRef) {
+                    const n1 = `yooy-qr-${Date.now()}.png`;
+                    return { b64: b64FromRef.replace(/^data:image\/png;base64,/, ''), name: n1 };
+                  }
+                }
+              } catch {}
+            } catch {}
+            // 2) qrcode 라이브러리로 직접 생성
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const QRGen = (()=>{ try { return require('qrcode'); } catch { return null; } })();
+              if (QRGen?.toDataURL) {
+                const dataUrl = await QRGen.toDataURL(payload, { errorCorrectionLevel: 'H', width: 600, margin: 1, color: { dark: '#000000', light: '#FFFFFF' } });
+                const n2 = `yooy-qr-${Date.now()}.png`;
+                return { b64: String(dataUrl).replace(/^data:image\/png;base64,/, ''), name: n2 };
+              }
+            } catch {}
+            // 2.5) 외부 QR 생성 API로 PNG 다운로드(네트워크 가능 시) - 파일 읽기 없이 직접 base64 생성
+            try {
+              const url = `https://api.qrserver.com/v1/create-qr-code/?size=800x800&data=${encodeURIComponent(payload)}`;
+              const resp = await fetch(url);
+              if (resp?.ok) {
+                const ab = await resp.arrayBuffer();
+                const raw = bytesToBase64(new Uint8Array(ab));
+                const n25 = `yooy-qr-${Date.now()}.png`;
+                return { b64: raw, name: n25 };
+              }
+            } catch {}
+            // 3) 마지막으로 뷰샷(base64 직접 수집)
+            try {
+              const b = VS?.captureScreen ? await VS.captureScreen({ format: 'jpg', quality: 0.98, result: 'base64' }) : null;
+              if (b) {
+                const n3 = `yooy-qr-${Date.now()}.jpg`;
+                return { b64: b, name: n3 };
+              }
+            } catch {}
+            return null;
+          };
+          // 0) SAF 우선: RNBlobUtil 유무와 상관없이 먼저 폴더 선택으로 저장 시도
+          try {
+            const built = await buildPngBase64();
+            if (built?.b64 && built?.name) {
+              const SAF0 = (FileSystem as any).StorageAccessFramework;
+              if (SAF0?.requestDirectoryPermissionsAsync && SAF0?.createFileAsync) {
+                try { setQrModalVisible(false); } catch {}
+                try { await new Promise(res => setTimeout(res, 350)); } catch {}
+                debugToast('open SAF first');
+                const dir0 = await SAF0.requestDirectoryPermissionsAsync();
+                if (dir0?.granted && dir0.directoryUri) {
+                  const isJpg0 = /\.jpe?g$/i.test(built.name);
+                  const mime0 = isJpg0 ? 'image/jpeg' : 'image/png';
+                  const uri0 = await SAF0.createFileAsync(dir0.directoryUri, built.name, mime0);
+                  if (uri0) {
+                    await FileSystem.writeAsStringAsync(uri0, built.b64, { encoding: 'base64' as any });
+                    Alert.alert('Saved', built.name);
+                    return true;
+                  }
+                }
+              }
+            }
+          } catch (e) { saveErr('SAF-first failed', e); }
+          // SAF 우선 경로에서 저장하지 못한 경우
+          // Android 10+(API29)에서는 직접 경로 쓰기 제약이 커서 SAF만 강제 사용
+          try {
+            const api = (Platform as any)?.Version ?? 0;
+            if (api >= 29) {
+              saveLog('API>=29 try RNBU Download first');
+              // AsyncStorage 로드 (SAF 디렉터리 기억)
+              const AS = (()=>{ try { return require('@react-native-async-storage/async-storage').default; } catch { return null; } })();
+              const built = await buildPngBase64();
+              if (built?.b64 && built?.name) {
+                // 1) RNBlobUtil로 Download/YooY에 직접 저장 시도
+                try {
+                  if (RNBU?.fs?.writeFile) {
+                    const yooyDir = `${RNBU.fs.dirs.DownloadDir}/YooY`;
+                    try { const ex = await RNBU.fs.isDir(yooyDir); if (!ex) { debugToast('mkdir YooY'); await RNBU.fs.mkdir(yooyDir); } } catch {}
+                    const dest = `${yooyDir}/${built.name.replace(/\\.png$/i,'.jpg')}`;
+                    saveLog('API>=29.writeFile', dest); debugToast('write Download/YooY');
+                    await RNBU.fs.writeFile(dest, built.b64, 'base64');
+                    // 검증 + 스캔
+                    try {
+                      const st = await RNBU.fs.stat(dest);
+                      const sizeNum = Number((st as any)?.size || 0);
+                      if (!st || isNaN(sizeNum) || sizeNum < 512) throw new Error('verify-fail');
+                      const peek = await RNBU.fs.readFile(dest, 'base64');
+                      if (!peek || peek.length < 100) throw new Error('verify-read-fail');
+                    } catch (v) { throw v; }
+                    try { await RNBU.fs.scanFile([{ path: dest, mime: 'image/jpeg' }]); } catch {}
+                    Alert.alert('Saved', `Download/YooY/${dest.split('/').pop()}`);
+                    return true;
+                  }
+                } catch (eWrite) { saveErr('API>=29.writeFile failed', eWrite); }
+                // 2) 실패 시 SAF(저장된 디렉터리 우선)로 저장
+                const SAFx = (FileSystem as any).StorageAccessFramework;
+                if (SAFx?.requestDirectoryPermissionsAsync && SAFx?.createFileAsync) {
+                  // 2-1) 저장된 디렉터리 사용
+                  try {
+                    const savedDir = AS ? await AS.getItem('yooy_saf_dir') : null;
+                    if (savedDir) {
+                      const isJpgX = /\.jpe?g$/i.test(built.name);
+                      const mimeX = isJpgX ? 'image/jpeg' : 'image/png';
+                      const uriX = await SAFx.createFileAsync(savedDir, built.name, mimeX);
+                      if (uriX) {
+                        await FileSystem.writeAsStringAsync(uriX, built.b64, { encoding: 'base64' as any });
+                        Alert.alert('Saved', built.name);
+                        return true;
+                      }
+                    }
+                  } catch {}
+                  // 2-2) 폴더 선택 요청
+                  try { setQrModalVisible(false); } catch {}
+                  try { await new Promise(res => setTimeout(res, 350)); } catch {}
+                  debugToast('open SAF (API>=29)');
+                  let baseUri: string | undefined = undefined;
+                  try { baseUri = 'content://com.android.externalstorage.documents/tree/primary%3ADownload'; } catch {}
+                  const dirX = await SAFx.requestDirectoryPermissionsAsync(baseUri);
+                  if (dirX?.granted && dirX.directoryUri) {
+                    try { if (AS) await AS.setItem('yooy_saf_dir', dirX.directoryUri); } catch {}
+                    const isJpgX = /\.jpe?g$/i.test(built.name);
+                    const mimeX = isJpgX ? 'image/jpeg' : 'image/png';
+                    const uriX = await SAFx.createFileAsync(dirX.directoryUri, built.name, mimeX);
+                    if (uriX) {
+                      await FileSystem.writeAsStringAsync(uriX, built.b64, { encoding: 'base64' as any });
+                      Alert.alert('Saved', built.name);
+                      return true;
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e) { saveErr('force SAF (API>=29) failed', e); }
+          // 이후 RNBlobUtil/DM 경로로 계속 진행 (API28 이하 장치 호환)
+          if ((((Platform as any)?.Version ?? 0) < 29) && VS?.captureScreen && RNBU?.fs?.writeFile) {
+            saveLog('DM_ONLY.captureScreen start'); debugToast('captureScreen');
+            const b64: string | null = await VS.captureScreen({ format: 'jpg', quality: 0.98, result: 'base64' });
+            if (!b64) throw new Error('capture-failed');
+            // 파일명 생성
+            const now = new Date();
+            const name = `yooy-qr-${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}-${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}.jpg`;
+            // 0) 내부 tmp 등록 단계는 비활성화 (일부 기기에서 권한/Deprecated 경고로 중단되는 이슈)
+            // 과거: tmp에 writeAsStringAsync 후 addCompleteDownload 등록
+            // 현재: 바로 공개 경로(Download/DCIM/SAF)로 저장 수행
+            // 1) Download/YooY 저장
+            try {
+              const yooyDir = `${RNBU.fs.dirs.DownloadDir}/YooY`;
+              try { const ex = await RNBU.fs.isDir(yooyDir); if (!ex) { debugToast('mkdir YooY'); await RNBU.fs.mkdir(yooyDir); } } catch {}
+              const dest = `${yooyDir}/${name}`;
+              saveLog('DM_ONLY.writeFile', dest);
+              debugToast('write Download/YooY');
+              await RNBU.fs.writeFile(dest, b64, 'base64');
+              // 존재/용량 검증: 실패 시 예외로 폴백 진행
+              try {
+                const st = await RNBU.fs.stat(dest);
+                const sizeNum = Number((st as any)?.size || 0);
+                if (!st || isNaN(sizeNum) || sizeNum < 512) throw new Error('verify-fail');
+                // 간단 읽기 검증
+                const peek = await RNBU.fs.readFile(dest, 'base64');
+                if (!peek || peek.length < 100) throw new Error('verify-read-fail');
+              } catch (verr) { throw verr; }
+              await RNBU.fs.scanFile([{ path: dest, mime: 'image/jpeg' }]).catch(()=>{});
+              // DownloadManager 등록
+              try {
+                if (RNBU?.android?.addCompleteDownload) {
+                  saveLog('DM_ONLY.addCompleteDownload', dest); debugToast('DM addCompleteDownload(YooY)');
+                  await RNBU.android.addCompleteDownload({
+                    title: name,
+                    description: 'YooY QR',
+                    mime: 'image/jpeg',
+                    path: dest,
+                    showNotification: false,
+                    scannable: true
+                  });
+                }
+              } catch (eDm) { saveErr('DM_ONLY.addCompleteDownload failed', eDm); }
+              Alert.alert('Saved', `Download/YooY/${name}`);
+              return true;
+            } catch (e1) {
+              saveErr('DM_ONLY.writeFile(YooY) failed', e1);
+              // 2) DCIM/Camera 폴백
+              try {
+                const dcim = RNBU.fs.dirs.DCIMDir || RNBU.fs.dirs.PictureDir || RNBU.fs.dirs.DownloadDir;
+                const cameraDir = `${dcim}/Camera`;
+                try { const okdir = await RNBU.fs.isDir(cameraDir); if (!okdir) { debugToast('mkdir DCIM/Camera'); await RNBU.fs.mkdir(cameraDir); } } catch {}
+                const dest2 = `${cameraDir}/${name}`;
+                saveLog('DM_ONLY.writeFile(DCIM)', dest2);
+                debugToast('write DCIM/Camera');
+                await RNBU.fs.writeFile(dest2, b64, 'base64');
+                // 존재/용량 검증: 실패 시 SAF로 폴백
+                try {
+                  const st2 = await RNBU.fs.stat(dest2);
+                  const sizeNum2 = Number((st2 as any)?.size || 0);
+                  if (!st2 || isNaN(sizeNum2) || sizeNum2 < 512) throw new Error('verify-fail');
+                  const peek2 = await RNBU.fs.readFile(dest2, 'base64');
+                  if (!peek2 || peek2.length < 100) throw new Error('verify-read-fail');
+                } catch (verr2) { throw verr2; }
+                await RNBU.fs.scanFile([{ path: dest2, mime: 'image/jpeg' }]).catch(()=>{});
+                try {
+                  if (RNBU?.android?.addCompleteDownload) {
+                    saveLog('DM_ONLY.addCompleteDownload(DCIM)', dest2); debugToast('DM addCompleteDownload(DCIM)');
+                    await RNBU.android.addCompleteDownload({
+                      title: name,
+                      description: 'YooY QR',
+                      mime: 'image/jpeg',
+                      path: dest2,
+                      showNotification: false,
+                      scannable: true
+                    });
+                  }
+                } catch (eDm2) { saveErr('DM_ONLY.addCompleteDownload(DCIM) failed', eDm2); }
+                Alert.alert('Saved', `DCIM/Camera/${name}`);
+                return true;
+              } catch (e2) {
+                saveErr('DM_ONLY.writeFile(DCIM) failed', e2);
+                // 3) SAF 폴더 선택 저장(권장): 사용자 선택 경로에 직접 쓰기
+                try {
+                  const SAF = (FileSystem as any).StorageAccessFramework;
+                  if (SAF?.requestDirectoryPermissionsAsync && SAF?.createFileAsync) {
+                    try { setQrModalVisible(false); } catch {}
+                    try { await new Promise(res => setTimeout(res, 350)); } catch {}
+                    debugToast('open SAF');
+                    const dir = await SAF.requestDirectoryPermissionsAsync();
+                    if (dir?.granted && dir.directoryUri) {
+                      const uri = await SAF.createFileAsync(dir.directoryUri, name, 'image/jpeg');
+                      if (uri) {
+                        debugToast('SAF write');
+                        await FileSystem.writeAsStringAsync(uri, b64, { encoding: 'base64' as any });
+                        Alert.alert('Saved', name);
+                        return true;
+                      }
+                    }
+                  }
+                } catch (e3) { saveErr('DM_ONLY.SAF failed', e3); }
+              }
+            }
+          }
+          else {
+            if (!VS?.captureScreen) { saveErr('DM_ONLY missing view-shot'); debugToast('missing view-shot'); }
+            if (!RNBU?.fs?.writeFile) {
+              saveErr('DM_ONLY missing blob-util'); debugToast('missing blob-util');
+              // RNBlobUtil이 없으면 SAF로 직접 저장 시도
+              try {
+                const b64: string | null = VS?.captureScreen ? await VS.captureScreen({ format: 'jpg', quality: 0.98, result: 'base64' }) : null;
+                if (b64) {
+                  const name = `yooy-qr-${Date.now()}.jpg`;
+                  const SAF = (FileSystem as any).StorageAccessFramework;
+                  if (SAF?.requestDirectoryPermissionsAsync && SAF?.createFileAsync) {
+                    try { setQrModalVisible(false); } catch {}
+                    try { await new Promise(res => setTimeout(res, 350)); } catch {}
+                    debugToast('open SAF (no RNBU)');
+                    const dir = await SAF.requestDirectoryPermissionsAsync();
+                    if (dir?.granted && dir.directoryUri) {
+                      const uri = await SAF.createFileAsync(dir.directoryUri, name, 'image/jpeg');
+                      if (uri) {
+                        debugToast('SAF write (no RNBU)');
+                        await FileSystem.writeAsStringAsync(uri, b64, { encoding: 'base64' as any });
+                        Alert.alert('Saved', name);
+                        return true;
+                      }
+                    }
+                  }
+                }
+              } catch (e) { saveErr('DM_ONLY SAF(no RNBU) failed', e); }
+            }
+          }
+        } catch (e) { saveErr('DM_ONLY branch failed', e); }
+        // 마지막 폴백: 공유 시트
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const VS = (() => { try { return require('react-native-view-shot'); } catch { return null; } })();
+          const shotUri: string | null = VS?.captureScreen ? await VS.captureScreen({ format: 'jpg', quality: 0.98, result: 'tmpfile' }) : null;
+          const Sharing = (()=>{ try { return require('expo-sharing'); } catch { return null; } })();
+          if (shotUri && Sharing?.isAvailableAsync && (await Sharing.isAvailableAsync())) {
+            debugToast('share sheet');
+            await Sharing.shareAsync(shotUri, { mimeType: 'image/jpeg' });
+            Alert.alert('Opened', '공유 시트에서 저장을 선택해 주세요.');
+            return true;
+          }
+        } catch {}
+        // Android에서는 여기서 종료(ML/SAF/MediaLibrary 사용 안 함)
+        return false;
+      }
+      // 최우선: 스크린샷 방식으로 DCIM/Camera에 직접 저장 (요청 반영)
+      if (Platform.OS === 'android') {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const VS = (() => { try { return require('react-native-view-shot'); } catch { return null; } })();
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const RNBU0 = (()=>{ try { const m = require('react-native-blob-util'); return m?.default ?? m; } catch { return null; } })();
+          if (VS?.captureScreen && RNBU0?.fs?.writeFile) {
+            saveLog('captureScreen(screenshot-first) start');
+            const shotUri: string | null = await VS.captureScreen({ format: 'jpg', quality: 0.98, result: 'tmpfile' });
+            if (shotUri) {
+              const base64Shot = await FileSystem.readAsStringAsync(shotUri, { encoding: FileSystem.EncodingType.Base64 });
+              // 1) DCIM/Camera 우선
+              try {
+                const dcim = RNBU0.fs.dirs.DCIMDir || RNBU0.fs.dirs.PictureDir || RNBU0.fs.dirs.DownloadDir;
+                const cameraDir = `${dcim}/Camera`;
+                try { const okdir = await RNBU0.fs.isDir(cameraDir); if (!okdir) await RNBU0.fs.mkdir(cameraDir); } catch {}
+                const ts = new Date();
+                const name = `yooy-qr-${ts.getFullYear()}${String(ts.getMonth()+1).padStart(2,'0')}${String(ts.getDate()).padStart(2,'0')}-${String(ts.getHours()).padStart(2,'0')}${String(ts.getMinutes()).padStart(2,'0')}${String(ts.getSeconds()).padStart(2,'0')}.jpg`;
+                const dest = `${cameraDir}/${name}`;
+                saveLog('RNBU.writeFile(screen-first->DCIM/Camera)', dest);
+                await RNBU0.fs.writeFile(dest, base64Shot, 'base64');
+                await RNBU0.fs.scanFile([{ path: dest }]).catch(()=>{});
+                // DownloadManager/MediaStore 등록(일부 기기에서 인덱싱/권한 문제 회피)
+                try {
+                  if (RNBU0?.android?.addCompleteDownload) {
+                    saveLog('RNBU.android.addCompleteDownload(screen-first DCIM)', dest);
+                    await RNBU0.android.addCompleteDownload({
+                      title: name,
+                      description: 'YooY QR screenshot',
+                      mime: 'image/jpeg',
+                      path: dest,
+                      showNotification: false,
+                      scannable: true
+                    });
+                  }
+                } catch (eDm) { saveErr('screen-first DCIM addCompleteDownload failed', eDm); }
+                Alert.alert('Saved', `DCIM/Camera/${name}`);
+                return true;
+              } catch (e) { saveErr('screen-first DCIM write failed', e); }
+              // 2) Download 폴더 폴백
+              try {
+                const dest2 = `${RNBU0.fs.dirs.DownloadDir}/yooy-qr-screenshot.jpg`;
+                saveLog('RNBU.writeFile(screen-first->Download)', dest2);
+                await RNBU0.fs.writeFile(dest2, base64Shot, 'base64');
+                await RNBU0.fs.scanFile([{ path: dest2 }]).catch(()=>{});
+                try {
+                  if (RNBU0?.android?.addCompleteDownload) {
+                    saveLog('RNBU.android.addCompleteDownload(screen-first DL)', dest2);
+                    await RNBU0.android.addCompleteDownload({
+                      title: 'yooy-qr-screenshot.jpg',
+                      description: 'YooY QR screenshot',
+                      mime: 'image/jpeg',
+                      path: dest2,
+                      showNotification: false,
+                      scannable: true
+                    });
+                  }
+                } catch (eDm2) { saveErr('screen-first DL addCompleteDownload failed', eDm2); }
+                Alert.alert('Saved', `Download/yooy-qr-screenshot.jpg`);
+                return true;
+              } catch (e2) { saveErr('screen-first Download write failed', e2); }
+              // 3) SAF 폴더 선택 최후 폴백
+              try {
+                const SAF = (FileSystem as any).StorageAccessFramework;
+                if (SAF?.requestDirectoryPermissionsAsync && SAF?.createFileAsync) {
+                  try { setQrModalVisible(false); } catch {}
+                  try { await new Promise(res => setTimeout(res, 350)); } catch {}
+                  saveLog('SAF.requestDirectoryPermissionsAsync(screen-first)');
+                  const dir = await SAF.requestDirectoryPermissionsAsync();
+                  if (dir?.granted && dir.directoryUri) {
+                    const name = `yooy-qr-screenshot.jpg`;
+                    const furi = await SAF.createFileAsync(dir.directoryUri, name, 'image/jpeg');
+                    if (furi) {
+                      await FileSystem.writeAsStringAsync(furi, base64Shot, { encoding: FileSystem.EncodingType.Base64 as any });
+                      Alert.alert('Saved', name);
+                      return true;
+                    }
+                  }
+                }
+              } catch (e3) { saveErr('screen-first SAF failed', e3); }
+            }
+          }
+        } catch (e) { saveErr('screenshot-first branch failed', e); }
+      }
+      // 공통 저장 헬퍼: MediaLibrary 실패/거부 시 SAF로 저장
+      const saveViaMediaLibraryOrSaf = async (path: string, niceName: string): Promise<boolean> => {
+        const inferMimeFromName = (name: string) => (/\.jpe?g$/i.test(name) ? 'image/jpeg' : 'image/png');
+        // 0) 최우선: RNBlobUtil로 Downloads에 직접 저장 + DownloadManager 등록
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const RNBU = (()=>{ try { const m = require('react-native-blob-util'); return m?.default ?? m; } catch { return null; } })();
+          if (Platform.OS === 'android' && RNBU?.fs?.writeFile && RNBU?.fs?.dirs?.DownloadDir) {
+            const baseName = niceName || (path.split('/').pop() || 'yooy-qr.png');
+            const yooyDir = `${RNBU.fs.dirs.DownloadDir}/YooY`;
+            try { const ex = await RNBU.fs.isDir(yooyDir); if (!ex) await RNBU.fs.mkdir(yooyDir); } catch {}
+            const dest = `${yooyDir}/${baseName}`;
+            const b64 = await FileSystem.readAsStringAsync(path, { encoding: FileSystem.EncodingType.Base64 });
+            saveLog('RNBU.writeFile(helper->Download/YooY)', dest);
+            await RNBU.fs.writeFile(dest, b64, 'base64');
+            await RNBU.fs.scanFile([{ path: dest }]).catch(()=>{});
+            // DownloadManager 등록 시도
+            try {
+              const mime = inferMimeFromName(baseName);
+              if (RNBU?.android?.addCompleteDownload) {
+                saveLog('RNBU.android.addCompleteDownload(helper)', dest);
+                await RNBU.android.addCompleteDownload({
+                  title: baseName,
+                  description: 'YooY QR',
+                  mime,
+                  path: dest,
+                  showNotification: false,
+                  scannable: true
+                });
+              }
+            } catch (e) { saveErr('addCompleteDownload(helper) failed', e); }
+            Alert.alert('Saved', `Download/YooY/${baseName}`);
+            return true;
+          }
+        } catch (e) { saveErr('RNBU helper write failed', e); }
+        try {
+          saveLog('MediaLibrary.requestPermissionsAsync');
+          const perm = await MediaLibrary.requestPermissionsAsync();
+          saveLog('MediaLibrary.permission', perm?.status);
+          if (perm.status === 'granted') {
+            try {
+              await MediaLibrary.createAssetAsync(path);
+              Alert.alert('Saved', niceName);
+              return true;
+            } catch (e) {
+              saveErr('MediaLibrary.createAssetAsync failed', e);
+              try {
+                await MediaLibrary.saveToLibraryAsync(path);
+                Alert.alert('Saved', niceName);
+                return true;
+              } catch (e2) {
+                saveErr('MediaLibrary.saveToLibraryAsync failed', e2);
+              }
+            }
+          }
+        } catch {}
+        // SAF 폴백(Android): 사용자가 선택한 디렉터리에 파일 생성
+        try {
+          const SAF = (FileSystem as any).StorageAccessFramework;
+          if (SAF?.requestDirectoryPermissionsAsync && SAF?.createFileAsync) {
+            try { setQrModalVisible(false); } catch {}
+            try { await new Promise(res => setTimeout(res, 350)); } catch {}
+            saveLog('SAF.requestDirectoryPermissionsAsync');
+            const dir = await SAF.requestDirectoryPermissionsAsync();
+            if (dir?.granted && dir.directoryUri) {
+              // 원본을 base64로 읽어 SAF 파일에 기록
+              let b64 = '';
+              try { b64 = await FileSystem.readAsStringAsync(path, { encoding: FileSystem.EncodingType.Base64 }); } catch {}
+              const mime = inferMimeFromName(niceName);
+              saveLog('SAF.createFileAsync', niceName, mime);
+              const fileUri = await SAF.createFileAsync(dir.directoryUri, niceName, mime);
+              if (fileUri) {
+                await FileSystem.writeAsStringAsync(fileUri, b64, { encoding: FileSystem.EncodingType.Base64 as any });
+                Alert.alert('Saved', niceName);
+                return true;
+              }
+            }
+          }
+        } catch {}
+        // 최후 폴백: 시스템 공유 시트를 열어 '파일에 저장/갤러리' 선택 유도
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const Sharing = (()=>{ try { return require('expo-sharing'); } catch { return null; } })();
+          if (Sharing?.isAvailableAsync && (await Sharing.isAvailableAsync())) {
+            try { setQrModalVisible(false); } catch {}
+            try { await new Promise(res => setTimeout(res, 350)); } catch {}
+            await Sharing.shareAsync(path, { mimeType: inferMimeFromName(niceName) });
+            Alert.alert('Opened', '공유 시트에서 저장을 선택해 주세요.');
+            return true;
+          }
+        } catch {}
+        return false;
+      };
+
       // 우선적으로 RN QR 컴포넌트의 toDataURL 사용
       let base64: string | null = null;
       if ((qrRef as any)?.current?.toDataURL) {
         base64 = await new Promise<string>((resolve) => (qrRef as any).current.toDataURL((d: string) => resolve(d)));
       }
       if ((Platform as any).OS === 'web') {
-        // 0) 사용자 지정 파일명 구성(yooy__<base64url(payload)>-YYYYMMDD-<amt><sym>.png)
+        // 0) 사용자 지정 파일명 구성(YYYYMMDD-HHMMSS-[SYM]-AMOUNT.png)
         const now = new Date();
         const y = now.getFullYear();
         const m = String(now.getMonth()+1).padStart(2,'0');
         const d = String(now.getDate()).padStart(2,'0');
+        const hh = String(now.getHours()).padStart(2,'0');
+        const mm = String(now.getMinutes()).padStart(2,'0');
+        const ss = String(now.getSeconds()).padStart(2,'0');
         let sym = 'YOY'; let amt = '0';
         try { const u = new URL(payload); sym = u.searchParams.get('sym') || 'YOY'; amt = u.searchParams.get('amt') || '0'; } catch {}
-        const encoded = toBase64Url(payload);
-        const niceName = `yooy__${encoded}-${y}${m}${d}-${amt}${sym}.png`;
+        const safeAmt = String(amt).replace(/[^\d._-]/g,'_').replace(/\./g,'_');
+        const niceName = `${y}${m}${d}-${hh}${mm}${ss}-[${sym}]-${safeAmt}.png`;
         // 1) 먼저 팝업 DOM을 그대로 캡처(디자인 유지)
         try {
           if (qrModalContentRef?.current) {
@@ -1749,10 +2707,11 @@ export default function WalletScreen() {
                 logging: false,
               });
               const dataDom = canvasDom.toDataURL('image/png');
+              const enriched = insertPngTextChunk(dataDom, 'yooy', payload);
               const linkDom = document.createElement('a');
-              linkDom.href = dataDom; linkDom.download = niceName;
+              linkDom.href = enriched; linkDom.download = niceName;
               document.body.appendChild(linkDom); linkDom.click(); document.body.removeChild(linkDom);
-              Alert.alert('Saved', 'PNG saved to downloads');
+              Alert.alert('Saved', niceName);
               return true;
             }
           }
@@ -1763,9 +2722,10 @@ export default function WalletScreen() {
           // eslint-disable-next-line @typescript-eslint/no-var-requires
           const QRGen = (require('qrcode') as any);
           const dataUrl = await QRGen.toDataURL(payload, { errorCorrectionLevel: 'H', width: 600, margin: 1, color: { dark: '#000000', light: '#FFFFFF' } });
-          const a = document.createElement('a'); a.href = dataUrl; a.download = niceName;
+          const enriched = insertPngTextChunk(dataUrl, 'yooy', payload);
+          const a = document.createElement('a'); a.href = enriched; a.download = niceName;
           document.body.appendChild(a); a.click(); document.body.removeChild(a);
-          Alert.alert('Saved', 'PNG saved to downloads');
+          Alert.alert('Saved', niceName);
           return true;
         } catch {}
         // 3) 팝업 DOM을 그대로 캡처 시도 (하단 잘림 방지)
@@ -1789,7 +2749,7 @@ export default function WalletScreen() {
               document.body.appendChild(linkDom);
               linkDom.click();
               document.body.removeChild(linkDom);
-              Alert.alert('Saved', 'PNG saved to downloads');
+              Alert.alert('Saved', niceName);
               return true;
             }
           }
@@ -1897,21 +2857,25 @@ export default function WalletScreen() {
 
           // 저장
           const data = canvas.toDataURL('image/png');
+          const enriched = insertPngTextChunk(data, 'yooy', payload);
           const link = document.createElement('a');
-          link.href = data;
-          // 파일명: yooy__<base64url>-YYYYMMDD-<amt><sym>.png (팝업 합성 폴백)
+          link.href = enriched;
+          // 파일명: YYYYMMDD-HHMMSS-[SYM]-AMOUNT.png (팝업 합성 폴백)
           const now3 = new Date();
           const y3 = now3.getFullYear();
           const m3 = String(now3.getMonth()+1).padStart(2,'0');
           const d3 = String(now3.getDate()).padStart(2,'0');
+          const hh3 = String(now3.getHours()).padStart(2,'0');
+          const mm3 = String(now3.getMinutes()).padStart(2,'0');
+          const ss3 = String(now3.getSeconds()).padStart(2,'0');
           let sym3 = 'YOY'; let amt3 = '0';
           try { const u3 = new URL(payload); sym3 = u3.searchParams.get('sym') || 'YOY'; amt3 = u3.searchParams.get('amt') || '0'; } catch {}
-          const encoded3 = toBase64Url(payload);
-          link.download = `yooy__${encoded3}-${y3}${m3}${d3}-${amt3}${sym3}.png`;
+          const safeAmt3 = String(amt3).replace(/[^\d._-]/g,'_').replace(/\./g,'_');
+          link.download = `${y3}${m3}${d3}-${hh3}${mm3}${ss3}-[${sym3}]-${safeAmt3}.png`;
           document.body.appendChild(link);
           link.click();
           document.body.removeChild(link);
-          Alert.alert('Saved', 'PNG saved to downloads');
+          Alert.alert('Saved', link.download || 'saved.png');
         };
         // 원본은 600x600로 받아 300으로 축소해 가장자리 손실 방지
         if (base64) imgEl.src = `data:image/png;base64,${base64.replace(/^data:image\/png;base64,/, '')}`;
@@ -1923,47 +2887,351 @@ export default function WalletScreen() {
         try {
           await new Promise(res => setTimeout(res, 60));
           let uri: string | null = null;
-          if ((qrExportRef as any)?.current) {
-            uri = await captureRef((qrExportRef as any).current, { format: 'png', quality: 1, result: 'tmpfile' });
+          // 0) (요청 반영) 화면 전체 스크린샷은 사용하지 않고, 팝업 영역만 저장
+          // 0) 현재 보이는 팝업만 캡처(항상 이 경로 우선) → JPEG로 변환(알파 제거)
+          if ((qrModalContentRef as any)?.current) {
+            saveLog('captureRef(qrModalContentRef) start');
+            const tmpPng: string = await captureRef((qrModalContentRef as any).current, { format: 'png', quality: 1, result: 'tmpfile', width: 1080 });
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const ImageManipulator = (()=>{ try { return require('expo-image-manipulator'); } catch { return null; } })();
+              if (ImageManipulator?.manipulateAsync) {
+                saveLog('ImageManipulator.manipulateAsync → JPEG');
+                const out = await ImageManipulator.manipulateAsync(
+                  tmpPng,
+                  [],
+                  { compress: 0.95, format: (ImageManipulator as any).SaveFormat?.JPEG || 'jpeg' }
+                );
+                uri = out?.uri || tmpPng;
+                // JPEG 파일 끝에 payload 문자열을 덧붙여 임베드(후속 스캔에서 복구용)
+                try { if (uri) { saveLog('appendTailTextToFile(payload tail embed)'); await appendTailTextToFile(uri, payload); } } catch (e) { saveErr('appendTailTextToFile failed', e); }
+              } else {
+                uri = tmpPng;
+              }
+            } catch (e) {
+              saveErr('ImageManipulator.manipulateAsync failed', e);
+              uri = tmpPng;
+            }
           }
-          if (!uri && (qrModalContentRef as any)?.current) {
-            uri = await captureRef((qrModalContentRef as any).current, { format: 'png', quality: 1, result: 'tmpfile' });
+          // 1) 팝업 캡처가 실패하면: 오프스크린 레이아웃을 PNG로 캡처 후 JPEG 변환
+          // 팝업 캡처가 실패하면 오프스크린 레이아웃을 폴백으로 사용
+          if (!uri && (qrExportRef as any)?.current) {
+            saveLog('captureRef(qrExportRef) start');
+            const tmpPng2: string = await captureRef((qrExportRef as any).current, { format: 'png', quality: 1, result: 'tmpfile', width: 1080 });
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const ImageManipulator = (()=>{ try { return require('expo-image-manipulator'); } catch { return null; } })();
+              if (ImageManipulator?.manipulateAsync) {
+                saveLog('ImageManipulator.manipulateAsync(offscreen) → JPEG');
+                const out = await ImageManipulator.manipulateAsync(
+                  tmpPng2,
+                  [],
+                  { compress: 0.95, format: (ImageManipulator as any).SaveFormat?.JPEG || 'jpeg' }
+                );
+                uri = out?.uri || tmpPng2;
+                try { if (uri) { saveLog('appendTailTextToFile(offscreen)'); await appendTailTextToFile(uri, payload); } } catch (e) { saveErr('appendTailTextToFile(offscreen) failed', e); }
+              } else {
+                uri = tmpPng2;
+              }
+            } catch (e) {
+              saveErr('ImageManipulator.manipulateAsync(offscreen) failed', e);
+              uri = tmpPng2;
+            }
+          }
+          const baseNameFrom = (p?: string | null) => {
+            try { return (p || '').split('/').pop() || ''; } catch { return ''; }
+          };
+          // 캡처된 파일을 RNBlobUtil로 직접 저장(Download/YooY → Download → DCIM/Camera) 시도
+          if (Platform.OS === 'android' && uri) {
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const RNBUc = (()=>{ try { const m = require('react-native-blob-util'); return m?.default ?? m; } catch { return null; } })();
+              if (RNBUc?.fs?.writeFile && RNBUc?.fs?.dirs?.DownloadDir) {
+                const isJpgC = /\.jpe?g$/i.test(uri || '');
+                const extC = isJpgC ? 'jpg' : 'png';
+                const encNameC = encodeURIComponent(payload).slice(0, 160) || 'yooy';
+                const fnameC = `${encNameC}.${extC}`;
+                const dataC = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+                // Download/YooY
+                try {
+                  const yooyC = `${RNBUc.fs.dirs.DownloadDir}/YooY`;
+                  try { const ok = await RNBUc.fs.isDir(yooyC); if (!ok) await RNBUc.fs.mkdir(yooyC); } catch {}
+                  const pth1 = `${yooyC}/${fnameC}`;
+                  saveLog('RNBU.writeFile(capture->Download/YooY)', pth1);
+                  await RNBUc.fs.writeFile(pth1, dataC, 'base64');
+                  await RNBUc.fs.scanFile([{ path: pth1 }]).catch(()=>{});
+                  Alert.alert('Saved', `Download/YooY/${fnameC}`);
+                  return true;
+                } catch (e1) { saveErr('RNBU capture Download/YooY failed', e1); }
+                // Download
+                try {
+                  const pth2 = `${RNBUc.fs.dirs.DownloadDir}/${fnameC}`;
+                  saveLog('RNBU.writeFile(capture->Download)', pth2);
+                  await RNBUc.fs.writeFile(pth2, dataC, 'base64');
+                  await RNBUc.fs.scanFile([{ path: pth2 }]).catch(()=>{});
+                  Alert.alert('Saved', `Download/${fnameC}`);
+                  return true;
+                } catch (e2) { saveErr('RNBU capture Download failed', e2); }
+                // DCIM/Camera
+                try {
+                  const dcimC = RNBUc.fs.dirs.DCIMDir || RNBUc.fs.dirs.PictureDir || RNBUc.fs.dirs.DownloadDir;
+                  const camC = `${dcimC}/Camera`;
+                  try { const ok2 = await RNBUc.fs.isDir(camC); if (!ok2) await RNBUc.fs.mkdir(camC); } catch {}
+                  const pth3 = `${camC}/${fnameC}`;
+                  saveLog('RNBU.writeFile(capture->DCIM/Camera)', pth3);
+                  await RNBUc.fs.writeFile(pth3, dataC, 'base64');
+                  await RNBUc.fs.scanFile([{ path: pth3 }]).catch(()=>{});
+                  Alert.alert('Saved', `DCIM/Camera/${fnameC}`);
+                  return true;
+                } catch (e3) { saveErr('RNBU capture DCIM failed', e3); }
+              }
+            } catch (e) { saveErr('RNBU capture branch outer failed', e); }
+          }
+          // 0) 시스템 스크린샷은 '팝업 뷰를 잡을 수 없을 때'만 최후 폴백으로 사용
+          if (!(qrModalContentRef as any)?.current) {
+            try {
+              // react-native-view-shot 제공 캡처 함수 사용
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const VS = (() => { try { return require('react-native-view-shot'); } catch { return null; } })();
+              if (VS?.captureScreen) {
+                const screenUri: string | null = await VS.captureScreen({ format: 'jpg', quality: 0.95, result: 'tmpfile' });
+                if (screenUri) {
+                  try {
+                    const perm0 = await MediaLibrary.requestPermissionsAsync();
+                    if (perm0.status === 'granted') {
+                      try {
+                        await MediaLibrary.saveToLibraryAsync(screenUri);
+                        Alert.alert('Saved', baseNameFrom(screenUri) || 'screenshot.jpg');
+                        return true;
+                      } catch {
+                        // 갤러리 저장이 막힌 기기에서는 SAF로 강제 저장
+                        try {
+                          const SAF = (FileSystem as any).StorageAccessFramework;
+                          if (SAF?.requestDirectoryPermissionsAsync && SAF?.createFileAsync) {
+                            const dir = await SAF.requestDirectoryPermissionsAsync();
+                            if (dir?.granted && dir.directoryUri) {
+                              const name = `${encodeURIComponent(payload).slice(0, 180) || 'yooy'}.jpg`;
+                              const b64 = await FileSystem.readAsStringAsync(screenUri, { encoding: FileSystem.EncodingType.Base64 });
+                              const furi = await SAF.createFileAsync(dir.directoryUri, name, 'image/jpeg');
+                              if (furi) {
+                                await FileSystem.writeAsStringAsync(furi, b64, { encoding: FileSystem.EncodingType.Base64 as any });
+                                Alert.alert('Saved', name);
+                                return true;
+                              }
+                            }
+                          }
+                        } catch {}
+                      }
+                    }
+                  } catch {}
+                  // 마지막 수단: 공유 시트로 저장 유도
+                  try {
+                    // eslint-disable-next-line @typescript-eslint/no-var-requires
+                    const Sharing = (() => { try { return require('expo-sharing'); } catch { return null; } })();
+                    if (Sharing?.isAvailableAsync && (await Sharing.isAvailableAsync())) {
+                      await Sharing.shareAsync(screenUri, { mimeType: 'image/jpeg' });
+                      Alert.alert('Opened', '공유 시트에서 저장을 선택해 주세요.');
+                      return true;
+                    }
+                  } catch {}
+                }
+              }
+            } catch {}
+          }
+          // ANDROID: MediaLibrary 권한과 무관하게 먼저 SAF(폴더 선택) 저장 시도
+          if (Platform.OS === 'android' && uri) {
+            try {
+              const SAF = (FileSystem as any).StorageAccessFramework;
+              if (SAF?.requestDirectoryPermissionsAsync && SAF?.createFileAsync) {
+                try { setQrModalVisible(false); } catch {}
+                try { await new Promise(res => setTimeout(res, 150)); } catch {}
+                saveLog('SAF.requestDirectoryPermissionsAsync (android-first)');
+                const dir = await SAF.requestDirectoryPermissionsAsync();
+                if (dir?.granted && dir.directoryUri) {
+                  const encodedName = encodeURIComponent(payload).slice(0, 180) || 'yooy';
+                  const isJpeg = /\.jpe?g$/i.test(uri || '');
+                  const ext = isJpeg ? 'jpg' : 'png';
+                  const mime = isJpeg ? 'image/jpeg' : 'image/png';
+                  const linkName = `${encodedName}.${ext}`;
+                  saveLog('SAF.createFileAsync', linkName);
+                  const fileUri = await SAF.createFileAsync(dir.directoryUri, linkName, mime);
+                  if (fileUri) {
+                    saveLog('SAF.writeAsStringAsync → fileUri');
+                    const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+                    await FileSystem.writeAsStringAsync(fileUri, b64, { encoding: FileSystem.EncodingType.Base64 as any });
+                    Alert.alert('Saved', linkName);
+                    return true;
+                  }
+                }
+              }
+            } catch (e) { saveErr('SAF(android-first) failed', e); }
           }
           const perm = await MediaLibrary.requestPermissionsAsync();
+          saveLog('MediaLibrary.requestPermissionsAsync(2)', perm?.status);
           if (perm.status === 'granted' && uri) {
-            // 파일명에 payload를 내장하여, 갤러리 선택 시 파일명 복구로 즉시 파싱 가능
-            const encoded = toBase64Url(payload);
+            // 0) SAF(사용자 선택 폴더)에 먼저 저장
+            try {
+              const SAF = (FileSystem as any).StorageAccessFramework;
+              if (SAF?.requestDirectoryPermissionsAsync && SAF?.createFileAsync) {
+                try { setQrModalVisible(false); } catch {}
+                try { await new Promise(res => setTimeout(res, 150)); } catch {}
+                saveLog('SAF.requestDirectoryPermissionsAsync (after-perm)');
+                const dir = await SAF.requestDirectoryPermissionsAsync();
+                if (dir?.granted && dir.directoryUri) {
+                  const encodedName = encodeURIComponent(payload).slice(0, 180) || 'yooy';
+                  const isJpeg = /\.jpe?g$/i.test(uri || '');
+                  const ext = isJpeg ? 'jpg' : 'png';
+                  const mime = isJpeg ? 'image/jpeg' : 'image/png';
+                  const linkName = `${encodedName}.${ext}`;
+                  saveLog('SAF.createFileAsync', linkName);
+                  const fileUri = await SAF.createFileAsync(dir.directoryUri, linkName, mime);
+                  if (fileUri) {
+                    saveLog('SAF.writeAsStringAsync', linkName);
+                    const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+                    await FileSystem.writeAsStringAsync(fileUri, b64, { encoding: FileSystem.EncodingType.Base64 as any });
+                    Alert.alert('Saved', linkName);
+                    return true;
+                  }
+                }
+              }
+            } catch (e) { saveErr('SAF(after-perm) failed', e); }
+            // 1) 실패 시: 링크 파일명으로 문서 디렉터리에 복사/이동 후 갤러리에 등록
+            try {
+              const encodedName = encodeURIComponent(payload).slice(0, 180) || 'yooy';
+              const isJpeg = /\.jpe?g$/i.test(uri || '');
+              const ext = isJpeg ? 'jpg' : 'png';
+              const linkName = `${encodedName}.${ext}`;
+              const baseDirName = ((FileSystem as any).documentDirectory || (FileSystem as any).cacheDirectory || '');
+              const targetLinkPath = `${baseDirName}${linkName}`;
+              try { await FileSystem.deleteAsync?.(targetLinkPath, { idempotent: true } as any); } catch {}
+              try { await FileSystem.copyAsync({ from: uri, to: targetLinkPath }); } catch { try { await FileSystem.moveAsync({ from: uri, to: targetLinkPath }); } catch {} }
+              await MediaLibrary.createAssetAsync(targetLinkPath);
+              Alert.alert('Saved', linkName);
+              return true;
+            } catch {}
+            // 2) 마지막: 이전 PNG 파일명 보장 경로 유지
             const now = new Date();
             const y = now.getFullYear();
             const m = String(now.getMonth()+1).padStart(2,'0');
             const d = String(now.getDate()).padStart(2,'0');
+            const hh = String(now.getHours()).padStart(2,'0');
+            const mm = String(now.getMinutes()).padStart(2,'0');
+            const ss = String(now.getSeconds()).padStart(2,'0');
             let sym = 'YOY'; let amt = '0';
             try { const u = new URL(payload); sym = u.searchParams.get('sym') || 'YOY'; amt = u.searchParams.get('amt') || '0'; } catch {}
-            const target = `${(FileSystem as any).cacheDirectory || ''}yooy__${encoded}-${y}${m}${d}-${amt}${sym}.png`;
-            try { await FileSystem.copyAsync({ from: uri, to: target }); } catch { /* ignore */ }
-            const finalUri = (await (async()=>{ try{ await FileSystem.getInfoAsync(target); return target; } catch { return uri; }})());
-            await MediaLibrary.saveToLibraryAsync(finalUri);
-            Alert.alert('Saved', 'PNG saved to gallery');
+            const safeAmt = String(amt).replace(/[^\d._-]/g,'_').replace(/\./g,'_');
+            // 문서 디렉터리에 저장하여 파일명과 메타데이터가 확실히 유지되도록 함
+            const baseDir = ((FileSystem as any).documentDirectory || (FileSystem as any).cacheDirectory || '');
+            const isJpeg2 = /\.jpe?g$/i.test(uri || '');
+            const ext2 = isJpeg2 ? 'jpg' : 'png';
+            const target = `${baseDir}${y}${m}${d}-${hh}${mm}${ss}-[${sym}]-${safeAmt}.${ext2}`;
+            const niceName = `${y}${m}${d}-${hh}${mm}${ss}-[${sym}]-${safeAmt}.${ext2}`;
+            // tmp 캡처 → 파일 복사/이동 (JPEG은 tail 임베드 완료)
+            try { await FileSystem.copyAsync({ from: uri, to: target }); } catch {}
+            try { await FileSystem.moveAsync({ from: uri, to: target }); } catch {}
+            // 최종적으로 target 사용을 강제하여 파일명 유지
+            let finalUri = target;
+            try {
+              const info = await FileSystem.getInfoAsync(target);
+              if (!(info as any)?.exists) {
+                // 마지막 보루: 원본을 이동(rename)해서라도 target을 살림
+                try { await FileSystem.moveAsync({ from: uri, to: target }); } catch {}
+              }
+            } catch {}
+            const ok = await saveViaMediaLibraryOrSaf(finalUri, niceName);
+            if (ok) return true;
+            // 그래도 실패하면, SAF/공유 시트로 최후 폴백
+            try {
+              const SAF = (FileSystem as any).StorageAccessFramework;
+              if (SAF?.requestDirectoryPermissionsAsync && SAF?.createFileAsync) {
+                try { setQrModalVisible(false); } catch {}
+                try { await new Promise(res => setTimeout(res, 150)); } catch {}
+                const dir2 = await SAF.requestDirectoryPermissionsAsync();
+                if (dir2?.granted && dir2.directoryUri) {
+                  const enc2 = encodeURIComponent(payload).slice(0, 180) || 'yooy';
+                  const isJpeg3 = /\.jpe?g$/i.test(finalUri || '');
+                  const ext3 = isJpeg3 ? 'jpg' : 'png';
+                  const mime3 = isJpeg3 ? 'image/jpeg' : 'image/png';
+                  const name2 = `${enc2}.${ext3}`;
+                  const uri2 = await SAF.createFileAsync(dir2.directoryUri, name2, mime3);
+                  if (uri2) {
+                    const b64 = await FileSystem.readAsStringAsync(target, { encoding: FileSystem.EncodingType.Base64 });
+                    await FileSystem.writeAsStringAsync(uri2, b64, { encoding: FileSystem.EncodingType.Base64 as any });
+                    Alert.alert('Saved', name2);
             return true;
+                  }
+                }
+              }
+            } catch {}
+            try {
+              const Sharing = (() => { try { return require('expo-sharing'); } catch { return null; } })();
+              if (Sharing?.isAvailableAsync && (await Sharing.isAvailableAsync())) {
+                try { setQrModalVisible(false); } catch {}
+                try { await new Promise(res => setTimeout(res, 150)); } catch {}
+                const isJpeg4 = /\.jpe?g$/i.test(target || '');
+                const mime4 = isJpeg4 ? 'image/jpeg' : 'image/png';
+                await Sharing.shareAsync(target, { mimeType: mime4 });
+                Alert.alert('Opened', '공유 시트에서 저장을 선택해 주세요.');
+                return true;
+              }
+            } catch {}
+            return false;
           }
           // 2) 전체 캡처 실패 시 QR 박스만 캡처(최소 보장)
           if ((qrShotBoxRef as any)?.current) {
             const uri1 = await captureRef((qrShotBoxRef as any).current, { format: 'png', quality: 1, result: 'tmpfile' });
             const perm1 = await MediaLibrary.requestPermissionsAsync();
             if (perm1.status === 'granted' && uri1) {
-              const encoded = toBase64Url(payload);
+              // 링크 기반 파일명으로 강제 저장
+              try {
+                const encodedName = encodeURIComponent(payload).slice(0, 180) || 'yooy';
+                const linkName = `${encodedName}.png`;
+                const baseDirN = ((FileSystem as any).documentDirectory || (FileSystem as any).cacheDirectory || '');
+                const targetN = `${baseDirN}${linkName}`;
+                try { await FileSystem.deleteAsync?.(targetN, { idempotent: true } as any); } catch {}
+                // QR 박스 PNG를 그대로 복사 후, 갤러리에 등록
+                try { await FileSystem.copyAsync({ from: uri1, to: targetN }); } catch { try { await FileSystem.moveAsync({ from: uri1, to: targetN }); } catch {} }
+                await MediaLibrary.createAssetAsync(targetN);
+                Alert.alert('Saved', linkName);
+                return true;
+              } catch {}
               const now = new Date();
               const y = now.getFullYear();
               const m = String(now.getMonth()+1).padStart(2,'0');
               const d = String(now.getDate()).padStart(2,'0');
+              const hh = String(now.getHours()).padStart(2,'0');
+              const mm = String(now.getMinutes()).padStart(2,'0');
+              const ss = String(now.getSeconds()).padStart(2,'0');
               let sym = 'YOY'; let amt = '0';
               try { const u = new URL(payload); sym = u.searchParams.get('sym') || 'YOY'; amt = u.searchParams.get('amt') || '0'; } catch {}
-              const target = `${(FileSystem as any).cacheDirectory || ''}yooy__${encoded}-${y}${m}${d}-${amt}${sym}.png`;
-              try { await FileSystem.copyAsync({ from: uri1, to: target }); } catch { /* ignore */ }
-              const finalUri = (await (async()=>{ try{ await FileSystem.getInfoAsync(target); return target; } catch { return uri1; }})());
-              await MediaLibrary.saveToLibraryAsync(finalUri);
-              Alert.alert('Saved', 'PNG saved to gallery');
-              return true;
+              const safeAmt = String(amt).replace(/[^\d._-]/g,'_').replace(/\./g,'_');
+              const baseDir = ((FileSystem as any).documentDirectory || (FileSystem as any).cacheDirectory || '');
+              const target = `${baseDir}${y}${m}${d}-${hh}${mm}${ss}-[${sym}]-${safeAmt}.png`;
+              const niceName = `${y}${m}${d}-${hh}${mm}${ss}-[${sym}]-${safeAmt}.png`;
+              // tmp 캡처 → base64 로드 → 메타데이터 삽입 → target 저장
+              try {
+                const rawTmp = await FileSystem.readAsStringAsync(uri1, { encoding: FileSystem.EncodingType.Base64 });
+                const enriched = insertPngTextChunk(`data:image/png;base64,${rawTmp}`, 'yooy', payload);
+                await FileSystem.writeAsStringAsync(target, enriched.replace(/^data:image\/png;base64,/, ''), { encoding: FileSystem.EncodingType.Base64 as any });
+              } catch {
+                try { await FileSystem.copyAsync({ from: uri1, to: target }); } catch {}
+                try { await FileSystem.moveAsync({ from: uri1, to: target }); } catch {}
+                // 복사 후에도 메타데이터 삽입 덮어쓰기
+                try {
+                  const rawCopied = await FileSystem.readAsStringAsync(target, { encoding: FileSystem.EncodingType.Base64 });
+                  const enriched2 = insertPngTextChunk(`data:image/png;base64,${rawCopied}`, 'yooy', payload);
+                  await FileSystem.writeAsStringAsync(target, enriched2.replace(/^data:image\/png;base64,/, ''), { encoding: FileSystem.EncodingType.Base64 as any });
+                } catch {}
+              }
+              let finalUri = target;
+              try {
+                const info = await FileSystem.getInfoAsync(target);
+                if (!(info as any)?.exists) {
+                  try { await FileSystem.moveAsync({ from: uri1, to: target }); } catch {}
+                }
+              } catch {}
+              const ok2 = await saveViaMediaLibraryOrSaf(finalUri, niceName);
+              return !!ok2;
             }
           }
         } catch (e) {
@@ -1971,28 +3239,244 @@ export default function WalletScreen() {
         }
       }
       // 네이티브: base64 존재 시 파일 저장, 없으면 외부 이미지 다운로드
-      const encoded = toBase64Url(payload);
       const now = new Date();
       const y = now.getFullYear();
       const m = String(now.getMonth()+1).padStart(2,'0');
       const d = String(now.getDate()).padStart(2,'0');
+      const hh = String(now.getHours()).padStart(2,'0');
+      const mm = String(now.getMinutes()).padStart(2,'0');
+      const ss = String(now.getSeconds()).padStart(2,'0');
       let sym = 'YOY'; let amt = '0';
       try { const u = new URL(payload); sym = u.searchParams.get('sym') || 'YOY'; amt = u.searchParams.get('amt') || '0'; } catch {}
-      const fileUri = (FileSystem as any)?.cacheDirectory ? `${(FileSystem as any).cacheDirectory}yooy__${encoded}-${y}${m}${d}-${amt}${sym}.png` : `/data/user/0/yooy/yooy__${encoded}-${y}${m}${d}-${amt}${sym}.png`;
+      const safeAmt = String(amt).replace(/[^\d._-]/g,'_').replace(/\./g,'_');
+      const baseDir3 = ((FileSystem as any).documentDirectory || (FileSystem as any).cacheDirectory || '');
+      const fileUri = `${baseDir3}${y}${m}${d}-${hh}${mm}${ss}-[${sym}]-${safeAmt}.png`;
       if (base64) {
-        await FileSystem.writeAsStringAsync(fileUri, base64.replace(/^data:image\/png;base64,/, ''), { encoding: 'base64' as any });
+        // PNG에 payload를 tEXt로 삽입해 스캔 실패 시 메타데이터로 복구 가능
+        const enriched = insertPngTextChunk(`data:image/png;base64,${base64.replace(/^data:image\/png;base64,/, '')}`, 'yooy', payload);
+        await FileSystem.writeAsStringAsync(fileUri, enriched.replace(/^data:image\/png;base64,/, ''), { encoding: 'base64' as any });
       } else {
         const url = `https://api.qrserver.com/v1/create-qr-code/?size=800x800&data=${encodeURIComponent(payload)}`;
         const download = await FileSystem.downloadAsync(url, fileUri);
         await FileSystem.copyAsync({ from: download.uri, to: fileUri }).catch(()=>{});
+        // 다운로드 PNG에도 tEXt 삽입
+        try {
+          const raw = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64 });
+          const enriched = insertPngTextChunk(`data:image/png;base64,${raw}`, 'yooy', payload);
+          await FileSystem.writeAsStringAsync(fileUri, enriched.replace(/^data:image\/png;base64,/, ''), { encoding: FileSystem.EncodingType.Base64 as any });
+        } catch {}
       }
-      const perm = await MediaLibrary.requestPermissionsAsync();
-      if (perm.status === 'granted') {
-        await MediaLibrary.saveToLibraryAsync(fileUri);
-        Alert.alert('Saved', 'PNG saved to gallery');
+      // 우선 Downloads 직접 저장 시도(RNBlobUtil) → 실패 시 MediaLibrary/SAF
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const RNBU = (()=>{ try { const m = require('react-native-blob-util'); return m?.default ?? m; } catch { return null; } })();
+        if (RNBU?.fs?.writeFile && RNBU?.fs?.dirs?.DownloadDir) {
+          const baseName = (fileUri.split('/').pop() || 'yooy-qr.png');
+          // 1) Download/YooY 폴더를 우선 생성 후 저장
+          try {
+            const yooyDir = `${RNBU.fs.dirs.DownloadDir}/YooY`;
+            try {
+              const exists = await RNBU.fs.isDir(yooyDir);
+              if (!exists) await RNBU.fs.mkdir(yooyDir);
+            } catch {}
+            const dest1 = `${yooyDir}/${baseName}`;
+            const b64 = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64 });
+            saveLog('RNBU.writeFile', dest1);
+            await RNBU.fs.writeFile(dest1, b64, 'base64');
+            await RNBU.fs.scanFile([{ path: dest1 }]).catch(()=>{});
+            Alert.alert('Saved', `Download/YooY/${baseName}`);
         return true;
+          } catch (e1) {
+            saveErr('RNBU.writeFile(YooY) failed', e1);
+            // 2) 실패 시 Download 루트에 저장
+            try {
+              const dest2 = `${RNBU.fs.dirs.DownloadDir}/${baseName}`;
+              const b64 = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64 });
+              saveLog('RNBU.writeFile', dest2);
+              await RNBU.fs.writeFile(dest2, b64, 'base64');
+              await RNBU.fs.scanFile([{ path: dest2 }]).catch(()=>{});
+              Alert.alert('Saved', `Download/${baseName}`);
+              return true;
+            } catch (e2) {
+              saveErr('RNBU.writeFile(Download) failed', e2);
+              // 3) 권한/정책으로 Download가 막힌 기기는 DCIM/Camera로 폴백
+              try {
+                const dcim = RNBU.fs.dirs.DCIMDir || RNBU.fs.dirs.PictureDir || RNBU.fs.dirs.DownloadDir;
+                const cameraDir = `${dcim}/Camera`;
+                try {
+                  const okdir = await RNBU.fs.isDir(cameraDir);
+                  if (!okdir) await RNBU.fs.mkdir(cameraDir);
+                } catch {}
+                const dest3 = `${cameraDir}/${baseName}`;
+                const b64 = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64 });
+                saveLog('RNBU.writeFile', dest3);
+                await RNBU.fs.writeFile(dest3, b64, 'base64');
+                await RNBU.fs.scanFile([{ path: dest3 }]).catch(()=>{});
+                Alert.alert('Saved', `DCIM/Camera/${baseName}`);
+                return true;
+              } catch (e3) {
+                saveErr('RNBU.writeFile(DCIM) failed', e3);
+                // 계속 진행하여 MediaLibrary/SAF로 폴백
+              }
+            }
+          }
       }
+      } catch (e) { saveErr('RNBU initial write failed', e); }
+      // DownloadManager에 등록 시도 (MediaStore 직접 인덱싱)
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const RNBUdm = (()=>{ try { const m = require('react-native-blob-util'); return m?.default ?? m; } catch { return null; } })();
+        saveLog('RNBUdm present', !!RNBUdm, 'android?', !!RNBUdm?.android, 'addCompleteDownload?', !!RNBUdm?.android?.addCompleteDownload);
+        // 1) 먼저 Download/YooY에 파일 자체를 복사(쓰기)한 뒤
+        if (RNBUdm?.fs?.writeFile && RNBUdm?.fs?.dirs?.DownloadDir) {
+          try {
+            const baseName = (fileUri.split('/').pop() || 'yooy-qr.png');
+            const yooyDir = `${RNBUdm.fs.dirs.DownloadDir}/YooY`;
+            try { const ex = await RNBUdm.fs.isDir(yooyDir); if (!ex) await RNBUdm.fs.mkdir(yooyDir); } catch {}
+            const dest = `${yooyDir}/${baseName}`;
+            const b64 = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64 });
+            saveLog('RNBU.writeFile(dm->Download/YooY)', dest);
+            await RNBUdm.fs.writeFile(dest, b64, 'base64');
+            await RNBUdm.fs.scanFile([{ path: dest }]).catch(()=>{});
+            // 2) DownloadManager/MediaStore에 등록
+            if (RNBUdm?.android?.addCompleteDownload) {
+              const isJpegDm = /\.jpe?g$/i.test(baseName);
+              const mimeDm = isJpegDm ? 'image/jpeg' : 'image/png';
+              saveLog('RNBU.android.addCompleteDownload(dest)', dest);
+              try {
+                await RNBUdm.android.addCompleteDownload({
+                  title: baseName,
+                  description: 'YooY QR',
+                  mime: mimeDm,
+                  path: dest,
+                  showNotification: false,
+                  scannable: true
+                });
+                Alert.alert('Saved', `Download/YooY/${baseName}`);
+                return true;
+              } catch (e) { saveErr('addCompleteDownload(dest) failed', e); }
+            } else {
+              // addCompleteDownload가 없으면 파일 저장만으로 종료
+              Alert.alert('Saved', `Download/YooY/${baseName}`);
+              return true;
+            }
+          } catch (e) { saveErr('RNBU write+DM block failed', e); }
+        }
+        // 3) 최후: 내부 fileUri를 그대로 DownloadManager에 등록 시도
+        if (RNBUdm?.android?.addCompleteDownload) {
+          const titleDm = (fileUri.split('/').pop() || 'yooy-qr.png');
+          const isJpegDm = /\.jpe?g$/i.test(titleDm);
+          const mimeDm = isJpegDm ? 'image/jpeg' : 'image/png';
+          saveLog('RNBU.android.addCompleteDownload(fileUri)', titleDm);
+          try {
+            await RNBUdm.android.addCompleteDownload({
+              title: titleDm,
+              description: 'YooY QR',
+              mime: mimeDm,
+              path: fileUri,
+              showNotification: false,
+              scannable: true
+            });
+            Alert.alert('Saved', `Downloads(${titleDm})`);
+            return true;
+          } catch (e) { saveErr('addCompleteDownload(fileUri) failed', e); }
+        }
+      } catch (e) { saveErr('RNBU addCompleteDownload block failed', e); }
+      const ok3 = await saveViaMediaLibraryOrSaf(fileUri, (fileUri.split('/').pop() || 'saved.png'));
+      if (ok3) return true;
+      // MediaLibrary/SAF가 모두 실패한 단말을 위한 최후 폴백: Downloads 폴더에 직접 저장 (RNBlobUtil)
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const RNBU = (()=>{ try { const m = require('react-native-blob-util'); return m?.default ?? m; } catch { return null; } })();
+        if (RNBU?.fs?.writeFile && RNBU?.fs?.dirs?.DownloadDir) {
+          const base64Data = await FileSystem.readAsStringAsync(fileUri, { encoding: FileSystem.EncodingType.Base64 });
+          const fname = (fileUri.split('/').pop() || 'yooy-qr.png');
+          try {
+            const yooyDir = `${RNBU.fs.dirs.DownloadDir}/YooY`;
+            try { const okdir = await RNBU.fs.isDir(yooyDir); if (!okdir) await RNBU.fs.mkdir(yooyDir); } catch {}
+            const dl1 = `${yooyDir}/${fname}`;
+            await RNBU.fs.writeFile(dl1, base64Data, 'base64');
+            await RNBU.fs.scanFile([{ path: dl1 }]).catch(()=>{});
+            Alert.alert('Saved', `Download/YooY/${fname}`);
+            return true;
+          } catch {
+            try {
+              const dl2 = `${RNBU.fs.dirs.DownloadDir}/${fname}`;
+              await RNBU.fs.writeFile(dl2, base64Data, 'base64');
+              await RNBU.fs.scanFile([{ path: dl2 }]).catch(()=>{});
+              Alert.alert('Saved', `Download/${fname}`);
+              return true;
+            } catch {
+              try {
+                const dcim = RNBU.fs.dirs.DCIMDir || RNBU.fs.dirs.PictureDir || RNBU.fs.dirs.DownloadDir;
+                const cameraDir = `${dcim}/Camera`;
+                try { const okdir2 = await RNBU.fs.isDir(cameraDir); if (!okdir2) await RNBU.fs.mkdir(cameraDir); } catch {}
+                const dl3 = `${cameraDir}/${fname}`;
+                await RNBU.fs.writeFile(dl3, base64Data, 'base64');
+                await RNBU.fs.scanFile([{ path: dl3 }]).catch(()=>{});
+                Alert.alert('Saved', `DCIM/Camera/${fname}`);
+                return true;
     } catch {}
+            }
+          }
+        }
+      } catch {}
+      // 마지막 최후 폴백: 전체 화면 스크린샷을 저장 (사용자 요청: 스크린샷처럼 저장이라도 되게)
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const VS = (() => { try { return require('react-native-view-shot'); } catch { return null; } })();
+        if (VS?.captureScreen) {
+          saveLog('captureScreen start');
+          const screenUri2: string | null = await VS.captureScreen({ format: 'jpg', quality: 0.95, result: 'tmpfile' });
+          if (screenUri2) {
+            try {
+              const perm2 = await MediaLibrary.requestPermissionsAsync();
+              saveLog('MediaLibrary.permission(captureScreen)', perm2?.status);
+              if (perm2.status === 'granted') {
+                await MediaLibrary.saveToLibraryAsync(screenUri2);
+                const baseName = (screenUri2.split('/').pop() || 'screenshot.jpg');
+                Alert.alert('Saved', baseName);
+                return true;
+              }
+            } catch {}
+            // MediaLibrary가 막힌 경우 DCIM/Camera 또는 Download로 직접 저장
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const RNBU2 = (()=>{ try { const m = require('react-native-blob-util'); return m?.default ?? m; } catch { return null; } })();
+              if (RNBU2?.fs?.writeFile) {
+                const baseName2 = (screenUri2.split('/').pop() || 'screenshot.jpg');
+                const base64Data2 = await FileSystem.readAsStringAsync(screenUri2, { encoding: FileSystem.EncodingType.Base64 });
+                // 1) DCIM/Camera
+                try {
+                  const dcim = RNBU2.fs.dirs.DCIMDir || RNBU2.fs.dirs.PictureDir || RNBU2.fs.dirs.DownloadDir;
+                  const cameraDir = `${dcim}/Camera`;
+                  try { const okdir = await RNBU2.fs.isDir(cameraDir); if (!okdir) await RNBU2.fs.mkdir(cameraDir); } catch {}
+                  const path1 = `${cameraDir}/${baseName2}`;
+                  saveLog('RNBU.writeFile(screen->DCIM)', path1);
+                  await RNBU2.fs.writeFile(path1, base64Data2, 'base64');
+                  await RNBU2.fs.scanFile([{ path: path1 }]).catch(()=>{});
+                  Alert.alert('Saved', `DCIM/Camera/${baseName2}`);
+                  return true;
+                } catch {}
+                // 2) Download
+                try {
+                  const path2 = `${RNBU2.fs.dirs.DownloadDir}/${baseName2}`;
+                  saveLog('RNBU.writeFile(screen->Download)', path2);
+                  await RNBU2.fs.writeFile(path2, base64Data2, 'base64');
+                  await RNBU2.fs.scanFile([{ path: path2 }]).catch(()=>{});
+                  Alert.alert('Saved', `Download/${baseName2}`);
+                  return true;
+                } catch {}
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+    } catch {
+      try {
+        Alert.alert(language==='en'?'Save failed':'저장 실패', language==='en'?'Could not save the image. Please try again.':'이미지를 저장하지 못했습니다. 다시 시도해 주세요.');
+      } catch {}
+    }
     return false;
   }
 
@@ -2000,12 +3484,48 @@ export default function WalletScreen() {
   const buildPayUri = (addr: string, sym: string, amt: string) => `yooy://pay?addr=${encodeURIComponent(addr)}&sym=${encodeURIComponent(sym)}&amt=${encodeURIComponent(amt||'')}`;
   const parsePayUri = (data: string) => {
     try {
+      // 1) 우리 스킴: yooy://pay?addr=&sym=&amt=
+    try {
       const url = new URL(data);
-      if (url.protocol !== 'yooy:') return null;
+        if (url.protocol === 'yooy:') {
       const addr = url.searchParams.get('addr') || '';
       const sym = url.searchParams.get('sym') || '';
       const amt = url.searchParams.get('amt') || '';
       return { addr, sym, amt };
+        }
+      } catch {}
+      const s = String(data || '');
+      // 2) EIP-681 간단형: ethereum:0x...@chainId?value=<wei>
+      if (/^ethereum:/i.test(s)) {
+        const noProto = s.replace(/^ethereum:/i, '');
+        const [left, qs] = noProto.split('?');
+        const addrPart = (left || '').split('@')[0] || '';
+        let amt = '';
+        try {
+          const params = new URLSearchParams(qs || '');
+          const wei = params.get('value');
+          if (wei && /^\d+$/.test(wei)) {
+            const n = Number(wei);
+            if (isFinite(n)) amt = String(n / 1e18);
+          } else {
+            amt = params.get('amount') || '';
+          }
+        } catch {}
+        return { addr: addrPart, sym: 'ETH', amt };
+      }
+      // 3) 일반 BIP URI: <coin>:<address>?amount=
+      if (/^[a-z][a-z0-9+.-]*:/i.test(s)) {
+        const [scheme, rest] = s.split(':', 2);
+        const coin = (scheme || '').toUpperCase();
+        const [address, qs] = (rest || '').split('?');
+        let amt = '';
+        try {
+          const params = new URLSearchParams(qs || '');
+          amt = params.get('amount') || '';
+        } catch {}
+        return { addr: address || '', sym: coin, amt };
+      }
+      return null;
     } catch { return null; }
   };
 
@@ -2054,7 +3574,7 @@ export default function WalletScreen() {
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, coin, create]);
-  // 수량 포맷팅 함수: 천단위 구분, 소수점 3자리 금지
+  // 수량 포맷팅 함수: 천단위 구분, 소수점 최대 18자리 허용
   const formatAmount = (value: string) => {
     if (!value) return '';
     const num = parseFloat(value);
@@ -2069,15 +3589,9 @@ export default function WalletScreen() {
       // 정수 부분에 천단위 구분 추가
       const formattedInteger = parseInt(integerPart).toLocaleString();
       
-      // 소수점 부분 처리 (3자리 금지)
-      let formattedDecimal = decimalPart;
-      if (decimalPart.length === 3) {
-        // 3자리면 2자리로 줄이기
-        formattedDecimal = decimalPart.substring(0, 2);
-      } else if (decimalPart.length > 4) {
-        // 4자리 초과면 4자리로 제한
-        formattedDecimal = decimalPart.substring(0, 4);
-      }
+      // 소수점 부분 처리 (최대 18자리까지 표시)
+      const maxDecimals = 18;
+      const formattedDecimal = decimalPart.substring(0, Math.min(decimalPart.length, maxDecimals));
       
       return `${formattedInteger}.${formattedDecimal}`;
     }
@@ -2253,12 +3767,44 @@ export default function WalletScreen() {
 
   // 실제 보내기 기능
   const handleSendTransaction = async () => {
+    if (isSending) return;
+    setIsSending(true);
     try {
       // 입력값 검증
       if (!sendToAddress || !sendInput || !sendSelectedSymbol) {
         Alert.alert(
           language === 'en' ? 'Error' : '오류',
           language === 'en' ? 'Please fill in all required fields' : '모든 필수 항목을 입력해주세요'
+        );
+        return;
+      }
+      // 주소 형식 1차 검증
+      try {
+        const { ethers } = require('ethers');
+        if (!ethers.isAddress(sendToAddress)) {
+          Alert.alert(language==='en'?'Send failed':'전송 실패', language==='en'?'Invalid address.':'잘못된 주소입니다.');
+          return;
+        }
+      } catch {}
+      // 컨트랙트 주소 여부 확인: ETH 전송을 컨트랙트로 보내는 실수를 차단
+      let toIsContract = false;
+      try {
+        if (typeof window !== 'undefined' && (window as any).ethereum) {
+          const code: string = await (window as any).ethereum.request({ method: 'eth_getCode', params: [sendToAddress, 'latest'] });
+          toIsContract = !!code && code !== '0x';
+        } else {
+          const { getProvider } = await import('@/src/wallet/wallet');
+          const prov = getProvider();
+          const code = await prov.getCode(sendToAddress);
+          toIsContract = !!code && code !== '0x';
+        }
+      } catch {}
+      if (sendSelectedSymbol === 'ETH' && toIsContract) {
+        Alert.alert(
+          language==='en'?'Send blocked':'전송 차단',
+          language==='en'
+            ? 'Target is a contract address. Use the token transfer path instead.'
+            : '수신 주소가 컨트랙트입니다. 토큰 전송 경로를 사용하거나 올바른 개인 지갑 주소를 입력하세요.'
         );
         return;
       }
@@ -2369,6 +3915,20 @@ export default function WalletScreen() {
           let erc20Address: string | null = null;
           let decimals = 18;
           if (sendSelectedSymbol === 'YOY') {
+            // 가스 사전 점검(메타마스크 사용 시에도 안내)
+            try {
+              const pf = await preflightTokenGasCheck({ to: sendToAddress, symbol: 'YOY', amount: String(sendInput) });
+              if (!pf.ok) {
+                const toEth = (w: bigint) => { try { const { ethers } = require('ethers'); return Number(ethers.formatEther(w)); } catch { return Number(w) / 1e18; } };
+                const need = toEth(pf.needEthWei || 0n), have = toEth(pf.haveEthWei || 0n), gap = Math.max(0, need - have);
+                Alert.alert(language==='en'?'Insufficient gas (ETH)':'가스(ETH) 부족',
+                  language==='en'
+                    ? `At least ${need.toFixed(6)} ETH required for gas.\nCurrent: ${have.toFixed(6)} ETH\nShort: ${gap.toFixed(6)} ETH`
+                    : `가스비로 최소 ${need.toFixed(6)} ETH가 필요합니다.\n보유: ${have.toFixed(6)} ETH\n부족: ${gap.toFixed(6)} ETH`
+                );
+                return;
+              }
+            } catch {}
             erc20Address = await getYoyContractAddress();
             decimals = 18;
           } else {
@@ -2385,6 +3945,10 @@ export default function WalletScreen() {
             ? parseUnits(convertAmountToQuantity(normalizedRaw, sendSelectedSymbol), decimals)
             : parseUnits(normalizedRaw, decimals);
           const data = encodeErc20Transfer(sendToAddress, amount);
+          if (!data || data === '0x') {
+            Alert.alert(language==='en'?'Send failed':'전송 실패', language==='en'?'Internal encoding error. Please try again.':'내부 인코딩 오류입니다. 다시 시도해주세요.');
+            return;
+          }
           const txParams = { from, to: erc20Address, data, value: '0x0' };
           const txHash: string = await ethereum.request({ method: 'eth_sendTransaction', params: [txParams] });
 
@@ -2457,6 +4021,13 @@ export default function WalletScreen() {
           const { getYoyContractAddress, getEthChainIdHex } = await import('@/lib/config');
           const { isHexAddress, encodeErc20Transfer, parseUnits } = await import('@/lib/eth');
           const chainIdHex = await getEthChainIdHex();
+          // 네트워크가 메인넷이 아니면 전환 시도
+          try {
+            const cur = await wc.getChainId();
+            if ((cur || '').toLowerCase() !== String(chainIdHex || '0x1').toLowerCase()) {
+              await wc.switchToMainnet();
+            }
+          } catch {}
 
           let contract: string | null = null;
           let decimals = 18;
@@ -2490,6 +4061,10 @@ export default function WalletScreen() {
             ? parseUnits(convertAmountToQuantity(normalizedRaw, sendSelectedSymbol), decimals)
             : parseUnits(normalizedRaw, decimals);
           const data = encodeErc20Transfer(sendToAddress, amount);
+          if (!data || data === '0x') {
+            Alert.alert(language==='en'?'Send failed':'전송 실패', language==='en'?'Internal encoding error. Please try again.':'내부 인코딩 오류입니다. 다시 시도해주세요.');
+            return;
+          }
           const txHashMaybe = await wc.sendErc20({ contract: contract!, to: sendToAddress, data, chainIdHex: chainIdHex as string });
           const txHash = txHashMaybe || '';
           if (!txHash) throw new Error('No transaction hash returned');
@@ -2651,7 +4226,7 @@ export default function WalletScreen() {
           }
         ]
       );
-    }
+    } finally { setIsSending(false); }
   };
   
   // 지갑 생성 모달 상태
@@ -2719,12 +4294,25 @@ export default function WalletScreen() {
 
   const handlePasteGift = async () => {
     try {
-      const text = await (navigator as any)?.clipboard?.readText?.();
+      let text = '';
+      if (Platform.OS === 'web') {
+        text = (await (navigator as any)?.clipboard?.readText?.()) || '';
+      } else {
+        try {
+          const Clipboard = require('expo-clipboard');
+          text = (await Clipboard.getStringAsync?.()) || '';
+        } catch {}
+      }
+      text = String(text || '').trim();
       if (text) {
         setGiftClaimInput(text);
         await loadGiftVoucherFromData(text);
+      } else {
+        Alert.alert(language==='en'?'No content':'붙여넣을 내용이 없습니다.');
       }
-    } catch {}
+    } catch {
+      Alert.alert(language==='en'?'Paste failed':'붙여넣기 실패');
+    }
   };
 
   const handleImageGift = async () => {
@@ -2732,14 +4320,40 @@ export default function WalletScreen() {
       const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'] as any, quality: 1, base64: true, selectionLimit: 1 } as any);
       if (res.canceled || !res.assets?.length) return;
       const asset: any = res.assets[0];
-      // 네이티브에서도 base64 data URL을 우선 사용(인식률 향상)
-      const src = asset?.base64 ? `data:${asset.type || 'image/png'};base64,${asset.base64}` : (asset?.uri || '');
-      const code = await scanImageWithAll(src);
+      // MIME 보정: expo-image-picker는 asset.type==='image' 인 경우가 많음 → mimeType 우선, 없으면 확장자로 추정
+      const guessMime = () => {
+        if (asset?.mimeType && typeof asset.mimeType === 'string') return asset.mimeType;
+        const uri: string = asset?.uri || '';
+        const ext = (uri.split('.').pop() || '').toLowerCase();
+        if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+        if (ext === 'png') return 'image/png';
+        if (ext === 'webp') return 'image/webp';
+        return 'image/png';
+      };
+      // 네이티브에서도 base64 data URL 사용 시 정확한 MIME을 넣어야 인식률이 높음
+      const src = asset?.base64 ? `data:${guessMime()};base64,${asset.base64}` : (asset?.uri || '');
+      // 0) 파일 꼬리에 내장된 URI 우선 검색
+      let code = await trySearchEmbeddedUriAny(asset.uri, asset.base64);
+      if (!code) code = await scanImageWithAll(src);
       if (code) {
         setGiftClaimInput(code);
         await loadGiftVoucherFromData(code);
         return;
       }
+      // 실패 시 리사이즈/압축 후 재시도(고해상도 스크린샷 대비)
+      try {
+        const M = await import('expo-image-manipulator');
+        const manipulated = await M.manipulateAsync(asset.uri, [{ resize: { width: 1080 } }], { format: M.SaveFormat.PNG, compress: 0.9, base64: true });
+        if (!code && manipulated?.base64) {
+          const dataUri2 = `data:image/png;base64,${manipulated.base64}`;
+          code = await trySearchEmbeddedUriAny(asset.uri, manipulated.base64) || await scanImageWithAll(dataUri2);
+          if (code) {
+            setGiftClaimInput(code);
+            await loadGiftVoucherFromData(code);
+            return;
+          }
+        }
+      } catch {}
       Alert.alert(language==='en'?'Scan failed':'스캔 실패', language==='en'?'Could not detect a gift QR in the selected image.':'선택한 이미지에서 기프트 QR을 찾을 수 없습니다.');
     } catch (e) {
       Alert.alert(language==='en'?'Scan error':'스캔 오류', String(e instanceof Error ? e.message : e));
@@ -2776,6 +4390,18 @@ export default function WalletScreen() {
         return;
       }
       const gained = res.amount || 0;
+      // 메인넷 전송: YOY를 실제로 수령 지갑으로 전송 시도(가스/지갑 설정 필요)
+      try {
+        if ((pendingGift.symbol || 'YOY') === 'YOY' && gained > 0) {
+          const { sendYoyToken } = await import('@/src/wallet/wallet');
+          await sendYoyToken({ to: recvAddrNow, amount: String(gained) });
+        }
+      } catch (chainErr) {
+        // 온체인 전송 실패는 앱 내 잔액 반영만 수행하고 경고
+        try {
+          Alert.alert(language==='en'?'On-chain transfer failed':'온체인 전송 실패', String(chainErr instanceof Error ? chainErr.message : chainErr));
+        } catch {}
+      }
       try {
         const storageKey = `user_balances_${currentUserEmail}`;
         const saved = await AsyncStorage.getItem(storageKey);
@@ -2883,6 +4509,7 @@ export default function WalletScreen() {
   // 빠른 액션 설정(공유 컨텍스트)
   const { actions: quickActionsState, replaceAll, setActionEnabled } = useQuickActions();
   const [quickSettingsVisible, setQuickSettingsVisible] = useState(false);
+  const [isSending, setIsSending] = useState(false);
 
   // 보유 수량 조회
   const getOwnedAmount = (sym: string) => {
@@ -2930,13 +4557,15 @@ export default function WalletScreen() {
         else if (entry.key === 'receive') setActiveTab('receive');
         else if (entry.key === 'gift') setActiveTab('gift');
         else if (entry.key === 'history') setActiveTab('history');
-        else if (entry.key === 'qr') setActiveTab('receive');
+        else if (entry.key === 'qr') {
+          try { router.push('/chat/add-friend-qr?from=wallet'); } catch { setActiveTab('receive'); }
+        }
         else if (entry.key === 'schedule') {
           router.push('/(tabs)/todo');
         } else if (entry.key === 'reward') {
           router.push('/(tabs)/dashboard');
         } else if (entry.key === 'chat') {
-          router.push('/(tabs)/chat');
+          try { router.push('/chat/friends'); } catch { router.push('/(tabs)/chat'); }
         } else if (entry.key === 'shop') {
           router.push('/(tabs)/exchange');
         } else if (entry.key === 'nft') {
@@ -3491,7 +5120,7 @@ export default function WalletScreen() {
               {quickActionsState.chat !== false && (
                 <TouchableOpacity style={styles.quickTile} onPress={()=>setQuickSettingsVisible(true)}>
                   <View style={styles.tileIcon}><ThemedText style={styles.tileIconText}>⋯</ThemedText></View>
-                  <ThemedText style={styles.tileText}>Quick Set</ThemedText>
+                  <ThemedText style={styles.tileText} numberOfLines={1}>Quick Set</ThemedText>
                 </TouchableOpacity>
               )}
             </View>
@@ -3586,6 +5215,7 @@ export default function WalletScreen() {
                       const granted = status === 'authorized';
                       setHasCamPerm(granted);
                       if (granted) {
+                        setScanForClaim(true);
                         setScanOpen(true);
                       } else {
                         Alert.alert(
@@ -3594,15 +5224,17 @@ export default function WalletScreen() {
                         );
                       }
                     } else if ((Platform as any).OS === 'web') {
+                      setScanForClaim(true);
                       setScanOpen(true);
                     } else {
                       // VisionCamera 미사용 네이티브: Expo Camera로 대체
                       try {
-                        if (ExpoCamera?.requestCameraPermissionsAsync) {
-                          const perm = await ExpoCamera.requestCameraPermissionsAsync();
+                        if (ExpoCameraModule?.requestCameraPermissionsAsync) {
+                          const perm = await ExpoCameraModule.requestCameraPermissionsAsync();
                           const granted = perm?.status === 'granted';
                           setHasCamPerm(granted);
                           if (granted) {
+                            setScanForClaim(true);
                             setScanOpen(true);
                           } else {
                             Alert.alert(
@@ -3714,18 +5346,60 @@ export default function WalletScreen() {
                 onPress={async ()=>{
                   try {
                     setGiftCreating(true);
+                    // 보안 규칙 충족을 위해 인증 보장 (익명 로그인 허용)
+                    try { if (!firebaseAuth.currentUser?.uid) { await signInAnonymously(firebaseAuth); } } catch {}
+                    try { await ensureAppCheckReady(); } catch {}
                     const symbol = 'YOY';
-                    const voucher = await createVoucher({
-                      createdByEmail: currentUserEmail,
+                    // 로그인 확인
+                    if (!currentUserEmail) {
+                      Alert.alert(language==='en'?'Sign-in required':'로그인이 필요합니다');
+                      return;
+                    }
+                    // 값 정규화/검증
+                    const nPer = Math.max(0, Number(giftPerClaimAmount || 0));
+                    const nLimit = Math.max(1, Math.floor(Number(giftClaimLimit || 0)));
+                    const nTotal = Math.max(0, Number(giftTotalAmount || 0));
+                    const nPeople = Math.max(1, Math.floor(Number(giftTotalPeople || 1)));
+                    if (giftMode==='per_claim') {
+                      if (nPer <= 0 || nLimit <= 0) { Alert.alert('입력 오류','수량/인원을 확인하세요.'); return; }
+                    } else {
+                      if (nTotal <= 0) { Alert.alert('입력 오류','총액을 확인하세요.'); return; }
+                      if (giftTotalPolicy==='equal' && nPeople <= 0) { Alert.alert('입력 오류','인원을 확인하세요.'); return; }
+                    }
+                    let voucher: any = null;
+                    try {
+                      voucher = await createVoucher({
+                        createdByEmail: currentUserEmail || 'user@yooy.land',
                       symbol,
                       mode: giftMode,
-                      perClaimAmount: giftMode==='per_claim' ? Number(giftPerClaimAmount || 0) : (giftTotalPolicy==='equal' ? Number(giftTotalAmount || 0) / Math.max(1, Math.floor(Number(giftTotalPeople || 1))) : undefined),
-                      claimLimit: giftMode==='per_claim' ? Math.floor(Number(giftClaimLimit || 0)) : (giftTotalPolicy==='equal' ? Math.floor(Number(giftTotalPeople || 0)) : undefined),
-                      totalAmount: giftMode==='total' ? Number(giftTotalAmount || 0) : undefined,
+                        perClaimAmount: giftMode==='per_claim' ? nPer : (giftTotalPolicy==='equal' ? (nTotal / nPeople) : undefined),
+                        claimLimit: giftMode==='per_claim' ? nLimit : (giftTotalPolicy==='equal' ? nPeople : undefined),
+                        totalAmount: giftMode==='total' ? nTotal : undefined,
                       totalPolicy: giftMode==='total' ? giftTotalPolicy : undefined,
                       maxPerUser: 1,
                       expiresAtISO: giftExpiresISO || null,
                     });
+                    } catch (e:any) {
+                      const msg = String(e?.message || e || '');
+                      // 1회 재시도: AppCheck/익명 인증 토큰 준비 후 재시도
+                      if (/permission|denied|PERMISSION/i.test(msg)) {
+                        try { if (!firebaseAuth.currentUser?.uid) { await signInAnonymously(firebaseAuth); } } catch {}
+                        try { await ensureAppCheckReady(); } catch {}
+                        voucher = await createVoucher({
+                          createdByEmail: currentUserEmail || 'user@yooy.land',
+                          symbol,
+                          mode: giftMode,
+                          perClaimAmount: giftMode==='per_claim' ? nPer : (giftTotalPolicy==='equal' ? (nTotal / nPeople) : undefined),
+                          claimLimit: giftMode==='per_claim' ? nLimit : (giftTotalPolicy==='equal' ? nPeople : undefined),
+                          totalAmount: giftMode==='total' ? nTotal : undefined,
+                          totalPolicy: giftTotalPolicy,
+                          maxPerUser: 1,
+                          expiresAtISO: giftExpiresISO || null,
+                        });
+                      } else {
+                        throw e;
+                      }
+                    }
                     const url = buildClaimUri(voucher.id);
                     setCustomQrPayload(url);
                     setCustomQrVisible(true);
@@ -3769,30 +5443,35 @@ export default function WalletScreen() {
                     } catch {}
                     Alert.alert(language==='en'?'Gift created':'기프트 생성됨');
                   } catch (e) {
-                    // 서버 저장 실패: 임시 로컬 바우처로라도 QR을 보여준다
+                    const msg = String(e?.message || e || '');
+                    if (/permission|denied|PERMISSION/i.test(msg)) {
+                      Alert.alert('권한 오류', '서버 권한이 거부되었습니다. 관리자에게 문의하세요.');
+                    } else {
+                      Alert.alert(language==='en'?'Create failed':'생성 실패', msg || (language==='en'?'Please try again later.':'잠시 후 다시 시도해 주세요.'));
+                    }
+                    // 테스트용 로컬 바우처 생성 및 미리보기 제공
                     try {
-                      const tmpId = `local_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
-                      const tmpVoucher: any = {
-                        id: tmpId,
-                        createdByEmail: currentUserEmail || '',
-                        symbol,
+                      const localId = `local_${Date.now().toString(36)}`;
+                      const preview: any = {
+                        id: localId,
+                        createdByEmail: currentUserEmail || 'user@yooy.land',
+                        symbol: 'YOY',
                         mode: giftMode,
-                        perClaimAmount: giftMode==='per_claim' ? Number(giftPerClaimAmount || 0) : (giftTotalPolicy==='equal' ? Number(giftTotalAmount || 0) / Math.max(1, Math.floor(Number(giftTotalPeople || 1))) : undefined),
-                        claimLimit: giftMode==='per_claim' ? Math.floor(Number(giftClaimLimit || 0)) : (giftTotalPolicy==='equal' ? Math.floor(Number(giftTotalPeople || 0)) : undefined),
-                        totalAmount: giftMode==='total' ? Number(giftTotalAmount || 0) : undefined,
+                        perClaimAmount: giftMode==='per_claim' ? nPer : (giftTotalPolicy==='equal' ? (nTotal / nPeople) : undefined),
+                        claimLimit: giftMode==='per_claim' ? nLimit : (giftTotalPolicy==='equal' ? nPeople : undefined),
+                        totalAmount: giftMode==='total' ? nTotal : undefined,
+                        remainingAmount: giftMode==='total' ? nTotal : undefined,
                         totalPolicy: giftMode==='total' ? giftTotalPolicy : undefined,
-                        remainingAmount: giftMode==='total' ? Number(giftTotalAmount || 0) : undefined,
                         claimedCount: 0,
                         claimedTotal: 0,
                         status: 'active',
+                        claims: [],
+                        createdAt: new Date() as any,
                       };
-                      const url = buildClaimUri(tmpId);
-                      setCustomQrPayload(url);
+                      setGiftList(prev => [preview, ...prev]);
+                      setCustomQrPayload(buildClaimUri(localId));
                       setCustomQrVisible(true);
-                      setGiftList((prev)=>[tmpVoucher, ...prev]);
-                      Alert.alert(language==='en'?'Created (offline preview)':'임시 QR 미리보기', language==='en'?'Server unreachable. Showing a temporary QR preview.':'서버 연결 실패. 임시 QR 미리보기를 표시합니다.');
                     } catch {}
-                    Alert.alert(language==='en'?'Error':'오류', String(e instanceof Error ? e.message : e));
                   } finally {
                     setGiftCreating(false);
                   }
@@ -3908,7 +5587,7 @@ export default function WalletScreen() {
                           <ThemedText style={{ color:'#D32F2F' }}>{language==='en'?'End':'종료'}</ThemedText>
                         </TouchableOpacity>
                       )}
-                      {v.status === 'cancelled' && (
+                      {v.status !== 'active' && (
                         <TouchableOpacity
                           onPress={async()=>{
                             try {
@@ -3925,12 +5604,11 @@ export default function WalletScreen() {
                               if (!ok) return;
                               const { deleteVoucher } = await import('@/lib/claims');
                               const res = await deleteVoucher({ id: v.id, requestedByEmail: currentUserEmail });
-                              if ((res as any)?.ok) {
-                                setGiftList(prev => prev.filter(it => it.id !== v.id));
-                                Alert.alert(language==='en'?'Deleted':'삭제됨');
-                              } else {
-                                Alert.alert(language==='en'?'Delete failed':'삭제 실패', String((res as any)?.error || 'fail'));
+                              if (!(res as any)?.ok) {
+                                // 서버 삭제 실패하더라도 로컬에서 제거하여 UI를 정리
                               }
+                              setGiftList(prev => prev.filter(it => it.id !== v.id));
+                              Alert.alert(language==='en'?'Deleted':'삭제됨');
                             } catch (e:any) {
                               Alert.alert(language==='en'?'Error':'오류', String(e?.message || e));
                             }
@@ -4205,8 +5883,371 @@ export default function WalletScreen() {
                     if (!res.canceled && res.assets?.length) {
                       try {
                         const asset: any = res.assets[0];
-                        // 파일명에 yooy__<base64url>.png 형태로 저장된 경우, 파일명에서 복구 시도
+                        // 0-a) base64가 있으면 PNG tEXt에서 먼저 복구 시도
+                        try {
+                          if (asset?.base64) {
+                            const mime = asset?.mimeType || 'image/png';
+                            const dataUrl = `data:${mime};base64,${asset.base64}`;
+                            const hintFromData = tryReadPngTextFromDataUrl(dataUrl, 'yooy');
+                            if (hintFromData) {
+                              const norm = normalizeScannedText(hintFromData);
+                              if (norm) {
+                                const parsed = parsePayUri(norm);
+                                if (parsed) {
+                                  setSendToAddress(parsed.addr);
+                                  setSendSelectedSymbol(parsed.sym || sendSelectedSymbol);
+                                  setSendAmountType('quantity');
+                                  setSendInput(parsed.amt || '');
+                                  setIsRequest(true);
+                                  setOriginalUrlData(parsed);
+                                  const validation = validateSendUrl(parsed, parsed.amt);
+                                  if (!validation.isValid) {
+                                    Alert.alert(
+                                      language === 'en' ? '⚠️ Scan Warning' : '⚠️ 스캔 경고',
+                                      validation.errors.join('\n\n') + '\n\n' + (language === 'en' ? 'You can still modify the values and try again.' : '값을 수정한 후 다시 시도할 수 있습니다.'),
+                                      [{ text: language === 'en' ? 'OK' : '확인' }]
+                                    );
+                                  } else if (validation.hasWarnings) {
+                                    Alert.alert(
+                                      language === 'en' ? '⚠️ Amount Warning' : '⚠️ 수량 경고',
+                                      validation.warnings.join('\n\n'),
+                                      [{ text: language === 'en' ? 'OK' : '확인' }]
+                                    );
+                                  }
+                                  return;
+                                } else {
+                                  setSendToAddress(norm);
+                                  setIsRequest(false);
+                                  setOriginalUrlData(null);
+                                  return;
+                                }
+                              }
+                            }
+                          }
+                        } catch {}
+                        // 0) 파일 꼬리에 내장된 URI(우리 앱이 저장할 때 덧붙임) 우선 탐색
+                        try {
+                          const hintAny = await trySearchEmbeddedUriAny(asset.uri, asset.base64);
+                          if (hintAny) {
+                            const norm = normalizeScannedText(hintAny);
+                            if (norm) {
+                              const parsed = parsePayUri(norm);
+                              if (parsed) {
+                                setSendToAddress(parsed.addr);
+                                setSendSelectedSymbol(parsed.sym || sendSelectedSymbol);
+                                setSendAmountType('quantity');
+                                setSendInput(parsed.amt || '');
+                                setIsRequest(true);
+                                setOriginalUrlData(parsed);
+                                const validation = validateSendUrl(parsed, parsed.amt);
+                                if (!validation.isValid) {
+                                  Alert.alert(language==='en'?'⚠️ Scan Warning':'⚠️ 스캔 경고', validation.errors.join('\n\n'));
+                                }
+                                return;
+                              }
+                            }
+                          }
+                        } catch {}
+                        // 우선: 우리 앱이 저장한 PNG의 tEXt('yooy') 메타데이터에서 payload 복구 시도
+                        try {
+                          const hint = await tryReadPngTextFromUri(asset.uri, 'yooy');
+                          if (hint) {
+                            const norm = normalizeScannedText(hint);
+                            if (norm) {
+                              const parsed = parsePayUri(norm);
+                              if (parsed) {
+                                setSendToAddress(parsed.addr);
+                                setSendSelectedSymbol(parsed.sym || sendSelectedSymbol);
+                                setSendAmountType('quantity');
+                                setSendInput(parsed.amt || '');
+                                setIsRequest(true);
+                                setOriginalUrlData(parsed);
+                                const validation = validateSendUrl(parsed, parsed.amt);
+                                if (!validation.isValid) {
+                                  Alert.alert(
+                                    language === 'en' ? '⚠️ Scan Warning' : '⚠️ 스캔 경고',
+                                    validation.errors.join('\n\n') + '\n\n' + (language === 'en' ? 'You can still modify the values and try again.' : '값을 수정한 후 다시 시도할 수 있습니다.'),
+                                    [{ text: language === 'en' ? 'OK' : '확인' }]
+                                  );
+                                } else if (validation.hasWarnings) {
+                                  Alert.alert(
+                                    language === 'en' ? '⚠️ Amount Warning' : '⚠️ 수량 경고',
+                                    validation.warnings.join('\n\n'),
+                                    [{ text: language === 'en' ? 'OK' : '확인' }]
+                                  );
+                                }
+                                return;
+                              } else {
+                                // 일반 텍스트면 주소로 간주
+                                setSendToAddress(norm);
+                                setIsRequest(false);
+                                setOriginalUrlData(null);
+                                return;
+                              }
+                            }
+                          }
+                        } catch {}
+                        // 0-b) 네이티브: ML Kit 정지 이미지 스캔을 최우선 시도
+                        if (Platform.OS !== 'web' && MLKitBarcode && typeof MLKitBarcode.scan === 'function') {
+                          try {
+                            // MLKit expects a file path. Ensure we have a file path (not content:// or base64).
+                            let scanSrc = asset?.uri || '';
+                            const base64FromPicker: string | undefined = asset?.base64;
+                            const toFilePath = async (): Promise<string> => {
+                              const tmp = `${(FileSystem as any)?.cacheDirectory || ''}mlkit_scan_${Date.now()}.png`;
+                              if (!scanSrc) return tmp;
+                              try {
+                                // 우선: ImagePicker가 반환한 base64가 있으면 그것으로 tmp 파일 생성 (권장)
+                                if (base64FromPicker && typeof base64FromPicker === 'string' && base64FromPicker.length > 0) {
+                                  await FileSystem.writeAsStringAsync(tmp, base64FromPicker, { encoding: FileSystem.EncodingType.Base64 as any });
+                                  return tmp;
+                                }
+                                if (/^content:\/\//i.test(scanSrc)) {
+                                  // 1) 가장 안전: content:// → 캐시 파일로 직접 복사
+                                  try {
+                                    await FileSystem.copyAsync({ from: scanSrc, to: tmp });
+                                    return tmp;
+                                  } catch {
+                                    // 2) 복사 실패 시 base64로 읽어 쓰기(메모리 비용↑)
+                                    try {
+                                      const b64 = await FileSystem.readAsStringAsync(scanSrc, { encoding: FileSystem.EncodingType.Base64 });
+                                      await FileSystem.writeAsStringAsync(tmp, b64, { encoding: FileSystem.EncodingType.Base64 as any });
+                                      return tmp;
+                                    } catch {}
+                                  }
+                                }
+                                if (/^data:/i.test(scanSrc)) {
+                                  const m = scanSrc.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/);
+                                  if (m && m[1]) {
+                                    await FileSystem.writeAsStringAsync(tmp, m[1], { encoding: FileSystem.EncodingType.Base64 as any });
+                                    return tmp;
+                                  }
+                                }
+                                return scanSrc;
+                              } catch (eReadAny) {
+                                // Expo FS가 content:// 를 읽지 못하는 단말/버전 대응: RNBlobUtil 폴백
+                                try {
+                                  // eslint-disable-next-line @typescript-eslint/no-var-requires
+                                  const RNBU = (()=>{ try { const m = require('react-native-blob-util'); return m?.default ?? m; } catch { return null; } })();
+                                  if (RNBU?.fs?.readFile) {
+                                    const b64 = await RNBU.fs.readFile(scanSrc, 'base64');
+                                    if (b64) {
+                                      await FileSystem.writeAsStringAsync(tmp, b64, { encoding: FileSystem.EncodingType.Base64 as any });
+                                      return tmp;
+                                    }
+                                  }
+                                } catch {}
+                                return scanSrc;
+                              }
+                            };
+                            const filePath = await toFilePath();
+                            let results = await (typeof MLKitBarcode.scan === 'function' ? MLKitBarcode.scan(filePath) : []);
+                            let txt = Array.isArray(results) && results.length ? String((results[0]?.value) || '') : '';
+                            if (!txt) {
+                              // 회전 폴백(90/180/270)
+                              try {
+                                // eslint-disable-next-line @typescript-eslint/no-var-requires
+                                const ImageManipulator = (()=>{ try { return require('expo-image-manipulator'); } catch { return null; } })();
+                                const rotations = [90, 180, 270];
+                                for (const deg of rotations) {
+                                  if (!ImageManipulator?.manipulateAsync) break;
+                                  const out = await ImageManipulator.manipulateAsync(
+                                    filePath,
+                                    [{ rotate: deg }],
+                                    { compress: 1, format: (ImageManipulator as any).SaveFormat?.PNG || 'png' }
+                                  );
+                                  if (out?.uri) {
+                                    results = await (typeof MLKitBarcode.scan === 'function' ? MLKitBarcode.scan(out.uri) : []);
+                                    txt = Array.isArray(results) && results.length ? String((results[0]?.value) || '') : '';
+                                    if (txt) break;
+                                  }
+                                }
+                              } catch {}
+                            }
+                            if (txt) {
+                              const norm = normalizeScannedText(txt);
+                              if (norm) {
+                                const parsed = parsePayUri(norm);
+                                if (parsed) {
+                                  setSendToAddress(parsed.addr);
+                                  setSendSelectedSymbol(parsed.sym || sendSelectedSymbol);
+                                  setSendAmountType('quantity');
+                                  setSendInput(parsed.amt || '');
+                                  setIsRequest(true);
+                                  setOriginalUrlData(parsed);
+                                  const validation = validateSendUrl(parsed, parsed.amt);
+                                  if (!validation.isValid) {
+                                    Alert.alert(
+                                      language === 'en' ? '⚠️ Scan Warning' : '⚠️ 스캔 경고',
+                                      validation.errors.join('\n\n') + '\n\n' + (language === 'en' ? 'You can still modify the values and try again.' : '값을 수정한 후 다시 시도할 수 있습니다.'),
+                                      [{ text: language === 'en' ? 'OK' : '확인' }]
+                                    );
+                                  } else if (validation.hasWarnings) {
+                                    Alert.alert(
+                                      language === 'en' ? '⚠️ Amount Warning' : '⚠️ 수량 경고',
+                                      validation.warnings.join('\n\n'),
+                                      [{ text: language === 'en' ? 'OK' : '확인' }]
+                                    );
+                                  }
+                                  return;
+                                } else {
+                                  setSendToAddress(norm);
+                                  setIsRequest(false);
+                                  setOriginalUrlData(null);
+                                  return;
+                                }
+                              }
+                            }
+                          } catch {}
+                        }
+                        // 0-b-2) MLKit 실패 시: base64가 있다면 JS 파이프라인에 data URL로 바로 전달
+                        try {
+                          if (asset?.base64) {
+                            const mime = asset?.mimeType || 'image/png';
+                            const dataUrl = `data:${mime};base64,${asset.base64}`;
+                            const txt = await scanImageWithAll(dataUrl);
+                            if (txt) {
+                              const norm = normalizeScannedText(txt);
+                              if (norm) {
+                                const parsed = parsePayUri(norm);
+                                if (parsed) {
+                                  setSendToAddress(parsed.addr);
+                                  setSendSelectedSymbol(parsed.sym || sendSelectedSymbol);
+                                  setSendAmountType('quantity');
+                                  setSendInput(parsed.amt || '');
+                                  setIsRequest(true);
+                                  setOriginalUrlData(parsed);
+                                  const validation = validateSendUrl(parsed, parsed.amt);
+                                  if (!validation.isValid) {
+                                    Alert.alert(
+                                      language === 'en' ? '⚠️ Scan Warning' : '⚠️ 스캔 경고',
+                                      validation.errors.join('\n\n') + '\n\n' + (language === 'en' ? 'You can still modify the values and try again.' : '값을 수정한 후 다시 시도할 수 있습니다.'),
+                                      [{ text: language === 'en' ? 'OK' : '확인' }]
+                                    );
+                                  } else if (validation.hasWarnings) {
+                                    Alert.alert(
+                                      language === 'en' ? '⚠️ Amount Warning' : '⚠️ 수량 경고',
+                                      validation.warnings.join('\n\n'),
+                                      [{ text: language === 'en' ? 'OK' : '확인' }]
+                                    );
+                                  }
+                                  return;
+                                } else {
+                                  setSendToAddress(norm);
+                                  setIsRequest(false);
+                                  setOriginalUrlData(null);
+                                  return;
+                                }
+                              }
+                            }
+                          }
+                        } catch {}
+                        // 0-c) (예비) Expo BarCodeScanner 정지 이미지 스캔 경로 - 현재 비활성화
+                        if (Platform.OS !== 'web' && BarCodeScanner?.scanFromURLAsync) {
+                          try {
+                            // scanFromURLAsync는 file:// 또는 data URL을 안정적으로 처리합니다.
+                            // content:// URI인 경우 임시 파일로 복사하거나 base64 → 파일로 저장한 뒤 사용합니다.
+                            let scanSrc = asset?.uri || '';
+                            const toDataUriIfAvailable = (): string | null => {
+                              try {
+                                const mime = asset?.mimeType || (()=>{
+                                  const uri: string = asset?.uri || '';
+                                  const ext = (uri.split('.').pop() || '').toLowerCase();
+                                  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+                                  if (ext === 'png') return 'image/png';
+                                  if (ext === 'webp') return 'image/webp';
+                                  return 'image/png';
+                                })();
+                                return asset?.base64 ? `data:${mime};base64,${asset.base64}` : null;
+                              } catch { return null; }
+                            };
+                            const ensureFilePath = async (): Promise<string> => {
+                              try {
+                                if (scanSrc.startsWith('content://')) {
+                                  const dataUri = toDataUriIfAvailable();
+                                  if (dataUri) {
+                                    // data URI가 있으면 그대로 사용 (ML Kit가 data URL도 처리 가능)
+                                    return dataUri;
+                                  }
+                                  // base64가 없다면 파일로 복사(읽어서 새 파일로 저장)
+                                  const tmp = `${(FileSystem as any)?.cacheDirectory || ''}qr_scan_${Date.now()}.png`;
+                                  try {
+                                    const b64 = await FileSystem.readAsStringAsync(scanSrc, { encoding: FileSystem.EncodingType.Base64 });
+                                    await FileSystem.writeAsStringAsync(tmp, b64, { encoding: FileSystem.EncodingType.Base64 });
+                                    return tmp;
+                                  } catch {
+                                    // 마지막 폴백: 그대로 시도
+                                    return scanSrc;
+                                  }
+                                }
+                                // file:// 또는 http(s):// 인 경우
+                                const dataUri = toDataUriIfAvailable();
+                                return dataUri || scanSrc;
+                              } catch { return scanSrc; }
+                            };
+                            scanSrc = await ensureFilePath();
+                            const results = await BarCodeScanner.scanFromURLAsync(scanSrc, ['qr']);
+                            const txt = Array.isArray(results) && results.length ? String(results[0]?.data || '') : '';
+                            if (txt) {
+                              const norm = normalizeScannedText(txt);
+                              if (norm) {
+                                const parsed = parsePayUri(norm);
+                                if (parsed) {
+                                  setSendToAddress(parsed.addr);
+                                  setSendSelectedSymbol(parsed.sym || sendSelectedSymbol);
+                                  setSendInput(parsed.amt || '');
+                                  setIsRequest(true);
+                                  setOriginalUrlData(parsed);
+                                  const validation = validateSendUrl(parsed, parsed.amt);
+                                  if (!validation.isValid) {
+                                    Alert.alert(
+                                      language === 'en' ? '⚠️ Scan Warning' : '⚠️ 스캔 경고',
+                                      validation.errors.join('\n\n') + '\n\n' + (language === 'en' ? 'You can still modify the values and try again.' : '값을 수정한 후 다시 시도할 수 있습니다.'),
+                                      [{ text: language === 'en' ? 'OK' : '확인' }]
+                                    );
+                                  } else if (validation.hasWarnings) {
+                                    Alert.alert(
+                                      language === 'en' ? '⚠️ Amount Warning' : '⚠️ 수량 경고',
+                                      validation.warnings.join('\n\n'),
+                                      [{ text: language === 'en' ? 'OK' : '확인' }]
+                                    );
+                                  }
+                                  return;
+                                } else {
+                                  // 일반 텍스트면 주소로 간주
+                                  setSendToAddress(norm);
+                                  setIsRequest(false);
+                                  setOriginalUrlData(null);
+                                  return;
+                                }
+                              }
+                            }
+                          } catch {}
+                        }
+                        // 파일명에서 복구: (A) URL-인코딩된 전체 링크명, (B) yooy__<base64url>-*.png
                         const name: string = (asset as any)?.fileName || (asset as any)?.name || '';
+                        if (name) {
+                          // (A) 파일명이 URL-인코딩된 링크명인 경우
+                          try {
+                            const base = name.replace(/\.(png|jpg|jpeg|webp)$/i, '');
+                            const decoded = decodeURIComponent(base);
+                            const normFromName = normalizeScannedText(decoded);
+                            const parsedFromName = parsePayUri(normFromName);
+                            if (parsedFromName) {
+                              setSendToAddress(parsedFromName.addr);
+                              setSendSelectedSymbol(parsedFromName.sym || sendSelectedSymbol);
+                              setSendInput(parsedFromName.amt || '');
+                              setIsRequest(true);
+                              setOriginalUrlData(parsedFromName);
+                              const vname = validateSendUrl(parsedFromName, parsedFromName.amt);
+                              if (!vname.isValid) {
+                                Alert.alert(language==='en'?'⚠️ Scan Warning':'⚠️ 스캔 경고', vname.errors.join('\n\n'));
+                              }
+                              return;
+                            }
+                          } catch {}
+                        }
+                        // (B) 파일명에 yooy__<base64url>.png 형태로 저장된 경우, 파일명에서 복구 시도
                         if (name && name.includes('yooy__')) {
                           // 파일명 형식: yooy__<base64url>-YYYYMMDD-<amt><sym>.png
                           const m = name.match(/yooy__([A-Za-z0-9_-]+)-.*\.png/i);
@@ -4245,8 +6286,44 @@ export default function WalletScreen() {
                           // 안전모드: 바로 대체 파이프라인으로 스캔 시도
                           try {
                             // 파일명에서도 복구 실패 시, base64 우선 사용(안드로이드 인식률 향상)
-                            const altSrc = asset.base64 ? `data:${asset.type || 'image/png'};base64,${asset.base64}` : (asset.uri || '');
-                            const alt = await scanImageWithAll(altSrc);
+                            const mime = asset?.mimeType || (()=>{
+                              const uri: string = asset?.uri || '';
+                              const ext = (uri.split('.').pop() || '').toLowerCase();
+                              if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+                              if (ext === 'png') return 'image/png';
+                              if (ext === 'webp') return 'image/webp';
+                              return 'image/png';
+                            })();
+                            const altSrc = asset.base64 ? `data:${mime};base64,${asset.base64}` : (asset.uri || '');
+                            let alt = await scanImageWithAll(altSrc);
+                            if (!alt) {
+                              // 고해상도/스크린샷 대비: 중앙 정사각 크롭 → 고해상도 리사이즈 후 재시도
+                              try {
+                                const M = await import('expo-image-manipulator');
+                                const aw = Number(asset?.width || 0);
+                                const ah = Number(asset?.height || 0);
+                                if (aw > 0 && ah > 0) {
+                                  const side = Math.max(200, Math.min(aw, ah));
+                                  const originX = Math.max(0, Math.floor((aw - side) / 2));
+                                  const originY = Math.max(0, Math.floor((ah - side) / 2));
+                                  const actions: any[] = [
+                                    { crop: { originX, originY, width: side, height: side } },
+                                    { resize: { width: 1200 } },
+                                  ];
+                                  const out = await M.manipulateAsync(asset.uri, actions, { format: M.SaveFormat.PNG, compress: 1, base64: true });
+                                if (out?.base64) {
+                                  const src2 = `data:image/png;base64,${out.base64}`;
+                                  alt = await scanImageWithAll(src2);
+                                  }
+                                } else {
+                                  const out = await M.manipulateAsync(asset.uri, [{ resize: { width: 1080 } }], { format: M.SaveFormat.PNG, compress: 1, base64: true });
+                                  if (out?.base64) {
+                                    const src2 = `data:image/png;base64,${out.base64}`;
+                                    alt = await scanImageWithAll(src2);
+                                  }
+                                }
+                              } catch {}
+                            }
                             if (alt) {
                               const parsed = parsePayUri(alt);
                               if (parsed) {
@@ -4343,17 +6420,19 @@ export default function WalletScreen() {
                               language==='en'?'Please allow camera access to scan QR codes.':'QR 코드를 스캔하려면 카메라 접근을 허용해주세요.'
                             );
                           }
-                        } else if ((Platform as any).OS === 'web') {
+                    } else if ((Platform as any).OS === 'web') {
                           // 웹은 HTML5 카메라 스캔 모달로 이동
+                          setScanForClaim(false);
                           setScanOpen(true);
                         } else {
                           // VisionCamera 미사용 네이티브: Expo Camera로 대체
                           try {
-                            if (ExpoCamera?.requestCameraPermissionsAsync) {
-                              const perm = await ExpoCamera.requestCameraPermissionsAsync();
+                        if (ExpoCameraModule?.requestCameraPermissionsAsync) {
+                          const perm = await ExpoCameraModule.requestCameraPermissionsAsync();
                               const granted = perm?.status === 'granted';
                               setHasCamPerm(granted);
                               if (granted) {
+                          setScanForClaim(false);
                           setScanOpen(true);
                               } else {
                                 Alert.alert(
@@ -4430,11 +6509,12 @@ export default function WalletScreen() {
                 
                 {/* 보내기 버튼 */}
                 <TouchableOpacity 
-                  style={[styles.primaryCta, sendErrorText && styles.primaryCtaError, { flex: 1 }]}
-                  onPress={handleSendTransaction}
+                  style={[styles.primaryCta, sendErrorText && styles.primaryCtaError, { flex: 1, opacity: isSending ? 0.6 : 1 }]}
+                  onPress={() => { if (!isSending) handleSendTransaction(); }}
+                  disabled={isSending}
                 >
                   <ThemedText style={[styles.primaryCtaText, sendErrorText && styles.primaryCtaErrorText]}>
-                    {sendErrorText ? sendErrorText : t('send', language)}
+                    {isSending ? (language==='en' ? 'Sending...' : '전송중...') : (sendErrorText ? sendErrorText : t('send', language))}
                   </ThemedText>
                 </TouchableOpacity>
               </View>
@@ -4903,14 +6983,30 @@ export default function WalletScreen() {
             {hasCamPerm === false ? (
               <View style={{ alignItems:'center' }}>
                 <ThemedText style={{ color:'#fff', marginBottom:12 }}>{language==='en'?'Camera permission denied':'카메라 권한이 없습니다'}</ThemedText>
-                <TouchableOpacity
-                  onPress={()=>{
-                    try { Linking.openSettings?.(); } catch {}
-                  }}
-                  style={{ paddingHorizontal:14, paddingVertical:10, borderRadius:10, borderWidth:1, borderColor:'#FFD700' }}
-                >
-                  <ThemedText style={{ color:'#FFD700', fontWeight:'800' }}>{language==='en'?'Open settings':'설정 열기'}</ThemedText>
-                </TouchableOpacity>
+                <View style={{ flexDirection:'row', gap:12 }}>
+                  <TouchableOpacity
+                    onPress={async ()=>{
+                      try {
+                        if (ExpoCameraModule?.requestCameraPermissionsAsync) {
+                          const perm = await ExpoCameraModule.requestCameraPermissionsAsync();
+                          setHasCamPerm(perm?.status === 'granted');
+                          return;
+                        }
+                      } catch {}
+                    }}
+                    style={{ paddingHorizontal:14, paddingVertical:10, borderRadius:10, borderWidth:1, borderColor:'#FFD700' }}
+                  >
+                    <ThemedText style={{ color:'#FFD700', fontWeight:'800' }}>{language==='en'?'Allow camera':'카메라 허용'}</ThemedText>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={()=>{
+                      try { Linking.openSettings?.(); } catch {}
+                    }}
+                    style={{ paddingHorizontal:14, paddingVertical:10, borderRadius:10, borderWidth:1, borderColor:'#FFD700' }}
+                  >
+                    <ThemedText style={{ color:'#FFD700', fontWeight:'800' }}>{language==='en'?'Open settings':'설정 열기'}</ThemedText>
+                  </TouchableOpacity>
+                </View>
               </View>
             ) : (
               <View style={{ width:'90%', maxWidth:420, aspectRatio:0.75, overflow:'hidden', borderRadius:16, borderWidth:2, borderColor:'#FFD700', position:'relative', backgroundColor:'#000' }}>
@@ -4926,9 +7022,16 @@ export default function WalletScreen() {
                           const raw = String(codes?.[0]?.value || codes?.[0]?.rawValue || '');
                           if (!raw) return;
                           try {
+                            // 보내기 탭에서는 pay 링크만 처리. claim은 '받기/기프트' UI에서만 처리
+                            if (!scanForClaim && /^yooy:\/\/claim\?/i.test(raw)) {
+                              // claim QR은 여기서 처리하지 않음
+                              Alert.alert(language==='en'?'Use Receive tab':'받기 탭에서 수령해 주세요');
+                              setScanOpen(false);
+                              return;
+                            }
                             const { parseClaimUri } = await import('@/lib/claims');
                             const claim = parseClaimUri(raw);
-                            if (claim?.id) {
+                            if (scanForClaim && claim?.id && /^yooy:\/\/claim\?/i.test(raw)) {
                               setScanOpen(false);
                               await (async () => {
                                 try {
@@ -5055,11 +7158,17 @@ export default function WalletScreen() {
                           onBarcodeScanned={async ({ data }: any) => {
                             const raw = String(data || '');
                             if (!raw) return;
-                            // 1) 바우처 QR 우선 처리
+                            // 1) 바우처 QR (기프트 탭에서만 처리)
                             try {
+                              // 보내기 탭에서는 claim 미처리
+                              if (!scanForClaim && /^yooy:\/\/claim\?/i.test(raw)) {
+                                Alert.alert(language==='en'?'Use Receive tab':'받기 탭에서 수령해 주세요');
+                                setScanOpen(false);
+                                return;
+                              }
                               const { parseClaimUri } = await import('@/lib/claims');
                               const claim = parseClaimUri(raw);
-                              if (claim?.id) {
+                              if (scanForClaim && claim?.id && /^yooy:\/\/claim\?/i.test(raw)) {
                                 setScanOpen(false);
                                 await (async () => {
                                   try {
@@ -5160,15 +7269,97 @@ export default function WalletScreen() {
                             setScanOpen(false);
                           }}
                         />
+                        ) : (LegacyCamera ? (
+                          <LegacyCamera
+                            style={{ width:'100%', height:'100%' }}
+                            type={LegacyCamera.Constants?.Type?.back || 'back'}
+                            onBarCodeScanned={async ({ data }: any) => {
+                              const raw = String(data || '');
+                              if (!raw) return;
+                              // 동일 로직 재사용
+                              try {
+                                const { parseClaimUri } = await import('@/lib/claims');
+                                const claim = parseClaimUri(raw);
+                                if (claim?.id) {
+                                  setScanOpen(false);
+                                  await (async () => {
+                                    try {
+                                      const { getVoucher, claimVoucher } = await import('@/lib/claims');
+                                      const voucher = await getVoucher(claim.id);
+                                      if (!voucher) {
+                                        Alert.alert('유효하지 않은 QR', '바우처를 찾을 수 없습니다.');
+                                        return;
+                                      }
+                                      const sym = voucher.symbol || 'YOY';
+                                      const recvAddr = getWalletBySymbol(sym)?.address || recvAddress || '';
+                                      if (!recvAddr) {
+                                        Alert.alert('지갑 필요', '먼저 해당 코인 지갑을 생성해주세요.');
+                                        return;
+                                      }
+                                      const previewAmt = voucher.mode === 'per_claim'
+                                        ? Math.max(0, Number(voucher.proportion || voucher.perClaimAmount || 0))
+                                        : Math.max(0, Number(voucher.remainingAmount || voucher.totalAmount || 0));
+                                      Alert.alert('바우처 수령', `${sym} ${previewAmt} 수령하시겠습니까?`, [
+                                        { text: '취소' },
+                                        { text: '수락', onPress: async () => {
+                                          const res = await claimVoucher({ id: claim.id, recipientAddress: recvAddr, recipientEmail: currentUserEmail });
+                                          if ('error' in res) { Alert.alert('수령 실패', String(res.error)); return; }
+                                          setScanOpen(false);
+                                        } }
+                                      ]);
+                                    } catch (e) { Alert.alert('오류', String(e instanceof Error ? e.message : e)); }
+                                  })();
+                                  return;
+                                }
+                              } catch {}
+                              const parsed = parsePayUri(raw);
+                              if (parsed) {
+                                setSendToAddress(parsed.addr);
+                                setSendSelectedSymbol(parsed.sym || sendSelectedSymbol);
+                                setSendAmountType('quantity');
+                                setSendInput(parsed.amt || '');
+                                setIsRequest(true);
+                                setOriginalData && setOriginalData(parsed as any);
+                              } else {
+                                setSendToAddress(raw);
+                                setIsRequest(false);
+                                setOriginalData && setOriginalData(null);
+                              }
+                              setScanOpen(false);
+                            }}
+                          />
+                        ) : (BarCodeScanner ? (
+                          <BarCodeScanner
+                            style={{ width:'100%', height:'100%' }}
+                            barCodeTypes={[BarCodeScanner.Constants?.BarCodeType?.qr || 'qr']}
+                            onBarCodeScanned={async ({ data }: any) => {
+                              const raw = String(data || '');
+                              if (!raw) return;
+                              const parsed = parsePayUri(raw);
+                              if (parsed) {
+                                setSendToAddress(parsed.addr);
+                                setSendSelectedSymbol(parsed.sym || sendSelectedSymbol);
+                                setSendAmountType('quantity');
+                                setSendInput(parsed.amt || '');
+                                setIsRequest(true);
+                                setOriginalData && setOriginalData(parsed as any);
+                              } else {
+                                setSendToAddress(raw);
+                                setIsRequest(false);
+                                setOriginalData && setOriginalData(null);
+                              }
+                              setScanOpen(false);
+                            }}
+                          />
                         ) : (
                           <View style={{ flex:1, alignItems:'center', justifyContent:'center' }}>
                             <ThemedText style={{ color:'#CFCFCF', textAlign:'center', paddingHorizontal:16 }}>
                               {language==='en'
-                                ? 'Scanner module not available in this build.\nPlease use Gallery Scan or install the Dev Build again.'
-                                : '이 빌드에는 스캐너 모듈이 없습니다.\n갤러리 스캔을 사용하시거나 Dev 빌드를 다시 설치해주세요.'}
-                      </ThemedText>
+                                ? 'Scanner module not available in this build.\nInstall expo-camera (or expo-barcode-scanner) and rebuild.'
+                                : '스캐너 모듈이 없습니다.\n`expo install expo-camera`(또는 `expo install expo-barcode-scanner`) 후 빌드해 주세요.'}
+                            </ThemedText>
                           </View>
-                        )}
+                        )))}
                       </View>
                     )}
                   </View>
@@ -5202,7 +7393,7 @@ export default function WalletScreen() {
               {quickActionsState.chat !== false && (
                 <TouchableOpacity style={styles.quickTile} onPress={()=>setQuickSettingsVisible(true)}>
                   <View style={styles.tileIcon}><ThemedText style={styles.tileIconText}>⋯</ThemedText></View>
-                  <ThemedText style={styles.tileText}>Quick Set</ThemedText>
+                  <ThemedText style={styles.tileText} numberOfLines={1}>Quick Set</ThemedText>
                 </TouchableOpacity>
               )}
             </View>
@@ -5640,6 +7831,15 @@ export default function WalletScreen() {
               collapsable={false}
               renderToHardwareTextureAndroid
             >
+              {/* 컨테이너 기준 우상단 고정 닫기 버튼 */}
+              <TouchableOpacity
+                style={styles.qrModalCloseFloating}
+                onPress={() => setQrModalVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel={language==='en'?'Close':'닫기'}
+              >
+                <ThemedText style={styles.qrModalCloseButtonText}>×</ThemedText>
+              </TouchableOpacity>
               <View style={styles.qrModalHeader}>
                 <ThemedText style={styles.qrModalTitle}>
                   {qrModalType === 'pngsave' 
@@ -5647,12 +7847,6 @@ export default function WalletScreen() {
                     : `[${qrCoin.symbol}] Wallet`
                   }
                 </ThemedText>
-                <TouchableOpacity 
-                  style={styles.qrModalCloseButton}
-                  onPress={() => setQrModalVisible(false)}
-                >
-                  <ThemedText style={styles.qrModalCloseButtonText}>×</ThemedText>
-                </TouchableOpacity>
               </View>
               
               <View style={[styles.qrModalBody, { paddingTop: 16 }]}>
@@ -5664,6 +7858,12 @@ export default function WalletScreen() {
                 {/* PNG 저장 미리보기는 오프스크린 저장 레이아웃과 동일한 구조로 렌더 */}
                 {qrModalType === 'pngsave' ? (
                   <View style={{ alignItems:'center', justifyContent:'center' }}>
+                    {/* 정책 안내: 저장 대신 캡쳐 유도 */}
+                    <View style={{ alignItems:'center', marginBottom: 8 }}>
+                      <ThemedText style={{ color:'#AAAAAA', fontSize:13 }}>
+                        {language==='en' ? 'Use a screenshot taken on your phone.' : '핸드폰 캡쳐사진으로 사용하세요'}
+                      </ThemedText>
+                    </View>
                     {/* 상단 타이틀 */}
                     <View style={{ alignItems:'center', marginBottom: 12 }}>
                       <ThemedText style={{ color:'#FFD700', fontWeight:'800', fontSize:20 }}>
@@ -5688,8 +7888,9 @@ export default function WalletScreen() {
                                   size={300}
                                   backgroundColor="#FFFFFF"
                                   color="#000000"
-                                  quietZone={56}
+                                  quietZone={64}
                                   ecl="H"
+                                  // 중앙 로고 포함
                                   logo={require('@/assets/images/side_logo.png')}
                                   logoSize={90}
                                   logoBackgroundColor="#000000"
@@ -5721,7 +7922,6 @@ export default function WalletScreen() {
                       if (Platform.OS !== 'web' && QRCode) {
                         try {
                           const Comp = QRCode as any;
-                          const showCenterLogo = false; // 네이티브에선 QR 내부 로고 옵션 사용
                           return (
                             <View style={styles.qrCodeWrapper} ref={qrShotBoxRef as any} collapsable={false}>
                               <Comp 
@@ -5729,15 +7929,11 @@ export default function WalletScreen() {
                                 size={360}
                                 backgroundColor="#FFFFFF" 
                                 color="#000000"
-                                quietZone={56}
+                                quietZone={64}
                                 ecl="H"
-                                logo={require('@/assets/images/side_logo.png')}
-                                logoSize={96}
-                                logoBackgroundColor="#000000"
-                                logoMargin={3}
                                 getRef={(c:any)=>{ (qrRef as any).current = c; }}
                               />
-                              {showCenterLogo && (
+                              {/* 중앙 로고 오버레이(네이티브) */}
                                 <View style={styles.qrCenterLogoAbsWrap}>
                                   <View style={styles.qrCenterLogoAbs}>
                                     <Image 
@@ -5747,7 +7943,6 @@ export default function WalletScreen() {
                                     />
                                   </View>
                                 </View>
-                              )}
                             </View>
                           );
                         } catch {}
@@ -5801,7 +7996,7 @@ export default function WalletScreen() {
                           } catch {}
                         }}
                       >
-                        <ThemedText style={styles.ctaCopyText}>{`${qrCoin.symbol}지갑주소 복사`}</ThemedText>
+                        <ThemedText style={styles.ctaCopyText}>{`[${qrCoin.symbol}] 받을 주소`}</ThemedText>
                       </TouchableOpacity>
                     </>
                   ) : (
@@ -5933,35 +8128,8 @@ export default function WalletScreen() {
             {/* 다운로드 버튼 - 팝업 컨테이너 밖 */}
             {qrModalType === 'pngsave' && (
               <View style={styles.qrModalDownloadButtonContainer}>
-                <TouchableOpacity style={[styles.qrSaveButton, qrModalCopySuccess && { backgroundColor:'#4CAF50', borderColor:'#4CAF50' }]} onPress={async()=>{
-                  // copy 버튼과 동일한 payload(수량/금액 변환 포함)
-                  const addr = qrCoin.address;
-                  const amtForUrl = recvAmountType === 'amount' 
-                    ? convertAmountToQuantity(parseFloat(recvInput) || 0, qrCoin.symbol).toString()
-                    : (recvInput || '');
-                  const payload = buildPayUri(addr, qrCoin.symbol, amtForUrl);
-                  const title = `[${qrCoin.symbol}] / ${recvInput || '0'} ${qrCoin.symbol}`;
-                  // 네이티브/웹 공통: 내부 생성 로직으로 저장 (view-shot 사용 안 함: 일부 기기에서 검은 화면 저장 이슈)
-                  let ok = false;
-                  try {
-                      ok = await handleSaveQrImage(payload, title);
-                  } catch {}
-                  if (ok) {
-                    try {
-                      setQrModalCopySuccess(true);
-                      // 체크 아이콘이 잠깐 표시된 뒤 모달 자동 닫기
-                      setTimeout(()=>{
-                        setQrModalCopySuccess(false);
-                        setQrModalVisible(false);
-                      }, 900);
-                    } catch {}
-                  }
-                }}>
-                  {qrModalCopySuccess ? (
-                    <Ionicons name="checkmark" size={22} color="#000" />
-                  ) : (
-                    <ThemedText style={styles.qrSaveIcon}>↓</ThemedText>
-                  )}
+                <TouchableOpacity style={[styles.qrSaveButton, { backgroundColor:'#2B3A3F', borderColor:'#2B3A3F' }]} onPress={()=> setQrModalVisible(false)}>
+                  <ThemedText style={{ color:'#FFD700', fontWeight:'700' }}>{language==='en'?'Close':'닫기'}</ThemedText>
                 </TouchableOpacity>
               </View>
             )}
@@ -5972,6 +8140,10 @@ export default function WalletScreen() {
       {/* 오프스크린 QR 저장 전용 뷰(제목 + 프레임 + QR) */}
       <View style={{ position:'absolute', left: -10000, top: -10000, width: 360, height: 450, padding: 0, backgroundColor:'#000' }} pointerEvents="none" collapsable={false} ref={qrExportRef as any}>
         <View style={{ width: 360, height: 450, backgroundColor:'#000', alignItems:'center', justifyContent:'center' }}>
+          {/* 상단 로고 */}
+          <View style={{ position:'absolute', top: 6, left:0, right:0, height:40, alignItems:'center', justifyContent:'center' }}>
+            <Image source={require('@/assets/images/side_logo.png')} style={{ width: 96, height: 28, tintColor: undefined }} resizeMode="contain" />
+          </View>
           {/* 상단 타이틀 */}
           <View style={{ position:'absolute', top: 0, left:0, right:0, height:64, alignItems:'center', justifyContent:'center' }}>
             <ThemedText style={{ color:'#FFD700', fontWeight:'800', fontSize:20 }}>
@@ -5996,10 +8168,10 @@ export default function WalletScreen() {
                         size={300}
                         backgroundColor="#FFFFFF"
                         color="#000000"
-                        quietZone={48}
+                        quietZone={64}
                         ecl="H"
                         logo={require('@/assets/images/side_logo.png')}
-                        logoSize={32}
+                        logoSize={90}
                         logoBackgroundColor="#000000"
                         logoMargin={3}
                       />
@@ -6026,9 +8198,7 @@ export default function WalletScreen() {
                     return (
                       <View style={{ width:220, height:220, backgroundColor:'#fff' }}>
                         <Comp value={data} size={220} />
-                        <View style={{ position:'absolute', left: '50%', top: '50%', width: 48, height: 48, marginLeft: -24, marginTop: -24, borderRadius: 8, overflow:'hidden', backgroundColor:'#000', alignItems:'center', justifyContent:'center', borderWidth: isGiftPayload(data)? 2 : 4, borderColor: isGiftPayload(data) ? '#D32F2F' : '#FFD700' }}>
-                          <Image source={require('@/assets/images/side_logo.png')} style={{ width:42, height:42 }} resizeMode="contain" />
-                        </View>
+                        {/* 중앙 로고 제거 */}
                       </View>
                     );
                   }
@@ -6036,9 +8206,7 @@ export default function WalletScreen() {
                   return (
                     <View style={{ width:240, height:240, backgroundColor:'#fff' }}>
                       <Image source={{ uri: `${url}&ecc=H&margin=24&color=000000&bgcolor=ffffff` }} style={{ width:240, height:240 }} />
-                      <View style={{ position:'absolute', left: '50%', top: '50%', width: 54, height: 54, marginLeft: -27, marginTop: -27, borderRadius: 8, overflow:'hidden', backgroundColor:'#000', alignItems:'center', justifyContent:'center', borderWidth: isGiftPayload(data)? 2 : 4, borderColor: isGiftPayload(data) ? '#D32F2F' : '#FFD700' }}>
-                        <Image source={require('@/assets/images/side_logo.png')} style={{ width:44, height:44 }} resizeMode="contain" />
-                      </View>
+                      {/* 중앙 로고 제거 */}
                     </View>
                   );
                 })()}
@@ -6631,10 +8799,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   qrModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    position: 'relative',
     alignItems: 'center',
-    marginBottom: 20,
+    justifyContent: 'center',
+    paddingTop: 2,
+    paddingBottom: 12,
+    minHeight: 48,
   },
   qrModalTitle: {
     color: '#FFFFFF',
@@ -6642,17 +8812,39 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   qrModalCloseButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#333',
+    position: 'absolute',
+    top: -8,
+    right: -18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderWidth: 1,
+    borderColor: '#FFD700',
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 10,
   },
   qrModalCloseButtonText: {
     color: '#FFFFFF',
-    fontSize: 20,
+    fontSize: 28,
     fontWeight: 'bold',
+  },
+  // 컨테이너 기준 우상단에 떠 있는 닫기 버튼
+  qrModalCloseFloating: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    borderWidth: 2,
+    borderColor: '#FFD700',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 20,
+    elevation: 6,
   },
   qrModalBody: {
     alignItems: 'center',

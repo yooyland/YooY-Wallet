@@ -1,0 +1,53 @@
+pluginManagement {
+  repositories {
+    google()
+    mavenCentral()
+    gradlePluginPortal()
+  }
+  // Resolve React Native Gradle plugin via filesystem first (works without Node on PATH)
+  def projectRootDir = new File(settingsDir, "..").getCanonicalFile()
+  def rnPluginDir = new File(projectRootDir, "node_modules/@react-native/gradle-plugin")
+  if (!rnPluginDir.exists()) {
+    // Fallback to Node-based resolution if available
+    try {
+      def resolved = providers.exec {
+        workingDir(rootDir)
+        commandLine("node", "--print", "require.resolve('@react-native/gradle-plugin/package.json', { paths: [require.resolve('react-native/package.json')] })")
+      }.standardOutput.asText.get().trim()
+      rnPluginDir = new File(resolved).getParentFile()
+    } catch (Throwable __) {
+      // no-op, will skip includeBuild if still missing
+    }
+  }
+  if (rnPluginDir.exists()) {
+    println("[settings.gradle] Including RN gradle plugin from: ${rnPluginDir}")
+    includeBuild(rnPluginDir.getAbsolutePath())
+  } else {
+    println("[settings.gradle] RN gradle plugin not found under ${projectRootDir}/node_modules. Make sure dependencies are installed.")
+  }
+
+  // Also include Expo module gradle plugin so that 'expo' Android library can resolve expo.modules.plugin.* classes
+  def expoPluginCandidates = [
+    new File(projectRootDir, "node_modules/expo/node_modules/expo-modules-core/expo-module-gradle-plugin"),
+    new File(projectRootDir, "node_modules/expo-modules-core/expo-module-gradle-plugin")
+  ]
+  def expoPluginDir = expoPluginCandidates.find { it.exists() }
+  if (expoPluginDir != null) {
+    println("[settings.gradle] Including Expo module gradle plugin from: ${expoPluginDir}")
+    includeBuild(expoPluginDir.getAbsolutePath())
+  } else {
+    println("[settings.gradle] Expo module gradle plugin not found in node_modules (expo-modules-core).")
+  }
+}
+
+plugins {
+  id("com.facebook.react.settings")
+}
+
+extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
+  ex.autolinkLibrariesFromCommand()
+}
+
+rootProject.name = 'App-YooYLand'
+
+include ':app'

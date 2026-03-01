@@ -1,0 +1,17 @@
+plugins {
+  id 'com.android.library'
+}
+
+android {
+  namespace 'com.reactnativeworklets.disabled'
+  compileSdk rootProject.ext.compileSdkVersion
+  defaultConfig {
+    minSdkVersion rootProject.ext.minSdkVersion
+  }
+  publishing {
+    singleVariant("release")
+  }
+}
+
+// No sources; publish an empty aar so variant resolution succeeds
+

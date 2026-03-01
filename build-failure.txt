@@ -1,0 +1,60 @@
+> * What went wrong:
+> Execution failed for task ':app:signReleaseBundle'.
+  > A failure occurred while executing com.android.build.gradle.internal.tasks.FinalizeBundleTask$BundleToolRunnable
+     > Failed to read key upload from store "D:\App-YooYLand\android\app\yooyland-upload.jks": keystore password was inco
+  rrect
+  
+  * Try:
+  > Run with --debug option to get more log output.
+  > Run with --scan to get full insights.
+  > Get more help at https://help.gradle.org.
+  
+  * Exception is:
+> org.gradle.api.tasks.TaskExecutionException: Execution failed for task ':app:signReleaseBundle'.
+  	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.lambda$executeIfValid$1(ExecuteActionsTaskExecut
+  er.java:130)
+  	at org.gradle.internal.Try$Failure.ifSuccessfulOrElse(Try.java:293)
+  	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.executeIfValid(ExecuteActionsTaskExecuter.java:1
+  28)
+  	at org.gradle.api.internal.tasks.execution.ExecuteActionsTaskExecuter.execute(ExecuteActionsTaskExecuter.java:116)
+  	at org.gradle.api.internal.tasks.execution.ProblemsTaskPathTrackingTaskExecuter.execute(ProblemsTaskPathTrackingTaskEx
+  ecuter.java:41)
+  	at org.gradle.api.internal.tasks.execution.FinalizePropertiesTaskExecuter.execute(FinalizePropertiesTaskExecuter.java:
+  46)
+  	at org.gradle.api.internal.tasks.execution.ResolveTaskExecutionModeExecuter.execute(ResolveTaskExecutionModeExecuter.j
+  ava:51)
+> Caused by: org.gradle.workers.internal.DefaultWorkerExecutor$WorkExecutionException: A failure occurred while executing
+   com.android.build.gradle.internal.tasks.FinalizeBundleTask$BundleToolRunnable
+  	at org.gradle.workers.internal.DefaultWorkerExecutor$WorkItemExecution.waitForCompletion(DefaultWorkerExecutor.java:28
+  7)
+  	at org.gradle.internal.work.DefaultAsyncWorkTracker.lambda$waitForItemsAndGatherFailures$2(DefaultAsyncWorkTracker.jav
+  a:130)
+  	at org.gradle.internal.Factories$1.create(Factories.java:31)
+  	at org.gradle.internal.work.DefaultWorkerLeaseService.withoutLocks(DefaultWorkerLeaseService.java:335)
+  	at org.gradle.internal.work.DefaultWorkerLeaseService.withoutLocks(DefaultWorkerLeaseService.java:318)
+  	at org.gradle.internal.work.DefaultWorkerLeaseService.withoutLock(DefaultWorkerLeaseService.java:323)
+  	at org.gradle.internal.work.DefaultAsyncWorkTracker.waitForItemsAndGatherFailures(DefaultAsyncWorkTracker.java:126)
+  	at org.gradle.internal.work.DefaultAsyncWorkTracker.waitForItemsAndGatherFailures(DefaultAsyncWorkTracker.java:92)
+  	at org.gradle.internal.work.DefaultAsyncWorkTracker.waitForAll(DefaultAsyncWorkTracker.java:78)
+> Caused by: com.android.ide.common.signing.KeytoolException: Failed to read key upload from store "D:\App-YooYLand\andro
+  id\app\yooyland-upload.jks": keystore password was incorrect
+  	at com.android.ide.common.signing.KeystoreHelper.getCertificateInfo(KeystoreHelper.java:254)
+  	at com.android.build.gradle.internal.tasks.FinalizeBundleTask$BundleToolRunnable.run(FinalizeBundleTask.kt:170)
+  	at com.android.build.gradle.internal.profile.ProfileAwareWorkAction.execute(ProfileAwareWorkAction.kt:74)
+  	at org.gradle.workers.internal.DefaultWorkerServer.execute(DefaultWorkerServer.java:63)
+  	at org.gradle.workers.internal.NoIsolationWorkerFactory$1$1.create(NoIsolationWorkerFactory.java:66)
+  	at org.gradle.workers.internal.NoIsolationWorkerFactory$1$1.create(NoIsolationWorkerFactory.java:62)
+  	at org.gradle.internal.classloader.ClassLoaderUtils.executeInClassloader(ClassLoaderUtils.java:100)
+  	at org.gradle.workers.internal.NoIsolationWorkerFactory$1.lambda$execute$0(NoIsolationWorkerFactory.java:62)
+  	at org.gradle.workers.internal.AbstractWorker$1.call(AbstractWorker.java:44)
+  	at org.gradle.workers.internal.AbstractWorker$1.call(AbstractWorker.java:41)
+  	at org.gradle.internal.operations.DefaultBuildOperationRunner$CallableBuildOperationWorker.execute(DefaultBuildOperati
+> Caused by: java.io.IOException: keystore password was incorrect
+  	at com.android.ide.common.signing.KeystoreHelper.getCertificateInfo(KeystoreHelper.java:230)
+  	... 30 more
+> Caused by: java.security.UnrecoverableKeyException: failed to decrypt safe contents entry: javax.crypto.BadPaddingExcep
+  tion: Given final block not properly padded. Such issues can arise if a bad key is used during decryption.
+  	... 31 more
+  
+  
+  BUILD FAILED in 40s
