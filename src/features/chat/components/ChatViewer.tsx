@@ -1,14 +1,14 @@
 // @ts-nocheck
 /* eslint-disable */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, Platform, PanResponder } from 'react-native';
 import { Image as RNImage } from 'react-native';
 import { Image as EImage } from 'expo-image';
 import { Video, ResizeMode } from 'expo-av';
 import { buildMapEmbedUrl, buildStaticMapUrl, reverseGeocode } from '@/src/features/chat/lib/media';
 import { getStorage, ref as storageRef, getDownloadURL } from 'firebase/storage';
 import { firebaseApp } from '@/lib/firebase';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 
 type Kind = 'image'|'video'|'youtube'|'web'|'map'|'pdf';
 
@@ -29,19 +29,22 @@ export interface ChatViewerProps {
   onKeep?: () => void;
   onPrev?: () => void;
   onNext?: () => void;
+  onDelete?: () => void;
 }
 
 export default function ChatViewer(props: ChatViewerProps) {
-  const { visible, url, kind, title, hideHeader, headerAvatarUrl, headerTs, headerLocked, onClose, onSave, onCopy, onOpen, onForward, onKeep, onPrev, onNext } = props;
-  const insets = useSafeAreaInsets();
-  const topPad = Math.max(insets.top, 0);
-  const bottomPad = Math.max(insets.bottom, 0);
+  const { visible, url, kind, title, hideHeader, headerAvatarUrl, headerTs, headerLocked, onClose, onSave, onCopy, onOpen, onForward, onKeep, onPrev, onNext, onDelete } = props;
+  // SafeAreaContext 직접 조회: Provider 미주입 시 0 폴백
+  const insetsFromCtx = React.useContext(SafeAreaInsetsContext as any) as { top: number; bottom: number; left: number; right: number } | null;
+  const topPad = Math.max(insetsFromCtx?.top || 16, 16); // 상태바와 겹치지 않게
+  const bottomPad = Math.max(insetsFromCtx?.bottom || 0, 0);
   const [addr, setAddr] = useState<string>('');
   const [lat, setLat] = useState<string|undefined>(undefined);
   const [lng, setLng] = useState<string|undefined>(undefined);
   const [pdfLoaded, setPdfLoaded] = useState<boolean>(false);
   const [mapLoaded, setMapLoaded] = useState<boolean>(false);
   useEffect(() => { if (kind==='map') setMapLoaded(false); }, [kind, url]);
+  useEffect(() => { if (kind==='map') setMapImageFailed(false); }, [kind, url]);
   // 시작을 1(Mozilla viewer)로 하여 웹에서 빈 화면 가능성을 낮춤. blob/data 는 0(canvas) 유지
   const [pdfSrcIdx, setPdfSrcIdx] = useState<number>(1);
   const pdfCanvasRef = useRef<any>(null);
@@ -55,6 +58,7 @@ export default function ChatViewer(props: ChatViewerProps) {
   // Map: stabilize embed URL to prevent flicker on state updates
   const [mapEmbedUrl, setMapEmbedUrl] = useState<string>('');
   const [mapEmbedLocked, setMapEmbedLocked] = useState<boolean>(false);
+  const [mapImageFailed, setMapImageFailed] = useState<boolean>(false);
   // Image zoom/pan (web)
   const [imgZoom, setImgZoom] = useState<number>(1);
   const [imgPan, setImgPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -62,6 +66,22 @@ export default function ChatViewer(props: ChatViewerProps) {
   const imgDragRef = useRef<{ dx: number; dy: number; sx: number; sy: number; on: boolean }>({ dx: 0, dy: 0, sx: 0, sy: 0, on: false });
   const [qrText, setQrText] = useState<string>('');
   const [imgFailed, setImgFailed] = useState<boolean>(false);
+  // Swipe navigation (prev/next) support
+  const swipePan = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_e, g) => {
+        const ax = Math.abs(g.dx), ay = Math.abs(g.dy);
+        return (ax > 20 && ax > ay * 1.5) && !!(onPrev || onNext);
+      },
+      onPanResponderMove: () => {},
+      onPanResponderRelease: (_e, g) => {
+        try {
+          if (g.dx > 40 && onPrev) onPrev();
+          else if (g.dx < -40 && onNext) onNext();
+        } catch {}
+      },
+    })
+  ).current;
   useEffect(() => {
     (async () => {
       try {
@@ -360,6 +380,15 @@ export default function ChatViewer(props: ChatViewerProps) {
   }, [visible]);
   if (!visible) return null as any;
 
+  // 네이티브: 비-HTTPS 웹은 자동으로 외부로 열고 닫기
+  useEffect(() => {
+    try {
+      if (Platform.OS !== 'web' && kind === 'web' && url && !/^https?:\/\//i.test(String(url))) {
+        onOpen?.(); onClose?.();
+      }
+    } catch {}
+  }, [kind, url]);
+
   return (
     <View style={{ position: (Platform.OS==='web' ? 'fixed' as any : 'absolute' as any), left:0, right:0, top:0, bottom:0, backgroundColor:'rgba(0,0,0,0.95)', zIndex: 2147483647, paddingTop: topPad, paddingBottom: bottomPad }}>
       {/* 상단 바 (옵션) */}
@@ -423,7 +452,7 @@ export default function ChatViewer(props: ChatViewerProps) {
               }
               // Native: WebView로 재생 (웹에서는 import하지 않음)
               const WebView = require('react-native-webview').default || require('react-native-webview');
-              return (<WebView source={{ uri: embed }} style={{ width:'96%', height:'100%', backgroundColor:'#000' }} allowsInlineMediaPlayback mediaPlaybackRequiresUserAction={false} />);
+              return (<WebView originWhitelist={['*']} source={{ uri: embed }} style={{ width:'96%', height:'100%', backgroundColor:'#000' }} allowsInlineMediaPlayback mediaPlaybackRequiresUserAction={false} />);
             } catch { 
               return (
                 <View style={{ alignItems:'center', justifyContent:'center' }}>
@@ -445,9 +474,19 @@ export default function ChatViewer(props: ChatViewerProps) {
               return (<iframe title={'web'} src={src} style={{ width:'96%', height:'100%', border:'none' }} />);
             }
             }
-            // Native: WebView로 미리보기 (웹에서는 import하지 않음)
+            // Native: WebView로 미리보기 (웹에서는 import하지 않음). http(s)만 미리보기 허용
+            if (!/^https?:\/\//i.test(String(src))) {
+              return (
+                <View style={{ width:'96%', height:'100%', alignItems:'center', justifyContent:'center' }}>
+                  <Text style={{ color:'#EEE', marginBottom:12 }}>이 파일은 내부 미리보기를 지원하지 않습니다.</Text>
+                  <TouchableOpacity onPress={onOpen} style={{ paddingHorizontal:16, paddingVertical:10, borderRadius:8, borderWidth:1, borderColor:'#FFD700' }}>
+                    <Text style={{ color:'#FFD700', fontWeight:'800' }}>외부로 열기</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            }
             const WebView = require('react-native-webview').default || require('react-native-webview');
-            return (<WebView source={{ uri: src }} style={{ width:'96%', height:'100%' }} allowsInlineMediaPlayback />);
+            return (<WebView originWhitelist={['*']} mixedContentMode={'always'} javaScriptEnabled domStorageEnabled source={{ uri: src }} style={{ width:'96%', height:'100%' }} allowsInlineMediaPlayback />);
           }
           if (effKind === 'map') {
             // Use stabilized embed URL to prevent flicker across state updates
@@ -489,28 +528,47 @@ export default function ChatViewer(props: ChatViewerProps) {
               </View>
             );
             }
-            // Native: static map 이미지로 대체 + "지도 열기" 버튼
-            try {
-              const staticUrl = buildStaticMapUrl(String(src));
+            // Native: 정적 지도 이미지 우선(블랙스크린 회피), 실패 시 WebView 임베드 폴백
+            {
+              let staticUrl = buildStaticMapUrl(src);
+              if (!staticUrl && lat && lng) {
+                staticUrl = buildStaticMapUrl(`https://www.google.com/maps?q=${encodeURIComponent(String(lat)+','+String(lng))}`);
+              }
+              // 폴백용 임베드 URL 준비
+              let embedFallback = buildMapEmbedUrl(src);
+              try {
+                const key = (process as any)?.env?.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY
+                  || (process as any)?.env?.GOOGLE_MAPS_API_KEY
+                  || ((globalThis as any)?.Constants?.expoConfig?.extra as any)?.GOOGLE_MAPS_API_KEY
+                  || '';
+                if (lat && lng) {
+                  const z = 16; const mt = 'roadmap';
+                  embedFallback = key
+                    ? `https://www.google.com/maps/embed/v1/view?key=${encodeURIComponent(String(key))}&center=${encodeURIComponent(String(lat))},${encodeURIComponent(String(lng))}&zoom=${z}&maptype=${mt}`
+                    : `https://www.google.com/maps?hl=ko&output=embed&q=${encodeURIComponent(String(lat)+","+String(lng))}&z=${z}`;
+                }
+              } catch {}
               return (
-                <View style={{ width:'96%', height:'100%', alignItems:'center', justifyContent:'center' }}>
-                  <EImage source={{ uri: staticUrl }} style={{ width:'96%', height:'100%' }} contentFit={'cover'} />
-                  <View style={{ position:'absolute', left:12, top:12, backgroundColor:'rgba(255,255,255,0.9)', borderRadius:8, paddingHorizontal:10, paddingVertical:6 }}>
+                <View style={{ width:'100%', height:'100%' }}>
+                  {/* 좌상단 카드 */}
+                  <View style={{ position:'absolute', left:12, top:12, zIndex:2, backgroundColor:'rgba(255,255,255,0.95)', borderRadius:8, borderWidth:1, borderColor:'#DDD', padding:10, maxWidth:280 }}>
                     <Text style={{ color:'#111', fontSize:12, fontWeight:'800' }}>{(lat && lng) ? `${lat}, ${lng}` : '위치'}</Text>
-                    {!!addr && (<Text style={{ color:'#333', fontSize:12, marginTop:2 }} numberOfLines={2}>{addr}</Text>)}
-                    <TouchableOpacity onPress={onOpen} style={{ marginTop:6, alignSelf:'flex-start' }}>
+                    {!!addr && (<Text style={{ color:'#333', fontSize:12, marginTop:4 }} numberOfLines={2}>{addr}</Text>)}
+                    <TouchableOpacity onPress={onOpen} style={{ marginTop:8, alignSelf:'flex-start' }}>
                       <Text style={{ color:'#1a73e8', fontSize:12, fontWeight:'700' }}>큰 지도 보기</Text>
                     </TouchableOpacity>
                   </View>
-                </View>
-              );
-            } catch {
-              return (
-                <View style={{ alignItems:'center', justifyContent:'center' }}>
-                  <Text style={{ color:'#FFF', marginBottom:12 }}>지도를 열 수 없습니다</Text>
-                  <TouchableOpacity onPress={onOpen} style={{ paddingHorizontal:16, paddingVertical:10, borderRadius:8, borderWidth:1, borderColor:'#FFD700' }}>
-                    <Text style={{ color:'#FFD700', fontWeight:'800' }}>지도 열기</Text>
-                  </TouchableOpacity>
+                  {(!mapImageFailed && staticUrl)
+                    ? <EImage source={{ uri: staticUrl }} style={{ width:'100%', height:'100%' }} contentFit={'cover'} onError={()=>{ try { setMapImageFailed(true); } catch {} }} />
+                    : (() => {
+                        try {
+                          const WebView = require('react-native-webview').default || require('react-native-webview');
+                          return (<WebView originWhitelist={['*']} mixedContentMode={'always'} javaScriptEnabled domStorageEnabled source={{ uri: embedFallback }} style={{ width:'100%', height:'100%', backgroundColor:'#000' }} />);
+                        } catch {
+                          return <View style={{ flex:1, alignItems:'center', justifyContent:'center' }}><Text style={{ color:'#FFF' }}>지도를 표시할 수 없습니다</Text></View>;
+                        }
+                      })()
+                  }
                 </View>
               );
             }
@@ -567,7 +625,7 @@ export default function ChatViewer(props: ChatViewerProps) {
               }
               // Native: WebView로 PDF 뷰어 표시
               const WebView = require('react-native-webview').default || require('react-native-webview');
-              return (<WebView source={{ uri: mozilla }} style={{ width:'96%', height:'100%', backgroundColor:'#111' }} />);
+              return (<WebView originWhitelist={['*']} source={{ uri: mozilla }} style={{ width:'96%', height:'100%', backgroundColor:'#111' }} />);
             }
             // 2: 브라우저 네이티브 뷰어 (object) + 커스텀 확대/축소/이동(웹 전용)
             if (Platform.OS === 'web') {
@@ -645,6 +703,14 @@ export default function ChatViewer(props: ChatViewerProps) {
             <Text style={{ color:'#000', fontWeight:'900' }}>›</Text>
           </TouchableOpacity>
         ) : null}
+        {/* Swipe overlay to allow left/right navigation by gesture */}
+        {(onPrev || onNext) ? (
+          <View
+            {...(swipePan.panHandlers as any)}
+            style={{ position:'absolute', left:0, right:0, top:0, bottom:0, backgroundColor:'transparent' }}
+            pointerEvents="auto"
+          />
+        ) : null}
       </View>
 
       {/* 하단 액션바 */}
@@ -657,6 +723,7 @@ export default function ChatViewer(props: ChatViewerProps) {
         {!!onCopy && (<TouchableOpacity onPress={onCopy}><Text style={{ color:'#FFF', fontWeight:'800' }}>복사</Text></TouchableOpacity>)}
         {!!onForward && (<TouchableOpacity onPress={onForward}><Text style={{ color:'#FFF', fontWeight:'800' }}>전달</Text></TouchableOpacity>)}
         {!!onKeep && (<TouchableOpacity onPress={onKeep}><Text style={{ color:'#FFF', fontWeight:'800' }}>보관</Text></TouchableOpacity>)}
+        {!!onDelete && (<TouchableOpacity onPress={onDelete}><Text style={{ color:'#FF6B6B', fontWeight:'800' }}>삭제</Text></TouchableOpacity>)}
         <TouchableOpacity onPress={onClose}><Text style={{ color:'#FFF', fontWeight:'800' }}>닫기</Text></TouchableOpacity>
       </View>
     </View>
