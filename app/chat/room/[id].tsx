@@ -231,11 +231,51 @@ function RoomInner() {
               mapUrl = m && m[0] ? m[0] : '';
               address = (text || '').split('\n')[0] || address;
             }
+            const onOpenMapPreview = () => {
+              try {
+                if (!mapUrl) return;
+                // 헤더 정보 채우기
+                try {
+                  const senderId = String(item?.senderId || '');
+                  const profStore = require('@/src/features/chat/store/chat-profile.store');
+                  const prof = profStore.useChatProfileStore.getState().getProfile?.(senderId) || null;
+                  const title = prof?.chatName || prof?.displayName || senderId || '보낸 사람';
+                  setViewerTitle(title);
+                  const avatar = prof?.avatar;
+                  setViewerHeaderAvatar(avatar || undefined);
+                } catch { setViewerTitle('보낸 사람'); setViewerHeaderAvatar(undefined); }
+                try {
+                  const ct: any = item?.createdAt;
+                  let ts = 0;
+                  if (typeof ct === 'number') ts = Number(ct);
+                  else if (ct?.toMillis) ts = Number(ct.toMillis());
+                  else if (typeof ct?.seconds === 'number') { const ns = typeof ct?.nanoseconds === 'number' ? Math.floor(ct.nanoseconds/1e6) : 0; ts = ct.seconds*1000 + ns; }
+                  else ts = Date.now();
+                  setViewerHeaderTs(ts);
+                } catch { setViewerHeaderTs(Date.now()); }
+                // 같은 대화의 지도 미디어 목록 수집
+                try {
+                  const mapUrls: string[] = [];
+                  (messages || []).forEach((m:any) => {
+                    try {
+                      if (String(m?.type||'') !== 'map') return;
+                      const j = JSON.parse(String(m?.content||'{}'));
+                      const u = String(j?.url||'');
+                      if (u) mapUrls.push(u);
+                    } catch {}
+                  });
+                  const idx = Math.max(0, mapUrls.indexOf(mapUrl));
+                  setViewerList(mapUrls.length ? mapUrls : [mapUrl]);
+                  setViewerIndex(idx);
+                } catch { setViewerList([mapUrl]); setViewerIndex(0); }
+                setViewerMsgId(String(item?.id||'')); setViewerUrl(mapUrl); setViewerKind('map'); setViewerOpen(true);
+              } catch {}
+            };
             return (
               <View style={{ width: 240 }}>
                 <TouchableOpacity
                   activeOpacity={0.85}
-                  onPress={() => { try { if (mapUrl) require('expo-linking').openURL(mapUrl); } catch {} }}
+                  onPress={onOpenMapPreview}
                   style={{ flexDirection:'row', alignItems:'flex-start', gap:6 }}
                 >
                   <Text style={{ color:'#B71C1C' }}>📍</Text>
@@ -1697,6 +1737,9 @@ function RoomInner() {
             visible={true}
             url={String(viewerUrl||'')}
             kind={viewerKind}
+            title={viewerTitle}
+            headerAvatarUrl={viewerHeaderAvatar}
+            headerTs={viewerHeaderTs}
             onClose={()=> setViewerOpen(false)}
                   onSave={(async ()=>{
                     // 일반방은 제한 없음, TTL방일 때만 allowImageDownload 검사
