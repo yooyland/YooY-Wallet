@@ -835,6 +835,52 @@ function RoomInner() {
   const [viewerList, setViewerList] = useState<string[]>([]);
   const [viewerIndex, setViewerIndex] = useState<number>(0);
   const [viewerMsgId, setViewerMsgId] = useState<string | null>(null);
+  // 미리보기 헤더 표시(발신자/시간/아바타)
+  const [viewerTitle, setViewerTitle] = useState<string>('');
+  const [viewerHeaderTs, setViewerHeaderTs] = useState<number | undefined>(undefined);
+  const [viewerHeaderAvatar, setViewerHeaderAvatar] = useState<string | undefined>(undefined);
+
+  // 입장 알림: 새 멤버 감지 → 알림 스토어 + 토스트
+  const prevMembersRef = useRef<Set<string>>(new Set<string>(memberIds || []));
+  const [joinToast, setJoinToast] = useState<string>('');
+  useEffect(() => {
+    try {
+      const prev = prevMembersRef.current;
+      const curr = new Set<string>((memberIds || []).map(String));
+      // 추가된 멤버
+      const added: string[] = [];
+      curr.forEach((id) => { if (!prev.has(id)) added.push(id); });
+      prevMembersRef.current = curr;
+      if (added.length === 0) return;
+      // 자신 제외
+      const others = added.filter(id => String(id) !== String(uid));
+      if (others.length === 0) return;
+      // 프로필에서 이름 가져오기
+      const store = require('@/src/features/chat/store/chat-profile.store');
+      const getProf = (id: string) => {
+        try { return store.useChatProfileStore.getState().getProfile?.(id) || null; } catch { return null; }
+      };
+      const names = others.map(id => (getProf(id)?.chatName || getProf(id)?.displayName || id));
+      const msg = names.length === 1 ? `${names[0]} 님이 입장했습니다` : `${names.join(', ')} 님이 입장했습니다`;
+      // 알림 스토어 기록
+      try {
+        const notif = require('@/src/features/chat/store/notification.store');
+        notif.useNotificationStore.getState().addNotification({
+          type: 'system',
+          title: '입장 알림',
+          content: msg,
+          channelId: roomId,
+          senderId: others[0],
+          senderName: names[0],
+        });
+      } catch {}
+      // 토스트 표시 (3초)
+      setJoinToast(msg);
+      const t = setTimeout(() => { try { setJoinToast(''); } catch {} }, 3000);
+      return () => { try { clearTimeout(t); } catch {} };
+    } catch {}
+  // stringify로 안정 비교
+  }, [JSON.stringify(memberIds||[]), roomId, uid]);
 
   // 링크 미리보기(카카오톡 스타일 간단 버전)
   const linkPreviewCacheRef = useRef<Record<string, { url: string; title?: string; description?: string; image?: string }>>({});
@@ -1767,6 +1813,15 @@ function RoomInner() {
             onNext={viewerList.length>0 && viewerIndex<viewerList.length-1 ? (()=>{ try { const i = Math.min(viewerList.length-1, viewerIndex+1); setViewerIndex(i); setViewerUrl(viewerList[i]); setViewerKind('image'); } catch {} }) : undefined}
           />
         </React.Suspense>
+      )}
+
+      {/* 입장 토스트 */}
+      {!!joinToast && (
+        <View style={{ position:'absolute', left:20, right:20, top: (insets?.top||0) + 12, alignItems:'center', zIndex: 1000 }}>
+          <View style={{ backgroundColor:'rgba(0,0,0,0.8)', borderWidth:1, borderColor:'#333', borderRadius:12, paddingHorizontal:12, paddingVertical:8 }}>
+            <Text style={{ color:'#FFD700', fontWeight:'800' }}>{joinToast}</Text>
+          </View>
+        </View>
       )}
 
       {/* 방 옵션 간단 시트 */}
