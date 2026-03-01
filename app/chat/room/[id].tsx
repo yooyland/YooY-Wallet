@@ -78,6 +78,7 @@ function RoomInner() {
   const enterRoom = useKakaoRoomsStore((s) => s.enterRoom);
   const sendMessage = useKakaoRoomsStore((s) => s.sendMessage);
   const removeMessage = useKakaoRoomsStore((s) => s.deleteMessage);
+  const markRead = useKakaoRoomsStore((s) => s.markRead);
   const saveRoomSettings = useKakaoRoomsStore((s) => s.saveRoomSettings);
   const updateRoomMeta = useKakaoRoomsStore((s) => s.updateRoomMeta);
   const setRoomPrivacy = useKakaoRoomsStore((s) => s.setRoomPrivacy);
@@ -186,6 +187,10 @@ function RoomInner() {
     } catch {}
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
+  // 방 진입/포커스 시 즉시 읽음 처리
+  useEffect(() => {
+    try { if (roomId && uid) markRead?.(roomId, uid); } catch {}
+  }, [roomId, uid]);
 
   // TTL 만료 메시지 필터링: 서버에서 삭제가 지연되거나 실패해도 UI에서는 숨김
   const filteredMessages = React.useMemo(() => {
@@ -1620,6 +1625,10 @@ function RoomInner() {
             const setNew = new Set<string>();
             (viewableItems || []).forEach((vi:any) => { const id = String(vi?.item?.id || ''); if (id) setNew.add(id); });
             visibleIdsRef.current = setNew;
+            // 화면에 메시지가 보이면 즉시 읽음 처리
+            if ((viewableItems || []).length > 0) {
+              try { if (roomId && uid) markRead?.(roomId, uid); } catch {}
+            }
           } catch {}
         }}
         viewabilityConfig={{ itemVisiblePercentThreshold: 25, minimumViewTime: 60 }}

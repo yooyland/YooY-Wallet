@@ -128,6 +128,8 @@ interface KakaoRoomsState {
   typing: Record<string, Record<string, boolean>>; // roomId -> { userId: isTyping }
   roomSettings: Record<string, RoomSettings>; // roomId -> settings
   hiddenByRoom: Record<string, Record<string, boolean>>; // roomId -> { messageId: true }
+  lastUid?: string; // 퍼시스트 분리용: 마지막 로그인 UID
+  roomSubs: Record<string, () => void>; // Firestore room doc subscriptions
 }
 
 interface KakaoRoomsActions {
@@ -195,6 +197,8 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
       typing: {},
       roomSettings: {},
       hiddenByRoom: {},
+      lastUid: (firebaseAuth?.currentUser?.uid || 'me'),
+      roomSubs: {},
 
       // 1:1 DM 방을 기존 방 우선 → 없으면 생성(양쪽 멤버십/joinedRooms 함께 기록)
       getOrCreateDmRoom: async (me: string, other: string) => {
@@ -258,6 +262,14 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
       createRoom: (title, members, type, expiresAt, messageTtlMs, tags = [], avatarUrl, password, participantLimit) => {
         // 기본 타입 판정
         let finalType: KakaoRoom['type'] | undefined = type || (members.length <= 2 ? 'dm' : 'group');
+        // TTL 입력값이 주어진 경우에는 생성 경로가 어디든 TTL 방으로 강제 고정
+        if ((expiresAt && expiresAt > 0) || (messageTtlMs && messageTtlMs > 0)) {
+          finalType = 'ttl';
+        }
+        // TTL 방인데 메시지 TTL이 비어 있으면 기본 30초로 보정
+        if (finalType === 'ttl' && (!messageTtlMs || messageTtlMs <= 0)) {
+          messageTtlMs = 30 * 1000;
+        }
         // 공지방은 관리자만 생성 가능
         if (finalType === 'notice') {
           const email = firebaseAuth.currentUser?.email || '';
@@ -276,12 +288,28 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
           lastMessageAt: undefined,
           type: finalType,
           isPublic: (finalType === 'dm' || finalType === 'secret') ? false : true,
-          expiresAt,
-          messageTtlMs: finalType === 'ttl' ? messageTtlMs : undefined,
+          // 생성 직후 UI에서 바로 읽을 수 있도록 값을 강제로 반영
+          expiresAt: expiresAt || undefined,
+          messageTtlMs: (finalType === 'ttl' ? (messageTtlMs || 0) : 0) || undefined,
           tags: Array.from(new Set((tags||[]).map(t => String(t).trim().toLowerCase()).filter(Boolean))),
           avatarUrl: avatarUrl,
         };
         set((s) => ({ rooms: [room, ...s.rooms] }));
+        // 생성 직후 즉시 TTL 값을 스토어에 반영(입장 지연/동기화 지연 보정)
+        try {
+          if (expiresAt && expiresAt > 0) {
+            const { rooms } = get();
+            set((s) => ({
+              rooms: (s.rooms || []).map(r => r.id === room.id ? { ...r, expiresAt } : r),
+            }));
+          }
+          if (messageTtlMs && messageTtlMs > 0) {
+            const ttlVal = messageTtlMs;
+            set((s) => ({
+              rooms: (s.rooms || []).map(r => r.id === room.id ? { ...r, messageTtlMs: ttlVal } : r),
+            }));
+          }
+        } catch {}
 
         // Firestore에 rooms 컬렉션 동기화 (best-effort)
         try {
@@ -328,7 +356,138 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
         return room;
       },
 
-      enterRoom: (roomId) => set({ currentRoomId: roomId }),
+      enterRoom: (roomId) => {
+        set({ currentRoomId: roomId });
+        // 보장: 멤버십 기록
+        (async () => { try { await (get() as any)._ensureMember(roomId); } catch {} })();
+        // 실시간 룸 메타 구독(중복 방지)
+        (async () => {
+          try {
+            const subs = get().roomSubs || {};
+            if (!subs[roomId]) {
+              const { doc, onSnapshot, collection, query, orderBy, limit: qlimit } = await import('firebase/firestore');
+              // 룸 메타 구독
+              const unsubRoom = onSnapshot(doc(firestore, 'rooms', roomId), (snap) => {
+                try {
+                  if (!snap.exists()) return;
+                  const data: any = snap.data() || {};
+                  set((s) => {
+                    const nextRooms = (s.rooms || []).map((r) =>
+                      r.id === roomId ? { ...r, ...data, id: roomId } : r
+                    );
+                    const prevRS = s.roomSettings?.[roomId] || ({} as any);
+                    const prevTTL = prevRS.ttl || {};
+                    const ttlMerged = {
+                      ...prevTTL,
+                      expiresAtMs: Number(data?.expiresAt ?? prevTTL.expiresAtMs ?? 0),
+                      messageTtlMs: Number(data?.messageTtlMs ?? prevTTL.messageTtlMs ?? 0),
+                    };
+                    // settings 전체 병합(roles, ttlSecurity, theme 등)
+                    const srvSettings = (data?.settings || {}) as any;
+                    const mergedSettings = {
+                      ...prevRS,
+                      ...srvSettings,
+                      ttl: { ...(prevTTL || {}), ...(srvSettings?.ttl || {}), ...ttlMerged },
+                      members: {
+                        ...(prevRS?.members || {}),
+                        ...(srvSettings?.members || {}),
+                      },
+                      permissions: { ...(prevRS?.permissions || {}), ...(srvSettings?.permissions || {}) },
+                      notifications: { ...(prevRS?.notifications || {}), ...(srvSettings?.notifications || {}) },
+                      theme: { ...(prevRS?.theme || {}), ...(srvSettings?.theme || {}) },
+                      ttlSecurity: { ...(prevRS?.ttlSecurity || {}), ...(srvSettings?.ttlSecurity || {}) },
+                    };
+                    return {
+                      rooms: nextRooms,
+                      roomSettings: { ...(s.roomSettings || {}), [roomId]: mergedSettings },
+                    } as any;
+                  });
+                } catch {}
+              });
+              // 메시지 구독 (최근 500건, createdAt 오름차순)
+              let unsubMsgs: undefined | (() => void);
+              let unsubMembers: undefined | (() => void);
+              // 메시지 onSnapshot 배치/디바운스: 잦은 이벤트를 60ms 단위로 합쳐 상태 갱신
+              let latestMsgs: any[] | null = null;
+              let flushTimer: any = null;
+              try {
+                const q = query(
+                  collection(firestore, 'rooms', roomId, 'messages'),
+                  orderBy('createdAt', 'asc'),
+                  qlimit(500)
+                );
+                unsubMsgs = onSnapshot(q, (snap) => {
+                  try {
+                    const incoming: any[] = [];
+                    snap.forEach((d: any) => {
+                      const v: any = d.data() || {};
+                      const createdMs = (() => {
+                        try { return typeof v.createdAt?.toMillis === 'function' ? v.createdAt.toMillis() : Number(v.createdAt || 0); } catch { return 0; }
+                      })();
+                      incoming.push({
+                        id: v.id || d.id,
+                        roomId,
+                        senderId: v.senderId,
+                        content: v.content || '',
+                        type: v.type || 'text',
+                        imageUrl: v.imageUrl || undefined,
+                        albumUrls: Array.isArray(v.albumUrls) ? v.albumUrls : undefined,
+                        replyToId: v.replyToId || undefined,
+                        createdAt: createdMs || Date.now(),
+                        readBy: Array.isArray(v.readBy) ? v.readBy : [],
+                        reactionsByUser: v.reactionsByUser || {},
+                        reactionsCount: v.reactionsCount || {},
+                      });
+                    });
+                    latestMsgs = incoming;
+                    if (!flushTimer) {
+                      flushTimer = setTimeout(() => {
+                        try {
+                          const take = latestMsgs || [];
+                          // 서버 스냅샷이 "정답"이 되도록 이전 로컬 목록과 병합하지 않는다.
+                          // (삭제된 메시지가 로컬 병합으로 되살아나는 문제 방지)
+                          set((s) => ({
+                            messages: {
+                              ...(s.messages || {}),
+                              [roomId]: [...take].sort(
+                                (a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0)
+                              ),
+                            },
+                          }) as any);
+                        } catch {} finally {
+                          latestMsgs = null;
+                          try { clearTimeout(flushTimer); } catch {}
+                          flushTimer = null;
+                        }
+                      }, 60);
+                    }
+                  } catch {}
+                }, () => {});
+              } catch {}
+              // 멤버 목록 구독: 모든 계정에서 동일하게 members 배열/카운트를 동기화
+              try {
+                const { collection, onSnapshot } = await import('firebase/firestore');
+                unsubMembers = onSnapshot(collection(firestore, 'rooms', roomId, 'members'), (snap) => {
+                  try {
+                    const ids: string[] = [];
+                    snap.forEach((d: any) => { if (d?.id) ids.push(String(d.id)); });
+                    set((s) => ({
+                      rooms: (s.rooms || []).map((r: any) => r.id === roomId ? { ...r, members: ids, memberCount: ids.length } : r),
+                    }) as any);
+                  } catch {}
+                }, () => {});
+              } catch {}
+              // 단일 언서브 핸들에 결합
+              const combinedUnsub = () => {
+                try { unsubRoom && unsubRoom(); } catch {}
+                try { unsubMsgs && unsubMsgs(); } catch {}
+                try { unsubMembers && unsubMembers(); } catch {}
+              };
+              set((s) => ({ roomSubs: { ...(s.roomSubs || {}), [roomId]: combinedUnsub } }));
+            }
+          } catch {}
+        })();
+      },
 
       sendMessage: (roomId, senderId, content, type = 'text', imageUrl, replyToId, albumUrls) => {
         // Ensure authenticated before any Firestore writes to avoid permission errors
@@ -377,6 +536,53 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
             const preparePayload = async (): Promise<{ imageUrl: string | null; albumUrls?: string[] | null }> => {
               try {
                 let finalUrl = imageUrl || null;
+                // helper: upload arbitrary local uri (file://, content://, blob:, data:)
+                const uploadLocalFile = async (localUri: string, extHint?: string): Promise<string> => {
+                  try {
+                    const Plat = (await import('react-native')).Platform;
+                    const isWeb = Plat?.OS === 'web';
+                    const storage = firebaseStorage;
+                    const { ensureAuthedUid } = await import('@/lib/firebase');
+                    const realUid = ensureAuthedUid ? await ensureAuthedUid() : senderId;
+                    const ext = (() => {
+                      const m = String(localUri).match(/\.([A-Za-z0-9]+)(\?|#|$)/);
+                      return (m && m[1]) ? m[1].toLowerCase() : (extHint || 'bin');
+                    })();
+                    const path = `chat/${realUid}/${Date.now()}-${msg.id}.${ext}`;
+                    const r = storageRef(storage, path);
+                    // data: URIs
+                    if (/^data:/i.test(localUri)) {
+                      await uploadString(r, String(localUri), 'data_url');
+                      return await getDownloadURL(r);
+                    }
+                    // blob: (web)
+                    if (/^blob:/i.test(localUri)) {
+                      const resp = await fetch(String(localUri));
+                      const b = await resp.blob();
+                      await uploadBytes(r, b);
+                      return await getDownloadURL(r);
+                    }
+                    // file:// or content:// (native) → base64로 업로드
+                    try {
+                      // eslint-disable-next-line @typescript-eslint/no-var-requires
+                      const FileSystem = require('expo-file-system');
+                      const b64 = await FileSystem.readAsStringAsync(localUri, { encoding: 'base64' });
+                      const mimeGuess = ext === 'mp4' ? 'video/mp4' : (ext === 'png' || ext === 'jpg' || ext === 'jpeg' ? `image/${ext === 'png' ? 'png' : 'jpeg'}` : 'application/octet-stream');
+                      const dataUrl = `data:${mimeGuess};base64,${b64}`;
+                      await uploadString(r, dataUrl, 'data_url');
+                      return await getDownloadURL(r);
+                    } catch {
+                      // 마지막 폴백: fetch로 읽어 업로드 (일부 안드로이드 content:// 지원)
+                      try {
+                        const resp = await fetch(String(localUri));
+                        const b = await resp.blob();
+                        await uploadBytes(r, b);
+                        return await getDownloadURL(r);
+                      } catch {}
+                    }
+                    return localUri;
+                  } catch { return localUri; }
+                };
                 // 이미지 dataURL 업로드
                 if (finalUrl && /^data:image\//i.test(String(finalUrl))) {
                   const storage = firebaseStorage;
@@ -389,37 +595,39 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
                 }
                 // 비디오 업로드: data: 또는 blob: URL → Storage로 올려 영구 https URL 확보
                 if ((msg as any).type === 'video' && finalUrl && !/^https?:\/\//i.test(String(finalUrl))) {
-                  const storage = firebaseStorage;
-                  const { ensureAuthedUid } = await import('@/lib/firebase');
-                  const realUid = ensureAuthedUid ? await ensureAuthedUid() : senderId;
-                  const path = `chat/${realUid}/${Date.now()}-${msg.id}.mp4`;
-                  const r = storageRef(storage, path);
-                  if (/^data:video\//i.test(String(finalUrl))) {
-                    await uploadString(r, String(finalUrl), 'data_url');
-                  } else if (/^blob:/i.test(String(finalUrl))) {
-                    const resp = await fetch(String(finalUrl));
-                    const b = await resp.blob();
-                    await uploadBytes(r, b);
-                  }
-                  finalUrl = await getDownloadURL(r);
+                  finalUrl = await uploadLocalFile(String(finalUrl), 'mp4');
+                }
+                // 이미지 업로드: file://, content://, blob: 등 로컬 URI면 업로드하여 https URL 확보
+                if ((msg as any).type === 'image' && finalUrl && !/^https?:\/\//i.test(String(finalUrl)) && !/^data:/i.test(String(finalUrl))) {
+                  // 확장자 힌트는 png로 지정(데이터 URL 케이스는 위에서 처리)
+                  finalUrl = await uploadLocalFile(String(finalUrl), 'png');
                 }
                 // 앨범 처리
                 let finalAlbum: string[] | null | undefined = undefined;
                 if ((msg as any).type === 'album' && Array.isArray(albumUrls) && albumUrls.length > 0) {
-                  const storage = firebaseStorage;
                   const out = await Promise.all((albumUrls || []).map(async (u, idx) => {
                     try {
-                      if (u && /^data:image\//i.test(String(u))) {
+                      const str = String(u || '');
+                      // data URL → 업로드
+                      if (str && /^data:image\//i.test(str)) {
                         const { ensureAuthedUid } = await import('@/lib/firebase');
                         const realUid2 = ensureAuthedUid ? await ensureAuthedUid() : senderId;
-                        const r = storageRef(storage, `chat/${realUid2}/${Date.now()}-${msg.id}-${idx}.png`);
-                        await uploadString(r, String(u), 'data_url');
+                        const r = storageRef(firebaseStorage, `chat/${realUid2}/${Date.now()}-${msg.id}-${idx}.png`);
+                        await uploadString(r, str, 'data_url');
                         return await getDownloadURL(r);
                       }
-                      return u;
+                      // http(s) 이미 URL이면 그대로 사용
+                      if (/^https?:\/\//i.test(str)) return str;
+                      // file://, content:// 등 로컬 URI → 업로드
+                      return await uploadLocalFile(str, 'png');
                     } catch { return ''; }
                   }));
-                  finalAlbum = out.filter((u) => typeof u === 'string' && /^https?:\/\//i.test(String(u)));
+                  finalAlbum = out.filter((u) => typeof u === 'string' && String(u));
+                }
+                // 일반 파일 업로드(type === 'file')
+                if ((msg as any).type === 'file' && finalUrl && !/^https?:\/\//i.test(String(finalUrl))) {
+                  // 확장자 추출 후 업로드
+                  finalUrl = await uploadLocalFile(String(finalUrl));
                 }
                 if (finalUrl && /^data:image\//i.test(String(finalUrl))) finalUrl = null;
                 return { imageUrl: finalUrl, albumUrls: finalAlbum };
@@ -447,7 +655,11 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
                     if (m.id !== msg.id) return m;
                     const patched: any = { ...m };
                     if (type === 'album') {
-                      if (Array.isArray(safe?.albumUrls)) patched.albumUrls = safe?.albumUrls || [];
+                      // 앨범: 업로드 완료 전까지는 로컬 data URL을 유지.
+                      // 안전 URL이 하나라도 생기면 그때만 교체한다.
+                      if (Array.isArray(safe?.albumUrls) && (safe?.albumUrls || []).length > 0) {
+                        patched.albumUrls = safe?.albumUrls || [];
+                      }
                       patched.type = 'album';
                     } else if ((msg as any).type === 'video') {
                       // 비디오 메시지는 타입/URL을 유지
@@ -500,16 +712,27 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
 
       markRead: (roomId, userId) => {
         set((s) => {
-        const list = (s.messages[roomId] || []).map(m => m.readBy.includes(userId) ? m : { ...m, readBy: [...m.readBy, userId] });
+        const list = (s.messages?.[roomId] || []).map((m:any) => (Array.isArray(m.readBy) && m.readBy.includes(userId)) ? m : { ...m, readBy: [...(Array.isArray(m.readBy)?m.readBy:[]), userId] });
           // 로컬 방 unread 0
-          const nextRooms = (s.rooms || []).map(r => r.id === roomId ? { ...r, unreadCount: 0 } : r);
-          return { messages: { ...s.messages, [roomId]: list }, rooms: nextRooms } as any;
+          const nextRooms = (s.rooms || []).map((r:any) => r.id === roomId ? { ...r, unreadCount: 0 } : r);
+          return { messages: { ...(s.messages||{}), [roomId]: list }, rooms: nextRooms } as any;
         });
         // Firestore: 내 unread 0
         (async () => {
           try {
             const mref = doc(firestore, 'rooms', roomId, 'members', userId);
             await setDoc(mref, { unread: 0, lastReadAt: serverTimestamp() } as any, { merge: true });
+          } catch {}
+          // Firestore: 최근 메시지들의 readBy에 내 uid 추가 (best-effort, 상위 100개)
+          try {
+            const { collection, query, orderBy, limit: qlimit, getDocs, updateDoc, arrayUnion } = await import('firebase/firestore');
+            const q = query(collection(firestore, 'rooms', roomId, 'messages'), orderBy('createdAt', 'desc'), qlimit(100));
+            const snap = await getDocs(q);
+            await Promise.all(snap.docs.map(async (d) => {
+              try {
+                await updateDoc(d.ref, { readBy: arrayUnion(userId) } as any);
+              } catch {}
+            }));
           } catch {}
         })();
       },
@@ -655,11 +878,18 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
         rooms: s.rooms.map(r => r.id === roomId ? { ...r, unreadCount: Math.max(0, count) } : r),
       })),
 
-      removeRooms: (roomIds) => set((s) => ({
-        rooms: s.rooms.filter(r => !roomIds.includes(r.id)),
-        messages: Object.fromEntries(Object.entries(s.messages).filter(([rid]) => !roomIds.includes(rid))) as any,
-        roomSettings: Object.fromEntries(Object.entries(s.roomSettings || {}).filter(([rid]) => !roomIds.includes(rid))) as any,
-      })),
+      removeRooms: (roomIds) => {
+        try {
+          const subs = get().roomSubs || {};
+          roomIds.forEach((rid) => { try { subs[rid]?.(); delete subs[rid]; } catch {} });
+          set({ roomSubs: subs });
+        } catch {}
+        set((s) => ({
+          rooms: s.rooms.filter(r => !roomIds.includes(r.id)),
+          messages: Object.fromEntries(Object.entries(s.messages).filter(([rid]) => !roomIds.includes(rid))) as any,
+          roomSettings: Object.fromEntries(Object.entries(s.roomSettings || {}).filter(([rid]) => !roomIds.includes(rid))) as any,
+        }));
+      },
 
       // 룸 설정 로드/저장
       loadRoomSettings: async (roomId: string) => {
@@ -933,11 +1163,16 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
     {
       name: 'yoo-kakao-rooms-store',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 4,
+      version: 5,
       migrate: (persistedState: any, version: number) => {
         try {
           const s = persistedState as Partial<KakaoRoomsState> | undefined;
-          if (!s) return { rooms: [], messages: {}, roomSettings: {}, typing: {}, hiddenByRoom: {} } as KakaoRoomsState;
+          const uidNow = firebaseAuth?.currentUser?.uid || 'me';
+          if (!s) return { rooms: [], messages: {}, roomSettings: {}, typing: {}, hiddenByRoom: {}, lastUid: uidNow, roomSubs: {} } as KakaoRoomsState;
+          // 계정 불일치 시 완전 초기화하여 계정 간 데이터 섞임 방지
+          if ((s as any).lastUid && (s as any).lastUid !== uidNow) {
+            return { rooms: [], messages: {}, roomSettings: {}, typing: {}, hiddenByRoom: {}, lastUid: uidNow, roomSubs: {} } as KakaoRoomsState;
+          }
           // 과거 거대 데이터 정리: 메시지/히든/타이핑을 최소화
           const currentRoomId = (s as any).currentRoomId as string | undefined;
           const MAX_KEEP = 30;
@@ -979,9 +1214,12 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
             typing: {},
             roomSettings: (s as any).roomSettings || {},
             hiddenByRoom,
+            lastUid: uidNow,
+            roomSubs: {},
           } as KakaoRoomsState;
         } catch {
-          return { rooms: [], messages: {}, roomSettings: {}, typing: {}, hiddenByRoom: {} } as KakaoRoomsState;
+          const uidNow = firebaseAuth?.currentUser?.uid || 'me';
+          return { rooms: [], messages: {}, roomSettings: {}, typing: {}, hiddenByRoom: {}, lastUid: uidNow, roomSubs: {} } as KakaoRoomsState;
         }
       },
       // 웹 로컬 스토리지 용량 보호: 최소 데이터만 저장
@@ -1017,11 +1255,50 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
         const hiddenByRoom = currentRoomId && state.hiddenByRoom[currentRoomId]
           ? { [currentRoomId]: state.hiddenByRoom[currentRoomId] }
           : {};
+        // roomSettings는 용량을 고려해 TTL 관련 핵심만 보존 (보안/TTL/테마 최소치)
+        const roomSettings = (() => {
+          const src = (state as any).roomSettings || {};
+          const out: Record<string, any> = {};
+          Object.keys(src || {}).forEach((rid) => {
+            try {
+              const s: any = src[rid] || {};
+              const keep: any = {};
+              if (s.ttl) {
+                keep.ttl = {
+                  expiresAtMs: Number(s.ttl.expiresAtMs || 0),
+                  messageDeleteOnExpiry: s.ttl.messageDeleteOnExpiry !== false,
+                };
+              }
+              if (s.ttlSecurity) {
+                const ts = s.ttlSecurity || {};
+                keep.ttlSecurity = {
+                  allowImageUpload: ts.allowImageUpload !== false,
+                  allowImageDownload: !!ts.allowImageDownload,
+                  allowCapture: !!ts.allowCapture,
+                  allowExternalShare: !!ts.allowExternalShare,
+                };
+              }
+              if (s.theme) {
+                const th = s.theme || {};
+                keep.theme = {
+                  bubbleColorHex: th.bubbleColorHex,
+                  backgroundColorHex: th.backgroundColorHex,
+                  fontScaleLevel: th.fontScaleLevel,
+                  backgroundImageUrl: th.backgroundImageUrl,
+                };
+              }
+              if (Object.keys(keep).length) out[rid] = keep;
+            } catch {}
+          });
+          return out;
+        })();
         return {
           rooms,
           messages,
           currentRoomId,
           hiddenByRoom,
+          roomSettings,
+          lastUid: (firebaseAuth?.currentUser?.uid || 'me'),
         } as KakaoRoomsState;
       },
     }
