@@ -1440,40 +1440,7 @@ function RoomInner() {
         </Modal>
       )}
       {/* QR 링크 입력 모달 */}
-      {qrModalOpen && (
-        <Modal transparent animationType="fade" onRequestClose={()=> setQrModalOpen(false)}>
-          <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.6)', alignItems:'center', justifyContent:'center' }}>
-            <View style={{ width: 320, backgroundColor:'#0F0F0F', borderRadius:12, borderWidth:1, borderColor:'#2A2A2A', padding:12 }}>
-              <Text style={{ color:'#F6F6F6', fontWeight:'900', fontSize:16, marginBottom:8 }}>QR 링크 주소</Text>
-              <TextInput
-                value={qrLink}
-                onChangeText={setQrLink}
-                placeholder="스캔된 QR 링크(필요 시 수정 가능)"
-                placeholderTextColor="#666"
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={{ borderWidth:1, borderColor:'#2A2A2A', borderRadius:8, paddingHorizontal:10, paddingVertical:8, color:'#F6F6F6', backgroundColor:'#141414' }}
-              />
-              <View style={{ flexDirection:'row', justifyContent:'flex-end', gap:8, marginTop:10 }}>
-                <TouchableOpacity onPress={()=>{ setQrModalOpen(false); setQrImageUri(null); setQrLink(''); }} style={{ paddingHorizontal:12, paddingVertical:8, borderWidth:1, borderColor:'#2A2A2A', borderRadius:10 }}>
-                  <Text style={{ color:'#CFCFCF' }}>취소</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={()=>{
-                  try {
-                    if (qrImageUri) sendMessage(roomId, uid, '', 'image', String(qrImageUri));
-                    const link = String(qrLink||'').trim();
-                    if (link) sendMessage(roomId, uid, link, 'text');
-                  } finally {
-                    setQrModalOpen(false); setQrImageUri(null); setQrLink('');
-                  }
-                }} style={{ paddingHorizontal:12, paddingVertical:8, borderWidth:1, borderColor:'#FFD700', borderRadius:10 }}>
-                  <Text style={{ color:'#FFD700', fontWeight:'800' }}>보내기</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
-      )}
+      {false && qrModalOpen && null}
       {/* 신규 방 설정 모달 (새 컴포넌트) */}
       {settingsOpen && (
         <RoomSettingsModal
