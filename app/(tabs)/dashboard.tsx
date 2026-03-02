@@ -39,7 +39,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const PHOTO_KEY = 'profile.photoUri';
+// Per-user scoped keys
+const photoKeyFor = (uid?: string|null) => (uid ? `u:${uid}:profile.photoUri` : 'profile.photoUri');
 
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
@@ -47,6 +48,7 @@ export default function DashboardScreen() {
   const { currency, language } = usePreferences();
   const { yoyPriceUSD } = useMarket();
   const { getRecentTransactions, addTransaction, updateTransactionMemo } = useTransaction();
+  const DEBUG = typeof __DEV__ !== 'undefined' ? __DEV__ : false;
   
   // 전역 거래 스토어 사용
   const { getTransactions, recordReward } = useTransactionStore();
@@ -55,8 +57,16 @@ export default function DashboardScreen() {
   const baseBalances = getMockBalancesForUser(currentUserEmail);
   // 발행화폐(법정화폐) 제거: KRW, USD, JPY, CNY, EUR
   const cryptoOnlyBalances = baseBalances.filter(b => !['KRW', 'USD', 'JPY', 'CNY', 'EUR'].includes(b.symbol));
-  const balances = cryptoOnlyBalances.map(b => b.symbol === 'YOY' && yoyPriceUSD ? ({ ...b, valueUSD: b.amount * yoyPriceUSD }) : b);
-  const total = balances.reduce((s, b) => s + b.valueUSD, 0);
+  const balances = cryptoOnlyBalances.map(b => {
+    // 초기 렌더에서도 NaN이 나오지 않도록 안전가드
+    const baseUSD = typeof b.valueUSD === 'number' && isFinite(b.valueUSD) ? b.valueUSD : 0;
+    const baseAmt = typeof b.amount === 'number' && isFinite(b.amount) ? b.amount : 0;
+    if (b.symbol === 'YOY') {
+      const usd = yoyPriceUSD ? baseAmt * yoyPriceUSD : baseUSD;
+      return { ...b, amount: baseAmt, valueUSD: isFinite(usd) ? usd : 0 };
+    }
+    return { ...b, amount: baseAmt, valueUSD: baseUSD };
+  });
   const locale = language === 'ko' ? 'ko-KR' : language === 'ja' ? 'ja-JP' : language === 'zh' ? 'zh-CN' : 'en-US';
   const [refreshingDash, setRefreshingDash] = useState(false);
   // TDZ 방지용 베이스 함수: 위에 선언하여 초기 렌더에서도 안전
@@ -108,7 +118,7 @@ export default function DashboardScreen() {
     } finally {
       setRefreshingDash(false);
     }
-  }, [currentUserEmail, yoyPriceUSD, baseBalances, calculateFinalBalances]);
+  }, [currentUserEmail, baseBalances, calculateFinalBalances]);
   const [realTimeBalances, setRealTimeBalances] = useState(balances);
   
   // 코인 상세 모달 상태
@@ -117,71 +127,8 @@ export default function DashboardScreen() {
 
   // 거래 내역을 기반으로 최종 잔액 계산 (함수 선언식으로 TDZ 방지)
   function calculateFinalBalances(initialBalances: Record<string, number>) {
-    const transactions = getTransactions();
-    console.log('Dashboard - All transactions:', transactions);
-    console.log('Dashboard - Initial balances:', initialBalances);
-    const finalBalances = { ...initialBalances };
-    
-    transactions.forEach(transaction => {
-      console.log('Processing transaction:', {
-        type: transaction.type,
-        symbol: transaction.symbol,
-        amount: transaction.amount,
-        change: transaction.change,
-        fromToken: transaction.fromToken,
-        fromAmount: transaction.fromAmount,
-        toToken: transaction.toToken,
-        toAmount: transaction.toAmount
-      });
-      
-      if (transaction.type === 'swap') {
-        // 새로운 스왑 거래 구조: symbol과 change 사용
-        if (transaction.symbol && transaction.change !== undefined) {
-          console.log(`Updating ${transaction.symbol} by ${transaction.change} (current: ${finalBalances[transaction.symbol] || 0})`);
-          finalBalances[transaction.symbol] = (finalBalances[transaction.symbol] || 0) + transaction.change;
-          console.log(`New balance for ${transaction.symbol}: ${finalBalances[transaction.symbol]}`);
-        }
-        // 기존 스왑 거래 구조도 지원
-        else if (transaction.fromToken && transaction.fromAmount) {
-          console.log(`Reducing ${transaction.fromToken} by ${transaction.fromAmount} (current: ${finalBalances[transaction.fromToken] || 0})`);
-          finalBalances[transaction.fromToken] = (finalBalances[transaction.fromToken] || 0) - transaction.fromAmount;
-          console.log(`New balance for ${transaction.fromToken}: ${finalBalances[transaction.fromToken]}`);
-        }
-        if (transaction.toToken && transaction.toAmount) {
-          console.log(`Adding ${transaction.toToken} by ${transaction.toAmount} (current: ${finalBalances[transaction.toToken] || 0})`);
-          finalBalances[transaction.toToken] = (finalBalances[transaction.toToken] || 0) + transaction.toAmount;
-          console.log(`New balance for ${transaction.toToken}: ${finalBalances[transaction.toToken]}`);
-        }
-      } else if (transaction.type === 'reward' || transaction.type === 'daily_reward' || transaction.type === 'event_reward') {
-        // 보상 거래: 해당 토큰 증가
-        if (transaction.symbol && transaction.amount) {
-          console.log(`Adding reward ${transaction.symbol} by ${transaction.amount} (current: ${finalBalances[transaction.symbol] || 0})`);
-          finalBalances[transaction.symbol] = (finalBalances[transaction.symbol] || 0) + transaction.amount;
-          console.log(`New balance for ${transaction.symbol}: ${finalBalances[transaction.symbol]}`);
-        }
-      } else if (transaction.type === 'staking') {
-        // 스테이킹 거래: 해당 토큰 차감
-        if (transaction.symbol && transaction.amount) {
-          console.log(`Reducing staking ${transaction.symbol} by ${transaction.amount} (current: ${finalBalances[transaction.symbol] || 0})`);
-          finalBalances[transaction.symbol] = (finalBalances[transaction.symbol] || 0) - transaction.amount;
-          console.log(`New balance for ${transaction.symbol}: ${finalBalances[transaction.symbol]}`);
-        }
-      } else if (transaction.type === 'transfer') {
-        const sym = transaction.symbol;
-        if (sym) {
-          if (typeof transaction.change === 'number' && isFinite(transaction.change)) {
-            finalBalances[sym] = (finalBalances[sym] || 0) + (transaction.change as number);
-            console.log(`Adjust ${sym} by ${transaction.change} (current: ${finalBalances[sym]})`);
-          } else if (typeof transaction.amount === 'number' && isFinite(transaction.amount)) {
-            // change가 없다면 방향 정보가 없어 안전하게 무시
-            console.log(`Skip ambiguous transfer amount for ${sym}: ${transaction.amount}`);
-          }
-        }
-      }
-    });
-    
-    console.log('Final calculated balances:', finalBalances);
-    return finalBalances;
+    // 잔액 중복 누적을 방지하기 위해 저장된 기준 잔액을 그대로 신뢰합니다.
+    return { ...initialBalances };
   }
   
   // 잔액을 영구적으로 저장하고 불러오기 (payments.tsx와 동일한 키 사용)
@@ -195,14 +142,24 @@ export default function DashboardScreen() {
         const savedBalances = await AsyncStorage.getItem(storageKey);
         
         if (savedBalances) {
-          // payments.tsx에서 저장된 userBalances를 dashboard 형식으로 변환
-          const savedBalancesData = JSON.parse(savedBalances);
-          console.log('Dashboard - Parsed saved balances (initial load):', savedBalancesData);
+          // payments.tsx에서 저장된 userBalances를 dashboard 형식으로 변환 (파싱 안전 가드)
+          let savedBalancesData: Record<string, number> = {};
+          try {
+            savedBalancesData = JSON.parse(savedBalances);
+          } catch {
+            setRealTimeBalances(balances);
+            return;
+          }
+          if (DEBUG) { try { console.log('Dashboard - Parsed saved balances (initial load):', savedBalancesData); } catch {} }
           
           // 거래 내역을 기반으로 최종 잔액 계산
           const finalBalances = calculateFinalBalances(savedBalancesData);
-          console.log('Dashboard - Final balances after transactions (initial load):', finalBalances);
-          console.log('Dashboard - YOY balance:', finalBalances.YOY);
+          if (DEBUG) {
+            try {
+              console.log('Dashboard - Final balances after transactions (initial load):', finalBalances);
+              console.log('Dashboard - YOY balance:', finalBalances.YOY);
+            } catch {}
+          }
           
           const convertedBalancesAll = Object.entries(finalBalances).map(([symbol, amount]) => {
             const baseBalance = baseBalances.find(b => b.symbol === symbol);
@@ -210,23 +167,20 @@ export default function DashboardScreen() {
               return {
                 ...baseBalance,
                 amount: amount as number,
-                valueUSD: symbol === 'YOY' && yoyPriceUSD ? (amount as number) * yoyPriceUSD : (amount as number) * (baseBalance.valueUSD / baseBalance.amount)
+                // 초기 로드시 금액 중심으로 불러오고, 가격 적용은 별도 가격 업데이트(effect)에서 처리
+                valueUSD: (amount as number) * (baseBalance.amount ? (baseBalance.valueUSD / baseBalance.amount) : 0)
               };
             }
             return {
               symbol,
               amount: amount as number,
-              valueUSD: symbol === 'YOY' && yoyPriceUSD ? (amount as number) * yoyPriceUSD : 0,
+              valueUSD: 0,
               name: symbol,
               change24h: 0,
               change24hPct: 0
             };
           });
-          const email = (currentUser as any)?.email || '';
-          const isAdmin = email === 'admin@yooyland.com';
-          const yoyOnly = email === 'jch4389@gmail.com' || email === 'landyooy@gmail.com';
-          const convertedBalances = isAdmin ? convertedBalancesAll : (yoyOnly ? convertedBalancesAll.filter(x => x.symbol === 'YOY') : []);
-          setRealTimeBalances(convertedBalances);
+          setRealTimeBalances(convertedBalancesAll);
         } else {
           setRealTimeBalances(balances);
         }
@@ -237,27 +191,41 @@ export default function DashboardScreen() {
     };
 
     loadRealTimeBalances();
-  }, [currentUserEmail, yoyPriceUSD, calculateFinalBalances]);
+  }, [currentUserEmail, calculateFinalBalances]);
 
-  // realTimeBalances 변경 시 AsyncStorage에 저장 (payments.tsx와 동일한 형식으로)
+  // 글로벌: 앱 대시보드 진입 시 주소 자동 등록(모든 사용자 공통)
   useEffect(() => {
-    const saveRealTimeBalances = async () => {
-      if (!currentUserEmail || realTimeBalances.length === 0) return;
-      
-      const storageKey = `user_balances_${currentUserEmail}`;
+    (async () => {
       try {
-        // dashboard 형식을 payments.tsx 형식으로 변환하여 저장
-        const userBalances: Record<string, number> = {};
-        realTimeBalances.forEach(balance => {
-          userBalances[balance.symbol] = balance.amount;
-        });
-        await AsyncStorage.setItem(storageKey, JSON.stringify(userBalances));
+        const { enrollAddress } = await import('@/lib/monitor');
+        const { getLocalWallet } = await import('@/src/wallet/wallet');
+        const local = await getLocalWallet().catch(()=>null);
+        const addr = local?.address;
+        if (addr) await enrollAddress(addr, (currentUser as any)?.uid || undefined);
+      } catch {}
+    })();
+  }, [currentUser]);
+
+  // realTimeBalances 변경 시 AsyncStorage에 저장 (금액이 변할 때만, 디바운스)
+  const lastSavedJsonRef = React.useRef<string>('');
+  const saveTimerRef = React.useRef<any>(null);
+  useEffect(() => {
+    if (!currentUserEmail || realTimeBalances.length === 0) return;
+    const storageKey = `user_balances_${currentUserEmail}`;
+    const userBalances: Record<string, number> = {};
+    realTimeBalances.forEach(balance => { userBalances[balance.symbol] = balance.amount; });
+    const nextJson = JSON.stringify(userBalances);
+    if (nextJson === lastSavedJsonRef.current) return;
+    if (saveTimerRef.current) { try { clearTimeout(saveTimerRef.current); } catch {} }
+    saveTimerRef.current = setTimeout(async () => {
+      try {
+        await AsyncStorage.setItem(storageKey, nextJson);
+        lastSavedJsonRef.current = nextJson;
       } catch (error) {
         console.error('Error saving dashboard balances:', error);
       }
-    };
-
-    saveRealTimeBalances();
+    }, 300);
+    return () => { try { clearTimeout(saveTimerRef.current); } catch {} };
   }, [realTimeBalances, currentUserEmail]);
 
   // 잔액 새로고침 함수
@@ -352,11 +320,11 @@ export default function DashboardScreen() {
     return colorMap[type] || '#FFFFFF';
   };
 
-  // 주기적으로 잔액 새로고침 (5초마다)
+  // 주기적으로 잔액 새로고침 (20초 간격, 포커스 시 즉시 갱신)
   useEffect(() => {
     const interval = setInterval(() => {
       refreshBalances();
-    }, 5000);
+    }, 20000);
 
     return () => clearInterval(interval);
   }, [refreshBalances]);
@@ -376,7 +344,8 @@ export default function DashboardScreen() {
   
   // 즐겨찾기 우선순위로 정렬: 즐겨찾기 먼저, 그 다음 보유금액 순
   const sortedBalances = useMemo(() => {
-    return realTimeBalances.sort((a, b) => {
+    const onlyOwned = (realTimeBalances || []).filter(b => (typeof b.amount === 'number' && b.amount > 0));
+    return onlyOwned.slice().sort((a, b) => {
       const aIsFavorite = favorites.includes(a.symbol);
       const bIsFavorite = favorites.includes(b.symbol);
       
@@ -412,7 +381,7 @@ export default function DashboardScreen() {
   useEffect(() => {
     (async () => {
       if (isAuthenticated && currentUser?.uid) {
-        const saved = await AsyncStorage.getItem(`u:${currentUser.uid}:profile.photoUri`);
+        const saved = await AsyncStorage.getItem(photoKeyFor(currentUser.uid));
         if (saved) setAvatarUri(saved);
         
         // Load username
@@ -560,6 +529,7 @@ export default function DashboardScreen() {
     { key: 'memo', labelEn: 'Memo', labelKo: '메모', icon: '◑' },
   ]), [language]);
 
+  // 가격/환율 업데이트: 금액(realTimeBalances.amount)은 '절대 불변'으로 유지하고 valueUSD/currentPrice만 보정
   useEffect(() => {
     (async () => {
       const exchangeRates = await getExchangeRates();
@@ -569,42 +539,40 @@ export default function DashboardScreen() {
       try {
         console.log('🔄 대시보드 실시간 가격 업데이트 시작...');
         await updateRealTimePrices();
-        
-        const updatedBalances = realTimeBalances.map(balance => {
-          const usdPrice = getCoinPriceByCurrency(balance.symbol, 'USD');
-          if (usdPrice > 0) {
-            const newValueUSD = balance.amount * usdPrice;
-            console.log(`✅ ${balance.symbol}: ${balance.amount} * ${usdPrice} = ${newValueUSD}`);
-            return {
-              ...balance,
-              valueUSD: newValueUSD,
-              currentPrice: usdPrice
-            };
+        // 금액은 절대 수정하지 않고, 가격/가치만 갱신
+        const newList = realTimeBalances.map((balance) => {
+          try {
+            const usdPrice = getCoinPriceByCurrency(balance.symbol, 'USD');
+            if (usdPrice > 0) {
+              const newValueUSD = balance.amount * usdPrice;
+              console.log(`✅ ${balance.symbol}: ${balance.amount} * ${usdPrice} = ${newValueUSD}`);
+              return { ...balance, valueUSD: newValueUSD, currentPrice: usdPrice };
+            }
+            console.log(`⚠️ ${balance.symbol} 가격 데이터 없음, 기본값 유지`);
+            return balance;
+          } catch {
+            return balance;
           }
-          console.log(`⚠️ ${balance.symbol} 가격 데이터 없음, 기본값 사용`);
-          return balance;
         });
-        
-        setRealTimeBalances(updatedBalances);
-        try {
-          evaluateAlertsForBalances(updatedBalances);
-        } catch (e) {
-          console.log('evaluateAlertsForBalances error', e);
-        }
+        setRealTimeBalances(newList);
+        try { evaluateAlertsForBalances(newList); } catch (e) { console.log('evaluateAlertsForBalances error', e); }
         
         console.log('✅ 대시보드 가격 업데이트 완료');
       } catch (error) {
         console.error('❌ 대시보드 가격 업데이트 실패:', error);
         // 실패 시에도 YOY는 컨텍스트 가격으로 보정
-        const adjusted = balances.map(b => b.symbol === 'YOY' && yoyPriceUSD ? ({ ...b, valueUSD: b.amount * yoyPriceUSD, currentPrice: yoyPriceUSD }) : b);
-        setRealTimeBalances(adjusted);
+        setRealTimeBalances((prev) => prev.map((b) =>
+          (b.symbol === 'YOY' && yoyPriceUSD)
+            ? ({ ...b, valueUSD: b.amount * yoyPriceUSD, currentPrice: yoyPriceUSD })
+            : b
+        ));
       }
     })();
-  }, [currency, currentUserEmail, yoyPriceUSD]);
+  }, [currency, currentUserEmail]);
 
   useEffect(() => {
     (async () => {
-      const saved = await AsyncStorage.getItem(PHOTO_KEY);
+      const saved = await AsyncStorage.getItem(photoKeyFor(currentUser?.uid));
       if (saved) setAvatarUri(saved);
       
       // Check daily reward status
@@ -636,7 +604,12 @@ export default function DashboardScreen() {
     })();
   }, [isAuthenticated, currentUser?.uid]);
 
-  // Calculate total assets in different currencies
+  // 보유(양수) 자산만 필터 (금액은 AsyncStorage+거래집계만 사용, 가격과 무관)
+  const ownedBalances = useMemo(() => {
+    return realTimeBalances.filter(b => typeof b.amount === 'number' && b.amount > 0);
+  }, [realTimeBalances]);
+
+  // Calculate total assets in different currencies (보유 자산만, 안전 합계)
   const getTotalInCurrency = (currency: string) => {
     if (currency === 'Crypto') {
       // Convert all crypto assets to ETH equivalent (ETH is the base currency)
@@ -658,8 +631,13 @@ export default function DashboardScreen() {
         return { amount: fiatBalance.amount, symbol: currency };
       }
       
-      // Fallback to USD conversion if fiat currency not found
-      const total = realTimeBalances.reduce((sum, balance) => sum + balance.valueUSD, 0);
+      // 보유 자산 기준 합계 (valueUSD가 NaN이면 안전 재계산)
+      const total = ownedBalances.reduce((sum, balance) => {
+        const safeUSD = (typeof balance.valueUSD === 'number' && isFinite(balance.valueUSD))
+          ? balance.valueUSD
+          : (balance.symbol === 'YOY' && yoyPriceUSD ? balance.amount * yoyPriceUSD : 0);
+        return sum + safeUSD;
+      }, 0);
       const converted = rates ? total * rates[currency] : total;
       return { amount: converted, symbol: currency };
     }
@@ -944,7 +922,7 @@ export default function DashboardScreen() {
     if (actionId === 'todo') {
       router.push('/(tabs)/todo');
     } else if (actionId === 'chat') {
-      router.push('/(tabs)/chat');
+      try { router.push('/chat/friends'); } catch { router.push('/(tabs)/chat'); }
     } else if (actionId === 'quickSet') {
       setMoreModalOpen(true);
     } else if (actionId === 'reward') {
@@ -954,7 +932,7 @@ export default function DashboardScreen() {
     } else if (actionId === 'receive') {
       router.push('/(tabs)/wallet?tab=receive');
     } else if (actionId === 'qr') {
-      router.push('/(tabs)/wallet?tab=receive');
+      try { router.push('/chat/add-friend-qr?from=dashboard'); } catch { router.push('/(tabs)/wallet?tab=receive'); }
     } else if (actionId === 'gift') {
       router.push('/(tabs)/wallet?tab=gift');
     } else if (actionId === 'history') {
@@ -1175,12 +1153,17 @@ export default function DashboardScreen() {
             </View>
             
             <View style={styles.mainBalance}>
-              <ThemedText style={styles.balanceAmount}>
-                {formatNumber(getTotalInCurrency(selectedCurrency).amount, selectedCurrency)} {getTotalInCurrency(selectedCurrency).symbol}
-              </ThemedText>
+              {(() => {
+                const totalInSelected = getTotalInCurrency(selectedCurrency);
+                return (
+                  <ThemedText style={styles.balanceAmount}>
+                    {formatNumber(totalInSelected.amount, selectedCurrency)} {totalInSelected.symbol}
+                  </ThemedText>
+                );
+              })()}
               <ThemedText style={styles.assetCount}>
-                {selectedCurrency === 'Crypto' 
-                  ? realTimeBalances.filter(balance => 
+                {selectedCurrency === 'Crypto'
+                  ? ownedBalances.filter(balance =>
                       ['YOY', 'BTC', 'ETH', 'SOL', 'DOT', 'BNB', 'AVAX', 'XMR', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC'].includes(balance.symbol)
                     ).length
                   : 1
@@ -1255,7 +1238,7 @@ export default function DashboardScreen() {
             ))}
             <TouchableOpacity style={styles.actionButton} onPress={()=>router.push('/settings/quick-actions')}>
               <ThemedText style={styles.actionIcon}>⋯</ThemedText>
-              <ThemedText style={styles.actionText}>Quick Set</ThemedText>
+              <ThemedText style={styles.actionText} numberOfLines={1}>Quick Set</ThemedText>
             </TouchableOpacity>
           </View>
         </View>
