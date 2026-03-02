@@ -1789,6 +1789,35 @@ export default function WalletScreen() {
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [username, setUsername] = useState<string>('');
   const total = useMemo(() => realTimeBalances.reduce((s, b) => s + b.valueUSD, 0), [realTimeBalances]);
+  // 즉시 반영용: 로컬 잔액 조정(optimistic) + 퍼시스트
+  const adjustLocalBalance = useCallback(async (symbol: string, delta: number) => {
+    try {
+      const sym = String(symbol || '').toUpperCase();
+      const storageKey = `user_balances_${currentUserEmail}`;
+      // 1) AsyncStorage 업데이트
+      let saved: Record<string, number> = {};
+      try {
+        const raw = await AsyncStorage.getItem(storageKey);
+        saved = raw ? JSON.parse(raw) : {};
+      } catch {}
+      const nextAmount = Math.max(0, Number((saved[sym] ?? 0)) + Number(delta || 0));
+      saved[sym] = nextAmount;
+      try { await AsyncStorage.setItem(storageKey, JSON.stringify(saved)); } catch {}
+      // 2) 화면 상태 즉시 반영
+      setRealTimeBalances((prev) => {
+        const idx = prev.findIndex((b) => b.symbol === sym);
+        if (idx < 0) {
+          return [...prev, { symbol: sym, amount: nextAmount, valueUSD: 0, name: sym, change24h: 0, change24hPct: 0 } as any];
+        }
+        const base = prev[idx];
+        const usdPerUnit = base.amount ? (base.valueUSD / base.amount) : 0;
+        const updated = { ...base, amount: nextAmount, valueUSD: usdPerUnit ? nextAmount * usdPerUnit : base.valueUSD };
+        const out = [...prev];
+        out[idx] = updated;
+        return out;
+      });
+    } catch {}
+  }, [currentUserEmail, setRealTimeBalances]);
   
   // QR 스캔 모달이 열릴 때마다 카메라 권한을 즉시 재확인/요청
   useEffect(() => {
@@ -3894,6 +3923,7 @@ export default function WalletScreen() {
           };
           await addTransaction(transactionData as any);
           try { walletStore.addTransaction({ type:'transfer', success:true, status:'completed', symbol:'ETH', amount: parseFloat(sendInput)||0, change: -(parseFloat(sendInput)||0), description: transactionData.description, transactionHash: txHash, source:'wallet' } as any); } catch {}
+          try { await adjustLocalBalance('ETH', -(parseFloat(sendInput)||0)); } catch {}
           setSendToAddress(''); setSendInput(''); setSendPct(null); setIsRequest(false); setOriginalUrlData(null);
           try { Alert.alert(language==='en'?'Success':'완료', 'ETH 전송 완료'); } catch {}
           setTimeout(()=>{ try { setActiveTab('history'); setHistoryPage(1); } catch {}; setSelectedTransaction(transactionData as any); setTransactionDetailVisible(true); }, 800);
@@ -4095,6 +4125,7 @@ export default function WalletScreen() {
           try {
             walletStore.addTransaction({ type:'transfer', success:true, status:'completed', symbol: sendSelectedSymbol, amount: sendAmount, change: -sendAmount, description: transactionData.description, transactionHash: transactionData.hash, source:'wallet' } as any);
           } catch {}
+          try { await adjustLocalBalance(sendSelectedSymbol, -sendAmount); } catch {}
 
           setSendToAddress('');
           setSendInput('');
@@ -4165,6 +4196,7 @@ export default function WalletScreen() {
           };
           await addTransaction(transactionData as any);
           try { walletStore.addTransaction({ type:'transfer', success:true, status:'completed', symbol:'YOY', amount: parseFloat(sendInput)||0, change: -(parseFloat(sendInput)||0), description: transactionData.description, transactionHash: res.hash, source:'wallet' } as any); } catch {}
+          try { await adjustLocalBalance('YOY', -(parseFloat(sendInput)||0)); } catch {}
           setSendToAddress(''); setSendInput(''); setSendPct(null); setIsRequest(false); setOriginalUrlData(null);
           try { Alert.alert(language==='en'?'Success':'완료', 'YOY 전송 완료'); } catch {}
           setTimeout(()=>{ try { setActiveTab('history'); setHistoryPage(1); } catch {}; setSelectedTransaction(transactionData as any); setTransactionDetailVisible(true); }, 800);
