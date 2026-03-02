@@ -1634,7 +1634,8 @@ export default function WalletScreen() {
           } catch {}
         };
         await pull();
-        timer = setInterval(pull, 60000);
+        // Faster reconciliation for inbound transfers
+        timer = setInterval(pull, 10000);
       } catch {}
     })();
     return () => { if (timer) try { clearInterval(timer); } catch {} };
