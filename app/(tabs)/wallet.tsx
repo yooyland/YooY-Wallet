@@ -1590,7 +1590,25 @@ export default function WalletScreen() {
             if (addr) { try { await meEnrollAddress(addr, idt); } catch {} }
             // Fetch balances/transactions via /me/*
             try {
-              const balsMe = await fetchMeBalances(idt);
+              const { getEthMonitorHttp } = await import('@/lib/config');
+              const base = await getEthMonitorHttp();
+              // 1) prime: addresses
+              let meAddrs: string[] = [];
+              try {
+                const r = await fetch(`${base}/me/addresses`, { headers: { Authorization: `Bearer ${idt}` } });
+                const j = await r.json().catch(()=>({}));
+                meAddrs = Array.isArray(j?.addresses) ? j.addresses : [];
+              } catch {}
+              // 2) balances
+              let balsMe = await fetchMeBalances(idt);
+              // 3) if empty but have addresses, ping /balances/:addr to trigger refresh, then retry
+              if ((!balsMe || Object.keys(balsMe).length === 0) && meAddrs.length > 0) {
+                try {
+                  await Promise.all(meAddrs.map(a => fetch(`${base}/balances/${a}`).catch(()=>null)));
+                  await new Promise(r => setTimeout(r, 1000));
+                  balsMe = await fetchMeBalances(idt);
+                } catch {}
+              }
               setRealTimeBalances(prev => {
                 const next = [...prev];
                 const apply = (sym: string, valStr?: string) => {
