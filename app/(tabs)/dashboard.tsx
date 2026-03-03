@@ -245,22 +245,16 @@ export default function DashboardScreen() {
                   balsMe = await fetchMeBalances(idt);
                 } catch {}
               }
-              setRealTimeBalances(prev => {
-                let next = [...prev];
-                const up = (list: any[], symbol: string, amountStr?: string) => {
-                  if (amountStr == null) return list;
-                  const amt = Number(amountStr);
-                  const idx = list.findIndex(b => b.symbol === symbol);
-                  if (idx < 0) return [...list, { symbol, amount: amt, valueUSD: 0, name: symbol, change24h: 0, change24hPct: 0 } as any];
-                  const base = list[idx];
-                  const usdPerUnit = base.amount ? (base.valueUSD / base.amount) : 0;
-                  const updated = { ...base, amount: amt, valueUSD: usdPerUnit ? amt * usdPerUnit : base.valueUSD };
-                  const out = [...list]; out[idx] = updated; return out;
-                };
-                next = up(next, 'YOY', (balsMe as any)?.YOY);
-                next = up(next, 'ETH', (balsMe as any)?.ETH);
-                return next;
-              });
+              // Replace state with server balances map → array
+              const arr = Object.entries(balsMe || {}).map(([sym, val]) => ({
+                symbol: sym,
+                amount: Number(val as any) || 0,
+                valueUSD: 0,
+                name: sym,
+                change24h: 0,
+                change24hPct: 0,
+              })) as any[];
+              setRealTimeBalances(arr);
             } catch {}
             // Transactions fetch acknowledged; dashboard does not render tx list directly.
           }

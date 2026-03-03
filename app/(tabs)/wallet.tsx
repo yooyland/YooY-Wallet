@@ -1609,24 +1609,16 @@ export default function WalletScreen() {
                   balsMe = await fetchMeBalances(idt);
                 } catch {}
               }
-              setRealTimeBalances(prev => {
-                const next = [...prev];
-                const apply = (sym: string, valStr?: string) => {
-                  if (valStr == null) return;
-                  const amt = Number(valStr);
-                  const idx = next.findIndex(b => b.symbol === sym);
-                  if (idx >= 0) {
-                    const base = next[idx];
-                    const usdPerUnit = base.amount ? (base.valueUSD / base.amount) : 0;
-                    next[idx] = { ...base, amount: amt, valueUSD: usdPerUnit ? amt * usdPerUnit : base.valueUSD };
-                  } else {
-                    next.push({ symbol: sym, amount: amt, valueUSD: 0, name: sym, change24h: 0, change24hPct: 0 } as any);
-                  }
-                };
-                apply('YOY', (balsMe as any)?.YOY);
-                apply('ETH', (balsMe as any)?.ETH);
-                return next;
-              });
+              // Replace state with server balances map → array
+              const arr = Object.entries(balsMe || {}).map(([sym, val]) => ({
+                symbol: sym,
+                amount: Number(val as any) || 0,
+                valueUSD: 0,
+                name: sym,
+                change24h: 0,
+                change24hPct: 0,
+              })) as any[];
+              setRealTimeBalances(arr);
             } catch {}
             try {
               const txsMe = await fetchMeTransactions(idt, 1, 100);
