@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, ScrollView, TouchableOpacity } from 'react-native';
+import { View, ScrollView, TouchableOpacity, TextInput } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useAuth } from '@/contexts/AuthContext';
@@ -15,6 +15,8 @@ export default function SyncDebug() {
   const [addrRes, setAddrRes] = useState<{ status?: number; ms?: number; requestUrl?: string; raw?: string; error?: string }>({});
   const [balRes, setBalRes] = useState<{ status?: number; ms?: number; requestUrl?: string; raw?: string; error?: string }>({});
   const [txRes, setTxRes] = useState<{ status?: number; ms?: number; requestUrl?: string; raw?: string; error?: string }>({});
+  const [linkAddr, setLinkAddr] = useState<string>('');
+  const [linkRes, setLinkRes] = useState<{ status?: number; ms?: number; requestUrl?: string; raw?: string; error?: string }>({});
 
   useEffect(() => {
     (async () => {
@@ -66,6 +68,38 @@ export default function SyncDebug() {
       else setTxRes(res);
     }
   }
+  async function runPostLink() {
+    try {
+      const u = (firebaseAuth as any)?.currentUser;
+      const token = u ? await u.getIdToken(true) : null;
+      if (!token) {
+        setLinkRes({ status: 401, ms: 0, requestUrl: new URL('/me/addresses', base).toString(), raw: JSON.stringify({ error: 'no token' }) });
+        return;
+      }
+      const url = new URL('/me/addresses', base).toString();
+      const t0 = Date.now();
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: (linkAddr || '').trim() })
+      });
+      const ms = Date.now() - t0;
+      const text = await r.text();
+      setTokenHead(token.slice(0,20));
+      setLinkRes({ status: r.status, ms, requestUrl: url, raw: text });
+      // auto refresh sequence
+      await runMe('/me/addresses');
+      await runMe('/me/balances');
+      await runMe('/me/transactions?page=1&limit=50');
+    } catch (e:any) {
+      setLinkRes({ error: String(e?.message||e) });
+    }
+  }
+  async function runRefresh() {
+    await runMe('/me/addresses');
+    await runMe('/me/balances');
+    await runMe('/me/transactions?page=1&limit=50');
+  }
 
   return (
     <ThemedView style={{ flex: 1, padding: 16 }}>
@@ -99,6 +133,28 @@ export default function SyncDebug() {
           <ThemedText>GET /me/transactions?page=1&limit=50</ThemedText>
         </TouchableOpacity>
         <ThemedText selectable>{JSON.stringify(txRes, null, 2)}</ThemedText>
+
+        {/* Link Address section */}
+        <View style={{ height: 12 }} />
+        <ThemedText style={{ fontWeight:'800', marginBottom:6 }}>Link Address</ThemedText>
+        <TextInput
+          style={{ backgroundColor:'#111', color:'#fff', borderWidth:1, borderColor:'#333', borderRadius:8, padding:10, marginBottom:8 }}
+          value={linkAddr}
+          onChangeText={setLinkAddr}
+          placeholder="0x..."
+          placeholderTextColor="#666"
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        <View style={{ flexDirection:'row', gap:8 }}>
+          <TouchableOpacity onPress={runPostLink} style={{ backgroundColor:'#FFD700', padding:10, borderRadius:6 }}>
+            <ThemedText style={{ color:'#000', fontWeight:'900' }}>POST /me/addresses</ThemedText>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={runRefresh} style={{ backgroundColor:'#333', padding:10, borderRadius:6 }}>
+            <ThemedText>Refresh</ThemedText>
+          </TouchableOpacity>
+        </View>
+        <ThemedText selectable>{JSON.stringify(linkRes, null, 2)}</ThemedText>
       </ScrollView>
     </ThemedView>
   );
