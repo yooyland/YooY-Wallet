@@ -56,19 +56,8 @@ export default function DashboardScreen() {
   const { getTransactions, recordReward, addTransaction: addTxStore } = useTransactionStore();
   // 실제 사용자 이메일 사용
   const currentUserEmail = currentUser?.email || 'user@example.com';
-  const baseBalances = getMockBalancesForUser(currentUserEmail);
-  // 발행화폐(법정화폐) 제거: KRW, USD, JPY, CNY, EUR
-  const cryptoOnlyBalances = baseBalances.filter(b => !['KRW', 'USD', 'JPY', 'CNY', 'EUR'].includes(b.symbol));
-  const balances = cryptoOnlyBalances.map(b => {
-    // 초기 렌더에서도 NaN이 나오지 않도록 안전가드
-    const baseUSD = typeof b.valueUSD === 'number' && isFinite(b.valueUSD) ? b.valueUSD : 0;
-    const baseAmt = typeof b.amount === 'number' && isFinite(b.amount) ? b.amount : 0;
-    if (b.symbol === 'YOY') {
-      const usd = yoyPriceUSD ? baseAmt * yoyPriceUSD : baseUSD;
-      return { ...b, amount: baseAmt, valueUSD: isFinite(usd) ? usd : 0 };
-    }
-    return { ...b, amount: baseAmt, valueUSD: baseUSD };
-  });
+  // 모니터 서버 기반으로만 표시: 초기값은 빈 배열
+  const balances: any[] = [];
   const locale = language === 'ko' ? 'ko-KR' : language === 'ja' ? 'ja-JP' : language === 'zh' ? 'zh-CN' : 'en-US';
   const [refreshingDash, setRefreshingDash] = useState(false);
   // TDZ 방지용 베이스 함수: 위에 선언하여 초기 렌더에서도 안전
@@ -164,31 +153,23 @@ export default function DashboardScreen() {
           }
           
           const convertedBalancesAll = Object.entries(finalBalances).map(([symbol, amount]) => {
-            const baseBalance = baseBalances.find(b => b.symbol === symbol);
-            if (baseBalance) {
-              return {
-                ...baseBalance,
-                amount: amount as number,
-                // 초기 로드시 금액 중심으로 불러오고, 가격 적용은 별도 가격 업데이트(effect)에서 처리
-                valueUSD: (amount as number) * (baseBalance.amount ? (baseBalance.valueUSD / baseBalance.amount) : 0)
-              };
-            }
             return {
               symbol,
-              amount: amount as number,
+              amount: Number(amount),
               valueUSD: 0,
               name: symbol,
               change24h: 0,
               change24hPct: 0
-            };
+            } as any;
           });
           setRealTimeBalances(convertedBalancesAll);
         } else {
-          setRealTimeBalances(balances);
+          // 초기값은 빈 배열 유지 (서버 동기화 전 0 표시 금지)
+          setRealTimeBalances([]);
         }
       } catch (error) {
         console.error('Error loading dashboard balances:', error);
-        setRealTimeBalances(balances);
+        setRealTimeBalances([]);
       }
     };
 
@@ -1706,17 +1687,19 @@ export default function DashboardScreen() {
                     <View style={styles.priceInfo}>
                       <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.price}>
                         {(() => {
+                          const p = holding.currentPrice;
+                          const dash = '—';
                           switch (selectedMarket) {
                             case 'USDT':
-                              return `$${holding.currentPrice.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`;
+                              return p>0 ? `$${p.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}` : dash;
                             case 'KRW':
-                              return `₩${(holding.currentPrice * 1300).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+                              return p>0 ? `₩${(p * 1300).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : dash;
                             case 'ETH':
-                              return `${(holding.currentPrice / 3000).toLocaleString('en-US', { minimumFractionDigits: 6, maximumFractionDigits: 6 })} ETH`;
+                              return p>0 ? `${(p / 3000).toLocaleString('en-US', { minimumFractionDigits: 6, maximumFractionDigits: 6 })} ETH` : dash;
                             case 'FAV':
-                              return `$${holding.currentPrice.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`;
+                              return p>0 ? `$${p.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}` : dash;
                             default:
-                              return `$${holding.currentPrice.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`;
+                              return p>0 ? `$${p.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 })}` : dash;
                           }
                         })()}
                       </ThemedText>
@@ -1764,17 +1747,19 @@ export default function DashboardScreen() {
                   <View style={styles.volumeInfo}>
                       <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.volume}>
                         {(() => {
+                          const v = holding.currentValue;
+                          const dash = '—';
                           switch (selectedMarket) {
                             case 'USDT':
-                              return `$${holding.currentValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                              return v>0 ? `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : dash;
                             case 'KRW':
-                              return `₩${(holding.currentValue * 1300).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+                              return v>0 ? `₩${(v * 1300).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : dash;
                             case 'ETH':
-                              return `${(holding.currentValue / 3000).toLocaleString('en-US', { minimumFractionDigits: 6, maximumFractionDigits: 6 })} ETH`;
+                              return v>0 ? `${(v / 3000).toLocaleString('en-US', { minimumFractionDigits: 6, maximumFractionDigits: 6 })} ETH` : dash;
                             case 'FAV':
-                              return `$${holding.currentValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                              return v>0 ? `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : dash;
                             default:
-                              return `$${holding.currentValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                              return v>0 ? `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : dash;
                           }
                         })()}
                       </ThemedText>

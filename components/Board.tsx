@@ -55,8 +55,8 @@ export default function Board({ boardType, title }: { boardType: BoardType; titl
       noPosts: 'No posts yet.', replyPlaceholder: 'Type a reply'
     };
   }, [language]);
-  const uid = currentUser?.uid || 'guest';
-  const email = currentUser?.email || 'guest';
+  const uid = currentUser?.uid || '';
+  const email = currentUser?.email || '';
   const admin = currentUser?.email ? isAdmin(currentUser.email) : false;
   const storageKey = `board:${boardType}`;
   const { focus, id } = useLocalSearchParams<{ focus?: string; id?: string }>();
@@ -147,6 +147,11 @@ export default function Board({ boardType, title }: { boardType: BoardType; titl
         <ThemedText style={styles.headerTitle}>{title}</ThemedText>
       </View>
 
+      {/* Require login */}
+      {!currentUser ? (
+        <View style={styles.card}><ThemedText style={{ color:'#9CA3AF' }}>로그인이 필요합니다</ThemedText></View>
+      ) : (
+      <>
       {/* New post form (users) */}
       <View style={styles.card}>
         <ThemedText style={styles.cardTitle}>{L.newPost}</ThemedText>
@@ -222,6 +227,8 @@ export default function Board({ boardType, title }: { boardType: BoardType; titl
           ))
         )}
       </ScrollView>
+      </>
+      )}
     </ThemedView>
   );
 }
