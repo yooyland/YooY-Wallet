@@ -218,14 +218,13 @@ export default function DashboardScreen() {
         const local = await getLocalWallet().catch(() => null);
         const wcAddr = (() => { try { return wc?.connected ? (wc?.address || null) : null; } catch { return null; } })();
         const addr = (wcAddr || local?.address) as string | undefined;
-        if (!addr) return;
         // Authenticated flow: enroll + me/balances + me/transactions
         try {
           const { firebaseAuth } = await import('@/lib/firebase');
           const u = (firebaseAuth as any)?.currentUser;
           const idt = u ? await u.getIdToken() : null;
           if (idt) {
-            await meEnrollAddress(addr, idt);
+            if (addr) { try { await meEnrollAddress(addr, idt); } catch {} }
             try {
               const balsMe = await fetchMeBalances(idt);
               setRealTimeBalances(prev => {
