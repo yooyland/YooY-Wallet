@@ -206,6 +206,46 @@ export default function DashboardScreen() {
     })();
   }, [currentUser]);
 
+  // 모니터 잔액을 주기적으로 끌어와 YOY/ETH를 정확히 대체 (모든 사용자 공통)
+  useEffect(() => {
+    let timer: any;
+    (async () => {
+      try {
+        const { fetchBalances } = await import('@/lib/monitor');
+        const { getLocalWallet } = await import('@/src/wallet/wallet');
+        const local = await getLocalWallet().catch(()=>null);
+        const addr = local?.address as string | undefined;
+        if (!addr) return;
+        const pull = async () => {
+          try {
+            const bals = await fetchBalances(addr);
+            setRealTimeBalances(prev => {
+              const up = (list: any[], symbol: string, amountStr?: string) => {
+                if (amountStr == null) return list;
+                const amt = Number(amountStr);
+                const idx = list.findIndex(b => b.symbol === symbol);
+                if (idx < 0) return [...list, { symbol, amount: amt, valueUSD: 0, name: symbol, change24h: 0, change24hPct: 0 } as any];
+                const base = list[idx];
+                const usdPerUnit = base.amount ? (base.valueUSD / base.amount) : 0;
+                const updated = { ...base, amount: amt, valueUSD: usdPerUnit ? amt * usdPerUnit : base.valueUSD };
+                const out = [...list];
+                out[idx] = updated;
+                return out;
+              };
+              let next = [...prev];
+              next = up(next, 'YOY', (bals as any)?.YOY);
+              next = up(next, 'ETH', (bals as any)?.ETH);
+              return next;
+            });
+          } catch {}
+        };
+        await pull();
+        timer = setInterval(pull, 10000);
+      } catch {}
+    })();
+    return () => { if (timer) try { clearInterval(timer); } catch {} };
+  }, []);
+
   // realTimeBalances 변경 시 AsyncStorage에 저장 (금액이 변할 때만, 디바운스)
   const lastSavedJsonRef = React.useRef<string>('');
   const saveTimerRef = React.useRef<any>(null);
