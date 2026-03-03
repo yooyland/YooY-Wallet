@@ -835,10 +835,13 @@ export default function DashboardScreen() {
         maximumFractionDigits: 0,
       }).format(num);
     } else {
-      // For crypto currencies, always show 4 decimal places with thousand separators
+      // Crypto: hide decimals for values >= 1000 to avoid layout jitter
+      const abs = Math.abs(num);
+      const minFrac = abs >= 1000 ? 0 : 4;
+      const maxFrac = abs >= 1000 ? 0 : 4;
       return new Intl.NumberFormat('en-US', {
-        minimumFractionDigits: 4,
-        maximumFractionDigits: 4,
+        minimumFractionDigits: minFrac,
+        maximumFractionDigits: maxFrac,
       }).format(num);
     }
   };
@@ -1362,14 +1365,14 @@ export default function DashboardScreen() {
                 ).map((balance) => (
                   <View key={balance.symbol} style={styles.holdingItem}>
                     <TouchableOpacity style={styles.holdingInfo} onPress={() => handleCoinPress(balance)} activeOpacity={0.7}>
-                      <ThemedText style={styles.holdingSymbol}>{balance.symbol}</ThemedText>
-                      <ThemedText style={styles.holdingName}>{balance.name}</ThemedText>
+                      <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.holdingSymbol}>{balance.symbol}</ThemedText>
+                      <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.holdingName}>{balance.name}</ThemedText>
                     </TouchableOpacity>
                     <View style={styles.holdingAmount}>
-                      <ThemedText style={styles.holdingValue}>
+                      <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.holdingValue}>
                         {formatNumber(balance.amount, balance.symbol)} {balance.symbol}
                       </ThemedText>
-                      <ThemedText style={styles.holdingUSD}>
+                      <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.holdingUSD}>
                         ${formatNumber(balance.valueUSD, 'USD')}
                       </ThemedText>
                     </View>
@@ -1670,16 +1673,16 @@ export default function DashboardScreen() {
                           <View style={styles.coinDetails}>
                             <View style={styles.coinNameContainer}>
                               {nameLanguage === 'en' ? (
-                                <ThemedText style={styles.coinNameEnglish}>
+                                <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.coinNameEnglish}>
                                   {holding.symbol}
                                 </ThemedText>
                               ) : (
-                                <ThemedText style={styles.coinNameKorean}>
+                                <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.coinNameKorean}>
                                   {holding.name}
                                 </ThemedText>
                               )}
                             </View>
-                            <ThemedText style={styles.coinPair}>
+                            <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.coinPair}>
                               {(() => {
                                 switch (selectedMarket) {
                                   case 'USDT':
@@ -1701,7 +1704,7 @@ export default function DashboardScreen() {
                     </View>
                     
                     <View style={styles.priceInfo}>
-                      <ThemedText style={styles.price}>
+                      <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.price}>
                         {(() => {
                           switch (selectedMarket) {
                             case 'USDT':
@@ -1717,7 +1720,7 @@ export default function DashboardScreen() {
                           }
                         })()}
                       </ThemedText>
-                      <ThemedText style={styles.buyPrice}>
+                      <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.buyPrice}>
                         {(() => {
                           switch (selectedMarket) {
                             case 'USDT':
@@ -1736,10 +1739,10 @@ export default function DashboardScreen() {
                     </View>
                     
                     <View style={styles.changeInfo}>
-                      <ThemedText style={[styles.change, { color: isProfit ? '#FF4444' : '#00C851' }]}>
+                      <ThemedText numberOfLines={1} allowFontScaling={false} style={[styles.change, { color: isProfit ? '#FF4444' : '#00C851' }]}>
                         {isProfit ? '+' : ''}{holding.profitLossPercent.toFixed(2)}%
                       </ThemedText>
-                      <ThemedText style={[styles.profit, { color: isProfit ? '#FF4444' : '#00C851' }]}>
+                      <ThemedText numberOfLines={1} allowFontScaling={false} style={[styles.profit, { color: isProfit ? '#FF4444' : '#00C851' }]}>
                         {(() => {
                           const profitValue = Math.abs(holding.profitLoss);
                           switch (selectedMarket) {
@@ -1759,7 +1762,7 @@ export default function DashboardScreen() {
                     </View>
                     
                   <View style={styles.volumeInfo}>
-                      <ThemedText style={styles.volume}>
+                      <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.volume}>
                         {(() => {
                           switch (selectedMarket) {
                             case 'USDT':
@@ -2366,6 +2369,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#333',
+    height: 56,
   },
   holdingName: {
     color: '#CCCCCC',
@@ -2852,6 +2856,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#0A0A0A',
     borderBottomWidth: 1,
     borderBottomColor: '#1A1A1A',
+    height: 72,
   },
   emptyMarketState: {
     backgroundColor: '#1A1A1A',
