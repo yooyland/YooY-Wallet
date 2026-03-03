@@ -241,12 +241,41 @@ export default function DashboardScreen() {
     let timer: any;
     (async () => {
       try {
-        const { fetchBalances } = await import('@/lib/monitor');
+        const { fetchBalances, meEnrollAddress, fetchMeBalances, fetchMeTransactions } = await import('@/lib/monitor');
         const { getLocalWallet } = await import('@/src/wallet/wallet');
         const local = await getLocalWallet().catch(() => null);
         const wcAddr = (() => { try { return wc?.connected ? (wc?.address || null) : null; } catch { return null; } })();
         const addr = (wcAddr || local?.address) as string | undefined;
         if (!addr) return;
+        // Authenticated flow: enroll + me/balances + me/transactions
+        try {
+          const { firebaseAuth } = await import('@/lib/firebase');
+          const u = (firebaseAuth as any)?.currentUser;
+          const idt = u ? await u.getIdToken() : null;
+          if (idt) {
+            await meEnrollAddress(addr, idt);
+            try {
+              const balsMe = await fetchMeBalances(idt);
+              setRealTimeBalances(prev => {
+                let next = [...prev];
+                const up = (list: any[], symbol: string, amountStr?: string) => {
+                  if (amountStr == null) return list;
+                  const amt = Number(amountStr);
+                  const idx = list.findIndex(b => b.symbol === symbol);
+                  if (idx < 0) return [...list, { symbol, amount: amt, valueUSD: 0, name: symbol, change24h: 0, change24hPct: 0 } as any];
+                  const base = list[idx];
+                  const usdPerUnit = base.amount ? (base.valueUSD / base.amount) : 0;
+                  const updated = { ...base, amount: amt, valueUSD: usdPerUnit ? amt * usdPerUnit : base.valueUSD };
+                  const out = [...list]; out[idx] = updated; return out;
+                };
+                next = up(next, 'YOY', (balsMe as any)?.YOY);
+                next = up(next, 'ETH', (balsMe as any)?.ETH);
+                return next;
+              });
+            } catch {}
+            // Transactions fetch acknowledged; dashboard does not render tx list directly.
+          }
+        } catch {}
         // Log request URLs and raw responses
         try {
           const { getEthMonitorHttp } = await import('@/lib/config');

@@ -43,6 +43,37 @@ export async function fetchTransactions(address: string, page = 1, limit = 100):
   return Array.isArray(j?.transactions) ? (j.transactions as MonitorTx[]) : [];
 }
 
+// Authenticated variants (Firebase ID token required)
+export async function meEnrollAddress(address: string, idToken: string): Promise<void> {
+  const base = await getEthMonitorHttp();
+  try {
+    await fetch(`${base}/me/addresses`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${idToken}`
+      },
+      body: JSON.stringify({ address })
+    });
+  } catch {}
+}
+
+export async function fetchMeBalances(idToken: string): Promise<Record<string, string>> {
+  const base = await getEthMonitorHttp();
+  const res = await fetch(`${base}/me/balances`, { headers: { 'Authorization': `Bearer ${idToken}` } });
+  if (!res.ok) return {};
+  const j = await res.json().catch(() => ({}));
+  return (j?.balances || {}) as Record<string, string>;
+}
+
+export async function fetchMeTransactions(idToken: string, page = 1, limit = 100): Promise<MonitorTx[]> {
+  const base = await getEthMonitorHttp();
+  const res = await fetch(`${base}/me/transactions?page=${page}&limit=${limit}`, { headers: { 'Authorization': `Bearer ${idToken}` } });
+  if (!res.ok) return [];
+  const j = await res.json().catch(() => ({}));
+  return Array.isArray(j?.transactions) ? (j.transactions as MonitorTx[]) : [];
+}
+
 export function toHumanAmount(sym: string, isNative: boolean | undefined, amt: string | null, chainIdHex: string | null | undefined): number {
   if (!amt) return 0;
   try {

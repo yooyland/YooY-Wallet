@@ -1572,7 +1572,7 @@ export default function WalletScreen() {
     (async () => {
       try {
         const { getEthChainIdHex, getEthMonitorHttp } = await import('@/lib/config');
-        const { enrollAddress, fetchBalances, fetchTransactions, toHumanAmount } = await import('@/lib/monitor');
+        const { enrollAddress, fetchBalances, fetchTransactions, toHumanAmount, meEnrollAddress, fetchMeBalances, fetchMeTransactions } = await import('@/lib/monitor');
         const chainId = await getEthChainIdHex();
         const { getLocalWallet } = await import('@/src/wallet/wallet');
         const local = await getLocalWallet().catch(()=>null);
@@ -1580,6 +1580,67 @@ export default function WalletScreen() {
         const addr = (wcAddr || local?.address || getWalletBySymbol('YOY')?.address) as string | undefined;
         if (!addr) return;
         await enrollAddress(addr, (currentUser as any)?.uid || undefined);
+        // === New: After Firebase login, use authenticated endpoints ===
+        try {
+          const { firebaseAuth } = await import('@/lib/firebase');
+          const u = (firebaseAuth as any)?.currentUser;
+          const idt = u ? await u.getIdToken() : null;
+          if (idt) {
+            await meEnrollAddress(addr, idt);
+            // Fetch balances/transactions via /me/*
+            try {
+              const balsMe = await fetchMeBalances(idt);
+              setRealTimeBalances(prev => {
+                const next = [...prev];
+                const apply = (sym: string, valStr?: string) => {
+                  if (valStr == null) return;
+                  const amt = Number(valStr);
+                  const idx = next.findIndex(b => b.symbol === sym);
+                  if (idx >= 0) {
+                    const base = next[idx];
+                    const usdPerUnit = base.amount ? (base.valueUSD / base.amount) : 0;
+                    next[idx] = { ...base, amount: amt, valueUSD: usdPerUnit ? amt * usdPerUnit : base.valueUSD };
+                  } else {
+                    next.push({ symbol: sym, amount: amt, valueUSD: 0, name: sym, change24h: 0, change24hPct: 0 } as any);
+                  }
+                };
+                apply('YOY', (balsMe as any)?.YOY);
+                apply('ETH', (balsMe as any)?.ETH);
+                return next;
+              });
+            } catch {}
+            try {
+              const txsMe = await fetchMeTransactions(idt, 1, 100);
+              const exists = new Set<string>();
+              try {
+                const current = (getTransactions({ limit: 1000 }) as any[]) || [];
+                for (const tx of current) { if (tx?.transactionHash) exists.add(String(tx.transactionHash)); }
+              } catch {}
+              for (const t of txsMe) {
+                const h = t.tx_hash;
+                if (exists.has(h)) continue;
+                const isRecv = String(t.to_address || '').toLowerCase() === String(addr).toLowerCase();
+                const sym = (t.asset_symbol || (t.is_native ? 'ETH' : 'YOY')) as string;
+                const human = toHumanAmount(sym, t.is_native, t.amount, chainId);
+                const payload: any = {
+                  type: isRecv ? 'receive' : 'send',
+                  from: t.from_address,
+                  to: t.to_address,
+                  amount: human,
+                  currency: sym,
+                  description: `${sym} ${isRecv ? 'Deposit' : 'Transfer'}`,
+                  status: t.status === 'success' ? 'completed' : 'failed',
+                  hash: t.tx_hash,
+                  blockNumber: t.block_number || undefined,
+                  network: 'Ethereum',
+                  blockTimestamp: t.timestamp
+                };
+                try { await addTransaction(payload); } catch {}
+                try { walletStore.addTransaction({ type:'transfer', success: t.status==='success', status: t.status==='success'?'completed':'failed', symbol: sym, amount: isRecv?human:-human, change: isRecv?human:-human, description: payload.description, transactionHash: h, source: t.source } as any); } catch {}
+              }
+            } catch {}
+          }
+        } catch {}
         // === Detailed logging: URLs and raw JSON responses ===
         try {
           const base = await getEthMonitorHttp();
