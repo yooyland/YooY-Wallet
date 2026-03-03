@@ -76,23 +76,14 @@ export default function DashboardScreen() {
         }
         const finalBalances = calculateFinalBalances(savedBalancesData);
         const convertedBalances = Object.entries(finalBalances).map(([symbol, amount]) => {
-          const baseBalance = baseBalances.find(b => b.symbol === symbol);
-          if (baseBalance) {
-            const usdPerUnit = baseBalance.amount ? (baseBalance.valueUSD / baseBalance.amount) : 0;
-            return {
-              ...baseBalance,
-              amount: amount as number,
-              valueUSD: symbol === 'YOY' && yoyPriceUSD ? (amount as number) * yoyPriceUSD : (amount as number) * usdPerUnit
-            };
-          }
           return {
             symbol,
-            amount: amount as number,
-            valueUSD: symbol === 'YOY' && yoyPriceUSD ? (amount as number) * yoyPriceUSD : 0,
+            amount: Number(amount),
+            valueUSD: symbol === 'YOY' && yoyPriceUSD ? Number(amount) * yoyPriceUSD : 0,
             name: symbol,
             change24h: 0,
             change24hPct: 0
-          };
+          } as any;
         });
         setRealTimeBalances(convertedBalances);
       } else {
@@ -109,7 +100,7 @@ export default function DashboardScreen() {
     } finally {
       setRefreshingDash(false);
     }
-  }, [currentUserEmail, baseBalances, calculateFinalBalances]);
+  }, [currentUserEmail, calculateFinalBalances]);
   const [realTimeBalances, setRealTimeBalances] = useState(balances);
   
   // 코인 상세 모달 상태
@@ -377,7 +368,7 @@ export default function DashboardScreen() {
   // 잔액 새로고침 함수
   const refreshBalances = useCallback(async () => {
     await refreshBalancesBase();
-  }, [currentUserEmail, yoyPriceUSD, baseBalances, calculateFinalBalances]);
+  }, [currentUserEmail, yoyPriceUSD, calculateFinalBalances]);
 
   // 페이지 포커스 시 잔액 새로고침
   useFocusEffect(
