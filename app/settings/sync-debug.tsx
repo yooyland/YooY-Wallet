@@ -8,7 +8,7 @@ import { firebaseAuth } from '@/lib/firebase';
 import * as Clipboard from 'expo-clipboard';
 
 export default function SyncDebug() {
-  const { currentUser } = useAuth();
+  const { currentUser, accessToken } = useAuth();
   const [base, setBase] = useState<string>('');
   const [tokenHead, setTokenHead] = useState<string>('—');
   const [health, setHealth] = useState<{ status?: number; ms?: number; url?: string; body?: any; error?: string }>({});
@@ -21,14 +21,12 @@ export default function SyncDebug() {
       try {
         const b = await getEthMonitorHttp();
         setBase(b);
-        const u = (firebaseAuth as any)?.currentUser;
-        const token = u ? await u.getIdToken(true) : null;
-        if (token) setTokenHead(token.slice(0, 20));
+        if (accessToken) setTokenHead(accessToken.slice(0, 20));
       } catch (e:any) {
         // ignore
       }
     })();
-  }, []);
+  }, [accessToken]);
 
   async function runHealth() {
     try {
@@ -46,7 +44,7 @@ export default function SyncDebug() {
   async function runMe(path: '/me/addresses'|'/me/balances'|'/me/transactions?page=1&limit=50') {
     try {
       const u = (firebaseAuth as any)?.currentUser;
-      const token = u ? await u.getIdToken(true) : null;
+      const token = accessToken || (u ? await u.getIdToken(true) : null);
       if (!token) {
         const err = { status: 401, ms: 0, url: `${base}${path}`, body: { error: 'no token' } };
         if (path.startsWith('/me/addresses')) setAddrRes(err); else if (path.startsWith('/me/balances')) setBalRes(err); else setTxRes(err);

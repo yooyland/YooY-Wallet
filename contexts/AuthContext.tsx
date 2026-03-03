@@ -50,8 +50,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    // Do not auto-restore any session; require explicit user action
-    setIsLoading(false);
+    // 세션 자동 복원: 앱 재진입/포그라운드 시에도 유지
+    (async () => {
+      try {
+        let token: string | null = null;
+        if (Platform.OS === 'web') {
+          try { token = await AsyncStorage.getItem(ACCESS_TOKEN_KEY); } catch {}
+        } else {
+          try { token = await SecureStore.getItemAsync(ACCESS_TOKEN_KEY); } catch {}
+        }
+        if (token) {
+          allowSessionRef.current = true; // 복원 세션 허용
+          setAccessToken(token);
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    })();
   }, []);
 
   // Keep session persisted with Firebase auth state
@@ -59,13 +74,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (Config.authProvider !== 'firebase') return;
     const unsub = onAuthStateChanged(firebaseAuth, async (user) => {
       if (user) {
-        // Only allow sessions created after user-initiated sign-in
-        if (!allowSessionRef.current) {
-          try { await firebaseAuth.signOut(); } catch {}
-          if (Platform.OS === 'web') { await AsyncStorage.removeItem(ACCESS_TOKEN_KEY); } else { await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY); }
-          setAccessToken(null); setCurrentUser(null);
-          return;
-        }
+        // 세션 허용: 사용자 액션 또는 복원 세션(allowSessionRef)이면 유지
         // Guard: block suspicious generic account names like 'user'
         const dn = (user.displayName || '').trim().toLowerCase();
         const localName = (user.email || '').split('@')[0]?.trim().toLowerCase();
@@ -86,7 +95,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           await AsyncStorage.setItem('yoo-last-uid', user.uid);
         } catch {}
 
-        const idt = await user.getIdToken();
+        const idt = await user.getIdToken(true);
         if (Platform.OS !== 'web') {
           // 웹에서는 토큰을 영구 저장하지 않아 로컬스토리지 용량 초과를 방지
           try { await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, idt); } catch {}
@@ -131,7 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           try { await firebaseAuth.signOut(); } catch {}
           throw new Error('Blocked account name');
         }
-        token = await cred.user.getIdToken();
+        token = await cred.user.getIdToken(true);
         setCurrentUser({
           uid: cred.user.uid,
           email: cred.user.email || '',
@@ -162,7 +171,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = useCallback(async () => {
     setIsLoading(true);
     try {
-      allowSessionRef.current = false;
+      allowSessionRef.current = false; // 명시 로그아웃 시에만 세션 차단
       if (Config.authProvider === 'firebase') {
         try { await firebaseAuth.signOut(); } catch {}
       }
@@ -186,7 +195,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       let token: string | undefined;
       if (Config.authProvider === 'firebase') {
         const cred = await createUserWithEmailAndPassword(firebaseAuth, email, password);
-        token = await cred.user.getIdToken();
+        token = await cred.user.getIdToken(true);
         setCurrentUser({
           uid: cred.user.uid,
           email: cred.user.email || '',
@@ -274,7 +283,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!idToken) throw new Error('Missing Google ID token');
         const credential = GoogleAuthProvider.credential(idToken);
         const cred = await signInWithCredential(firebaseAuth, credential);
-        const token = await cred.user.getIdToken();
+        const token = await cred.user.getIdToken(true);
         try { await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, token); } catch {}
         setCurrentUser({
           uid: cred.user.uid,
@@ -298,7 +307,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const provider = new OAuthProvider('apple.com');
       const credential = provider.credential({ idToken: appleRes.identityToken, rawNonce });
       const cred = await signInWithCredential(firebaseAuth, credential);
-      const token = await cred.user.getIdToken();
+      const token = await cred.user.getIdToken(true);
       try { await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, token); } catch {}
       setCurrentUser({
         uid: cred.user.uid,
