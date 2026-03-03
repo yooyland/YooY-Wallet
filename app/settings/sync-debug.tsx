@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { View, ScrollView } from 'react-native';
+import { View, ScrollView, TouchableOpacity } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useAuth } from '@/contexts/AuthContext';
 import { getEthMonitorHttp } from '@/lib/config';
 import { firebaseAuth } from '@/lib/firebase';
+import * as Clipboard from 'expo-clipboard';
 
 export default function SyncDebug() {
   const { currentUser } = useAuth();
@@ -43,6 +44,12 @@ export default function SyncDebug() {
       <ThemedText style={{ fontWeight: '800', fontSize: 16, marginBottom: 8 }}>Sync Debug</ThemedText>
       <ThemedText>uid: {currentUser?.uid || '—'}</ThemedText>
       <ThemedText>base: {base || '—'}</ThemedText>
+      <TouchableOpacity onPress={async ()=>{ try {
+        const payload = JSON.stringify({ meAddresses, meBalances, meTx }, null, 2);
+        await Clipboard.setStringAsync(payload);
+      } catch {} }}>
+        <ThemedText style={{ color:'#FFD700', fontWeight:'800', marginTop:8 }}>Copy JSON</ThemedText>
+      </TouchableOpacity>
       <ScrollView style={{ marginTop: 12 }}>
         <ThemedText style={{ fontWeight: '800', marginBottom: 4 }}>me/addresses</ThemedText>
         <ThemedText selectable>{JSON.stringify(meAddresses, null, 2)}</ThemedText>
