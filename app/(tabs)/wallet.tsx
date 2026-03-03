@@ -1060,9 +1060,9 @@ export default function WalletScreen() {
   
   // 대시보드와 동일한 잔액 데이터 사용
   const currentUserEmail = currentUser?.email || '';
-  const baseBalances = getMockBalancesForUser(currentUserEmail);
-  const cryptoOnlyBalances = baseBalances.filter(b => !['KRW', 'USD', 'JPY', 'CNY', 'EUR'].includes(b.symbol));
-  const [realTimeBalances, setRealTimeBalances] = useState(cryptoOnlyBalances);
+  const baseBalances: any[] = []; // 실제 모니터 잔액으로만 구성
+  const cryptoOnlyBalances: any[] = [];
+  const [realTimeBalances, setRealTimeBalances] = useState<any[]>([]);
 
   // 코인 상세 모달 상태
   const [coinDetailModalVisible, setCoinDetailModalVisible] = useState(false);
