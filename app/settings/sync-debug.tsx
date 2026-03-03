@@ -11,10 +11,10 @@ export default function SyncDebug() {
   const { currentUser, accessToken } = useAuth();
   const [base, setBase] = useState<string>('');
   const [tokenHead, setTokenHead] = useState<string>('—');
-  const [health, setHealth] = useState<{ status?: number; ms?: number; url?: string; body?: any; error?: string }>({});
-  const [addrRes, setAddrRes] = useState<{ status?: number; ms?: number; url?: string; body?: any; error?: string }>({});
-  const [balRes, setBalRes] = useState<{ status?: number; ms?: number; url?: string; body?: any; error?: string }>({});
-  const [txRes, setTxRes] = useState<{ status?: number; ms?: number; url?: string; body?: any; error?: string }>({});
+  const [health, setHealth] = useState<{ status?: number; ms?: number; requestUrl?: string; raw?: string; error?: string }>({});
+  const [addrRes, setAddrRes] = useState<{ status?: number; ms?: number; requestUrl?: string; raw?: string; error?: string }>({});
+  const [balRes, setBalRes] = useState<{ status?: number; ms?: number; requestUrl?: string; raw?: string; error?: string }>({});
+  const [txRes, setTxRes] = useState<{ status?: number; ms?: number; requestUrl?: string; raw?: string; error?: string }>({});
 
   useEffect(() => {
     (async () => {
@@ -30,13 +30,12 @@ export default function SyncDebug() {
 
   async function runHealth() {
     try {
-      const url = `${base}/health`;
+      const url = new URL('/health', base).toString();
       const t0 = Date.now();
       const r = await fetch(url);
       const ms = Date.now() - t0;
       const text = await r.text();
-      let body: any; try { body = JSON.parse(text); } catch { body = text; }
-      setHealth({ status: r.status, ms, url, body });
+      setHealth({ status: r.status, ms, requestUrl: url, raw: text });
     } catch (e:any) {
       setHealth({ error: String(e?.message||e) });
     }
@@ -44,19 +43,19 @@ export default function SyncDebug() {
   async function runMe(path: '/me/addresses'|'/me/balances'|'/me/transactions?page=1&limit=50') {
     try {
       const u = (firebaseAuth as any)?.currentUser;
-      const token = accessToken || (u ? await u.getIdToken(true) : null);
+      const token = u ? await u.getIdToken(true) : null;
       if (!token) {
-        const err = { status: 401, ms: 0, url: `${base}${path}`, body: { error: 'no token' } };
+        const err = { status: 401, ms: 0, requestUrl: new URL(path, base).toString(), raw: JSON.stringify({ error: 'no token' }) };
         if (path.startsWith('/me/addresses')) setAddrRes(err); else if (path.startsWith('/me/balances')) setBalRes(err); else setTxRes(err);
         return;
       }
-      const url = `${base}${path}`;
+      const url = new URL(path, base).toString();
       const t0 = Date.now();
       const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       const ms = Date.now() - t0;
       const text = await r.text();
-      let body: any; try { body = JSON.parse(text); } catch { body = text; }
-      const res = { status: r.status, ms, url, body };
+      setTokenHead(token.slice(0,20));
+      const res = { status: r.status, ms, requestUrl: url, raw: text };
       if (path.startsWith('/me/addresses')) setAddrRes(res);
       else if (path.startsWith('/me/balances')) setBalRes(res);
       else setTxRes(res);

@@ -33,14 +33,15 @@ const KEY_MONITOR_HTTP = 'admin.ethMonitorHttp'; // retained for admin UI displa
 const KEY_MONITOR_WS = 'admin.ethMonitorWs';
 
 export async function getEthMonitorHttp(): Promise<string> {
-  const env = (process as any).env?.EXPO_PUBLIC_ETH_MONITOR_HTTP as string | undefined;
-  if (!env || typeof env !== 'string' || env.length < 8) {
-    console.error('[monitor] EXPO_PUBLIC_ETH_MONITOR_HTTP is missing. Aborting calls.');
-    throw new Error('Monitor base URL not configured');
-  }
-  try { await AsyncStorage.setItem(KEY_MONITOR_HTTP, env); } catch {}
-  console.log('[monitor] base =', env);
-  return env;
+  const c1 = (process as any).env?.EXPO_PUBLIC_ETH_MONITOR_BASE as string | undefined;
+  const c2 = (process as any).env?.EXPO_PUBLIC_API_BASE as string | undefined;
+  const c3 = (process as any).env?.EXPO_PUBLIC_ETH_MONITOR_HTTP as string | undefined;
+  let base = (c1 || c2 || c3 || 'https://yoy-monitor.onrender.com') as string;
+  if (typeof base !== 'string') base = 'https://yoy-monitor.onrender.com';
+  base = base.trim().replace(/\/+$/,''); // remove trailing slash
+  try { await AsyncStorage.setItem(KEY_MONITOR_HTTP, base); } catch {}
+  console.log('[monitor] base =', base);
+  return base;
 }
 
 export async function setEthMonitorHttp(url: string): Promise<void> {
