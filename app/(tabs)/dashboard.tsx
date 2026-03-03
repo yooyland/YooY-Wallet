@@ -38,6 +38,7 @@ import {
     RefreshControl
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useWalletConnect } from '@/contexts/WalletConnectContext';
 
 // Per-user scoped keys
 const photoKeyFor = (uid?: string|null) => (uid ? `u:${uid}:profile.photoUri` : 'profile.photoUri');
@@ -49,9 +50,10 @@ export default function DashboardScreen() {
   const { yoyPriceUSD } = useMarket();
   const { getRecentTransactions, addTransaction, updateTransactionMemo } = useTransaction();
   const DEBUG = typeof __DEV__ !== 'undefined' ? __DEV__ : false;
+  const { state: wc } = useWalletConnect();
   
   // 전역 거래 스토어 사용
-  const { getTransactions, recordReward } = useTransactionStore();
+  const { getTransactions, recordReward, addTransaction: addTxStore } = useTransactionStore();
   // 실제 사용자 이메일 사용
   const currentUserEmail = currentUser?.email || 'user@example.com';
   const baseBalances = getMockBalancesForUser(currentUserEmail);
@@ -193,28 +195,30 @@ export default function DashboardScreen() {
     loadRealTimeBalances();
   }, [currentUserEmail, calculateFinalBalances]);
 
-  // 글로벌: 앱 대시보드 진입 시 주소 자동 등록(모든 사용자 공통)
+  // 글로벌: 앱 대시보드 진입 시 주소 자동 등록(모든 사용자 공통, WC 우선)
   useEffect(() => {
     (async () => {
       try {
         const { enrollAddress } = await import('@/lib/monitor');
         const { getLocalWallet } = await import('@/src/wallet/wallet');
-        const local = await getLocalWallet().catch(()=>null);
-        const addr = local?.address;
+        const local = await getLocalWallet().catch(() => null);
+        const wcAddr = (() => { try { return wc?.connected ? (wc?.address || null) : null; } catch { return null; } })();
+        const addr = (wcAddr || local?.address) as string | undefined;
         if (addr) await enrollAddress(addr, (currentUser as any)?.uid || undefined);
       } catch {}
     })();
-  }, [currentUser]);
+  }, [currentUser, wc?.connected, wc?.address]);
 
-  // 모니터 잔액을 주기적으로 끌어와 YOY/ETH를 정확히 대체 (모든 사용자 공통)
+  // 모니터 잔액을 주기적으로 끌어와 YOY/ETH를 정확히 대체 (모든 사용자 공통, WC 우선)
   useEffect(() => {
     let timer: any;
     (async () => {
       try {
         const { fetchBalances } = await import('@/lib/monitor');
         const { getLocalWallet } = await import('@/src/wallet/wallet');
-        const local = await getLocalWallet().catch(()=>null);
-        const addr = local?.address as string | undefined;
+        const local = await getLocalWallet().catch(() => null);
+        const wcAddr = (() => { try { return wc?.connected ? (wc?.address || null) : null; } catch { return null; } })();
+        const addr = (wcAddr || local?.address) as string | undefined;
         if (!addr) return;
         const pull = async () => {
           try {
@@ -244,7 +248,58 @@ export default function DashboardScreen() {
       } catch {}
     })();
     return () => { if (timer) try { clearInterval(timer); } catch {} };
-  }, []);
+  }, [wc?.connected, wc?.address]);
+
+  // 모니터 거래내역을 주기적으로 끌어와 전역 거래 스토어에 반영 (WC 우선)
+  useEffect(() => {
+    let timer: any;
+    (async () => {
+      try {
+        const { getEthChainIdHex } = await import('@/lib/config');
+        const { fetchTransactions, toHumanAmount, enrollAddress } = await import('@/lib/monitor');
+        const { getLocalWallet } = await import('@/src/wallet/wallet');
+        const local = await getLocalWallet().catch(() => null);
+        const wcAddr = (() => { try { return wc?.connected ? (wc?.address || null) : null; } catch { return null; } })();
+        const addr = (wcAddr || local?.address) as string | undefined;
+        if (!addr) return;
+        await enrollAddress(addr, (currentUser as any)?.uid || undefined);
+        const chainId = await getEthChainIdHex();
+        const pull = async () => {
+          try {
+            const txs = await fetchTransactions(addr, 1, 100);
+            const exists = new Set<string>();
+            try {
+              const current = (getTransactions({ limit: 1000 }) as any[]) || [];
+              for (const tx of current) { if (tx?.transactionHash) exists.add(String(tx.transactionHash)); }
+            } catch {}
+            for (const t of txs) {
+              const h = t.tx_hash;
+              if (exists.has(h)) continue;
+              const isRecv = String(t.to_address || '').toLowerCase() === String(addr).toLowerCase();
+              const sym = (t.asset_symbol || (t.is_native ? 'ETH' : 'YOY')) as string;
+              const human = toHumanAmount(sym, t.is_native, t.amount, chainId);
+              try {
+                addTxStore({
+                  type: 'transfer',
+                  success: t.status === 'success',
+                  status: t.status === 'success' ? 'completed' : 'failed',
+                  symbol: sym,
+                  amount: human,
+                  change: isRecv ? human : -human,
+                  description: `${sym} ${isRecv ? 'Deposit' : 'Transfer'}`,
+                  transactionHash: h,
+                  source: t.source,
+                } as any);
+              } catch {}
+            }
+          } catch {}
+        };
+        await pull();
+        timer = setInterval(pull, 10000);
+      } catch {}
+    })();
+    return () => { if (timer) try { clearInterval(timer); } catch {} };
+  }, [wc?.connected, wc?.address, currentUser]);
 
   // realTimeBalances 변경 시 AsyncStorage에 저장 (금액이 변할 때만, 디바운스)
   const lastSavedJsonRef = React.useRef<string>('');
