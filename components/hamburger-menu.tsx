@@ -148,6 +148,8 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
           { title: t('theme', language) || 'Theme', icon: '🎨', onPress: () => { setIsDirty(true); onClose(); try { router.push('/settings/theme' as any); } catch {} } },
           { title: t('quickActionsSettings', language), icon: '⚡', onPress: () => { onClose(); try { router.push('/settings/quick-actions' as any); } catch {} } },
           { title: 'Wallet Connect', icon: '🔗', onPress: () => { onClose(); try { router.push('/settings/walletconnect' as any); } catch {} } },
+          { title: 'Sync Debug', icon: '🛠️', onPress: () => { onClose(); try { router.push('/settings/sync-debug' as any); } catch {} } },
+          { title: 'Link Address', icon: '🔗', onPress: () => { onClose(); try { router.push('/settings/link-address' as any); } catch {} } },
         ]},
         { title: (language==='ko'?'고객지원':language==='ja'?'サポート':language==='zh'?'客服支持':'Support'), items: [
           { title: (language==='ko'?'버그 신고':language==='ja'?'バグ報告':language==='zh'?'错误反馈':'Bug report'), icon: '🐞', onPress: () => { onClose(); try { router.push('/support/bug' as any); } catch {} } },
