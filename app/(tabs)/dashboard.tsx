@@ -205,6 +205,33 @@ export default function DashboardScreen() {
         const wcAddr = (() => { try { return wc?.connected ? (wc?.address || null) : null; } catch { return null; } })();
         const addr = (wcAddr || local?.address) as string | undefined;
         if (addr) await enrollAddress(addr, (currentUser as any)?.uid || undefined);
+        // Log /me/addresses for diagnostics
+        try {
+          const { getEthMonitorHttp } = await import('@/lib/config');
+          const base = await getEthMonitorHttp();
+          const meUrl = `${base}/me/addresses`;
+          // Try to get Firebase token
+          const { firebaseAuth } = await import('@/lib/firebase');
+          const u = (firebaseAuth as any)?.currentUser;
+          const uid = u?.uid || (currentUser as any)?.uid;
+          const token = u ? await u.getIdToken() : null;
+          if (token) {
+            console.log('[monitor][dashboard] uid=', uid, 'GET', meUrl);
+            const r = await fetch(meUrl, { headers: { Authorization: `Bearer ${token}` } });
+            const text = await r.text();
+            try {
+              const j = JSON.parse(text);
+              console.log('[monitor][dashboard] /me/addresses json =', j);
+              const addrs: string[] = Array.isArray(j?.addresses) ? j.addresses : [];
+              const target = '0x12572f149443cDde88B1DC35e49a0d3e3bb24428'.toLowerCase();
+              console.log('[monitor][dashboard] target linked to uid? ', addrs.map(a=>String(a).toLowerCase()).includes(target));
+            } catch {
+              console.log('[monitor][dashboard] /me/addresses non-JSON head=', text.slice(0,120));
+            }
+          } else {
+            console.log('[monitor][dashboard] /me/addresses skipped (no token)');
+          }
+        } catch {}
       } catch {}
     })();
   }, [currentUser, wc?.connected, wc?.address]);
@@ -220,6 +247,19 @@ export default function DashboardScreen() {
         const wcAddr = (() => { try { return wc?.connected ? (wc?.address || null) : null; } catch { return null; } })();
         const addr = (wcAddr || local?.address) as string | undefined;
         if (!addr) return;
+        // Log request URLs and raw responses
+        try {
+          const { getEthMonitorHttp } = await import('@/lib/config');
+          const base = await getEthMonitorHttp();
+          const balUrl = `${base}/balances/${addr}`;
+          console.log('[monitor][dashboard] balance URL =', balUrl);
+          try {
+            const r = await fetch(balUrl);
+            const ct = r.headers.get('content-type'); const status = r.status; const text = await r.text();
+            console.log('[monitor][dashboard] balances status=', status, 'ct=', ct, 'head=', text.slice(0,120));
+            try { const j = JSON.parse(text); console.log('[monitor][dashboard] balances full json =', j); } catch {}
+          } catch (e) { console.log('[monitor][dashboard] balances fetch error', String((e as any)?.message||e)); }
+        } catch {}
         const pull = async () => {
           try {
             const bals = await fetchBalances(addr);
@@ -239,6 +279,7 @@ export default function DashboardScreen() {
               let next = [...prev];
               next = up(next, 'YOY', (bals as any)?.YOY);
               next = up(next, 'ETH', (bals as any)?.ETH);
+              try { console.log('[monitor][dashboard] state.realTimeBalances(next)=', next); } catch {}
               return next;
             });
           } catch {}

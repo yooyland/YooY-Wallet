@@ -1571,7 +1571,7 @@ export default function WalletScreen() {
     let timer: any;
     (async () => {
       try {
-        const { getEthChainIdHex } = await import('@/lib/config');
+        const { getEthChainIdHex, getEthMonitorHttp } = await import('@/lib/config');
         const { enrollAddress, fetchBalances, fetchTransactions, toHumanAmount } = await import('@/lib/monitor');
         const chainId = await getEthChainIdHex();
         const { getLocalWallet } = await import('@/src/wallet/wallet');
@@ -1580,6 +1580,59 @@ export default function WalletScreen() {
         const addr = (wcAddr || local?.address || getWalletBySymbol('YOY')?.address) as string | undefined;
         if (!addr) return;
         await enrollAddress(addr, (currentUser as any)?.uid || undefined);
+        // === Detailed logging: URLs and raw JSON responses ===
+        try {
+          const base = await getEthMonitorHttp();
+          const balUrl = `${base}/balances/${addr}`;
+          const txUrl = `${base}/transactions?address=${encodeURIComponent(addr)}&page=1&limit=100`;
+          console.log('[monitor][wallet] balance URL =', balUrl);
+          console.log('[monitor][wallet] transactions URL =', txUrl);
+          // balances raw response
+          try {
+            const r = await fetch(balUrl);
+            const ct = r.headers.get('content-type');
+            const status = r.status;
+            const text = await r.text();
+            console.log('[monitor][wallet] balances status=', status, 'ct=', ct, 'head=', text.slice(0,120));
+            try { const j = JSON.parse(text); console.log('[monitor][wallet] balances full json =', j); } catch { console.log('[monitor][wallet] balances non-JSON'); }
+          } catch (e) { console.log('[monitor][wallet] balances fetch error', String((e as any)?.message||e)); }
+          // transactions raw response
+          try {
+            const r = await fetch(txUrl);
+            const ct = r.headers.get('content-type');
+            const status = r.status;
+            const text = await r.text();
+            console.log('[monitor][wallet] tx status=', status, 'ct=', ct, 'head=', text.slice(0,120));
+            try { const j = JSON.parse(text); console.log('[monitor][wallet] tx full json =', j); } catch { console.log('[monitor][wallet] tx non-JSON'); }
+          } catch (e) { console.log('[monitor][wallet] tx fetch error', String((e as any)?.message||e)); }
+          // /me/addresses (auth)
+          try {
+            const { useAuth } = await import('@/contexts/AuthContext');
+            // Access inside effect via closure-less hook is not allowed; fallback to direct token from SecureStore if needed is complex.
+            // So call Firebase directly to get token for logging only.
+            const { firebaseAuth } = await import('@/lib/firebase');
+            const u = (firebaseAuth as any)?.currentUser;
+            const uid = u?.uid || (currentUser as any)?.uid;
+            const token = u ? await u.getIdToken() : null;
+            if (token) {
+              const meUrl = `${base}/me/addresses`;
+              console.log('[monitor][wallet] uid =', uid, 'GET', meUrl);
+              const r = await fetch(meUrl, { headers: { Authorization: `Bearer ${token}` } });
+              const text = await r.text();
+              try {
+                const j = JSON.parse(text);
+                console.log('[monitor][wallet] /me/addresses json =', j);
+                const addrs: string[] = Array.isArray(j?.addresses) ? j.addresses : [];
+                const target = '0x12572f149443cDde88B1DC35e49a0d3e3bb24428'.toLowerCase();
+                console.log('[monitor][wallet] target linked to uid? ', addrs.map(a=>String(a).toLowerCase()).includes(target));
+              } catch {
+                console.log('[monitor][wallet] /me/addresses non-JSON head=', text.slice(0,120));
+              }
+            } else {
+              console.log('[monitor][wallet] /me/addresses skipped (no token)');
+            }
+          } catch {}
+        } catch {}
         const pull = async () => {
           try {
             const bals = await fetchBalances(addr);
@@ -1600,6 +1653,7 @@ export default function WalletScreen() {
               };
               apply('YOY', (bals as any)?.YOY);
               apply('ETH', (bals as any)?.ETH);
+              try { console.log('[monitor][wallet] state.realTimeBalances(next)=', next); } catch {}
               return next;
             });
             // Import latest transactions (idempotent-ish): skip if same hash already exists in view
@@ -1631,6 +1685,7 @@ export default function WalletScreen() {
               try { await addTransaction(payload); } catch {}
               try { walletStore.addTransaction({ type:'transfer', success: t.status==='success', status: t.status==='success'?'completed':'failed', symbol: sym, amount: isRecv?human:-human, change: isRecv?human:-human, description: payload.description, transactionHash: h, source: t.source } as any); } catch {}
             }
+            try { console.log('[monitor][wallet] store.transactions(top10)=', getTransactions({ limit: 10 })); } catch {}
           } catch {}
         };
         await pull();
