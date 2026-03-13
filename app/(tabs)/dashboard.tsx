@@ -55,6 +55,15 @@ export default function DashboardScreen() {
     logAppStartupTime('Dashboard mounted');
   }, []);
   
+  // Track screen focus state to pause polling when unfocused
+  const isFocusedRef = React.useRef(true);
+  useFocusEffect(
+    useCallback(() => {
+      isFocusedRef.current = true;
+      return () => { isFocusedRef.current = false; };
+    }, [])
+  );
+  
   const insets = useSafeAreaInsets();
   const { signOut, isAuthenticated, currentUser } = useAuth();
   const { currency, language } = usePreferences();
@@ -103,10 +112,12 @@ export default function DashboardScreen() {
   }, [monitorBalances]);
 
   // 온체인 잔액 스냅샷: 화살표 드롭다운에서 On-chain/App-Asset 구분 표시용. 진입 시·주기 조회로 열면 바로 표시.
+  // Optimized: Skip polling when screen is unfocused
   useEffect(() => {
     let timer: any;
     let cancelled = false;
     const pull = async () => {
+      if (!isFocusedRef.current) return; // Skip when unfocused
       try {
         const { getLocalWallet } = await import('@/src/wallet/wallet');
         const local = await getLocalWallet().catch(() => null);
@@ -269,6 +280,7 @@ export default function DashboardScreen() {
           return;
         }
         const pull = async () => {
+          if (!isFocusedRef.current) return; // Skip when unfocused
           try {
             const bals = await fetchBalances(addr);
             setRealTimeBalances(prev => {
@@ -300,6 +312,7 @@ export default function DashboardScreen() {
   }, [wc?.connected, wc?.address]);
 
   // 모니터 거래내역을 주기적으로 끌어와 전역 거래 스토어에 반영 (WC 우선)
+  // Optimized: Skip polling when screen is unfocused
   useEffect(() => {
     let timer: any;
     (async () => {
@@ -314,6 +327,7 @@ export default function DashboardScreen() {
         await enrollAddress(addr, (currentUser as any)?.uid || undefined);
         const chainId = await getEthChainIdHex();
         const pull = async () => {
+          if (!isFocusedRef.current) return; // Skip when unfocused
           try {
             const txs = await fetchTransactions(addr, 1, 100);
             const exists = new Set<string>();
@@ -471,9 +485,12 @@ export default function DashboardScreen() {
   };
 
   // 주기적으로 잔액 새로고침 (20초 간격, 포커스 시 즉시 갱신)
+  // Optimized: Skip polling when screen is unfocused
   useEffect(() => {
     const interval = setInterval(() => {
-      refreshBalances();
+      if (isFocusedRef.current) {
+        refreshBalances();
+      }
     }, 20000);
 
     return () => clearInterval(interval);

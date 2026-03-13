@@ -1112,6 +1112,15 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
       // 방 나가기: 방장이면 방을 아카이브 처리하고, 일반 멤버면 내 리스트에서 제거
       leaveRoom: async (roomId: string, userId: string) => {
         try { if (!firebaseAuth.currentUser) { try { await signInAnonymously(firebaseAuth); } catch {} } } catch {}
+        // Clean up Firebase listener subscription to prevent memory leak
+        try {
+          const subs = get().roomSubs || {};
+          if (subs[roomId]) {
+            subs[roomId]();
+            delete subs[roomId];
+            set({ roomSubs: { ...subs } });
+          }
+        } catch {}
         // 현재 역할 확인 (스토어 → Firestore 순서)
         let roles: Record<string, RoomRole> = {};
         try {
