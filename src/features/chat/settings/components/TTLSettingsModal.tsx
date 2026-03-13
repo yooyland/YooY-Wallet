@@ -358,22 +358,29 @@ function TTLSettingsModal(props: TTLSettingsModalProps) {
             ))}
 
             <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginTop:8 }}>
-              <TouchableOpacity onPress={async()=>{
-                try {
-                  // 방 TTL 저장 (입력란 기반)
-                  const totalMs = toMs(d, h, m, s);
-                  if (roomType === 'TTL' && totalMs > 0) {
-                    await props.onSetRoomTTL(Date.now() + totalMs);
-                  }
-                  // 메시지 TTL 저장 (0이면 해제, 비어있을 때는 0으로 처리)
-                  const msgMs = toMs('0', mh, mm, ms);
-                  await props.onSetMessageTTL(msgMs);
-                  if (canEditSecurity) {
-                    await props.onSaveSecurity(sec);
-                  }
-                  Alert.alert('저장됨','TTL 설정을 저장했습니다.');
-                  onClose();
-                } catch {}
+              <TouchableOpacity onPress={()=>{
+                // OPTIMIZED: Close modal immediately for instant feedback
+                const savedD = d, savedH = h, savedM = m, savedS = s;
+                const savedMH = mh, savedMM = mm, savedMS = ms;
+                const savedSec = sec;
+                onClose();
+                
+                // Background save - don't block UI
+                (async () => {
+                  try {
+                    // 방 TTL 저장 (입력란 기반)
+                    const totalMs = toMs(savedD, savedH, savedM, savedS);
+                    if (roomType === 'TTL' && totalMs > 0) {
+                      await props.onSetRoomTTL(Date.now() + totalMs);
+                    }
+                    // 메시지 TTL 저장 (0이면 해제, 비어있을 때는 0으로 처리)
+                    const msgMs = toMs('0', savedMH, savedMM, savedMS);
+                    await props.onSetMessageTTL(msgMs);
+                    if (canEditSecurity) {
+                      await props.onSaveSecurity(savedSec);
+                    }
+                  } catch {}
+                })();
               }} style={{ paddingHorizontal:14, paddingVertical:10, borderWidth:1, borderColor:'#FFD700', borderRadius:10 }}>
                 <Text style={{ color:'#FFD700', fontWeight:'800' }}>{canEditSecurity ? '저장' : '저장'}</Text>
               </TouchableOpacity>

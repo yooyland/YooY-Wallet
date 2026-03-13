@@ -1703,46 +1703,51 @@ function RoomInner() {
           onChange={onModalChange}
           initialTab={settingsInitialTab}
           onSave={async()=>{
-            try {
-              const s = modalSettings;
-              const title = String(s.basic.title||'').trim();
-              // 메타 업데이트: 제목/대표이미지/태그
-              const meta: any = {};
-              if (title && title !== (room as any)?.title) meta.title = title;
-              if (s.basic.imageUrl) meta.avatarUrl = String(s.basic.imageUrl);
-              if (Array.isArray(s.basic.tags)) meta.tags = s.basic.tags;
-              if (Object.keys(meta).length) { await updateRoomMeta(roomId, meta); }
-              // 공개/비공개 + 비밀번호
-              await setRoomPrivacy(roomId, !!s.basic.isPublic, s.permissions.lockEnabled ? (s.permissions.lockPassword||'') : '');
-              // 상세 설정 저장
-              await saveRoomSettings(roomId, {
-                basic: {
-                  description: s.basic.description||'',
-                  participantLimit: s.basic.participantLimit ?? null,
-                  tags: s.basic.tags||[],
-                  imageUrl: s.basic.imageUrl||null,
-                  isPublic: !!s.basic.isPublic,
-                  title,
-                },
-                permissions: { lockEnabled: !!s.permissions.lockEnabled, lockPassword: s.permissions.lockPassword||'' } as any,
-                notifications: {
-                  enabled: !!s.notifications.enabled,
-                  keywordAlerts: s.notifications.keywordAlerts||[],
-                  mentionAlertEnabled: !!s.notifications.mentionAlertEnabled,
-                  mode: s.notifications.mode||'sound',
-                },
-                theme: {
-                  bubbleColorHex: s.theme.bubbleColorHex||undefined,
-                  backgroundColorHex: s.theme.backgroundColorHex||'#0C0C0C',
-                  fontScaleLevel: s.theme.fontScaleLevel||3,
-                  backgroundImageUrl: (s.theme as any).backgroundImageUrl,
-                } as any
-              });
-              if (modalRoomType === 'TTL' && (s.ttl?.expiresAtMs || 0) > 0) {
-                (useKakaoRoomsStore as any).getState().setRoomTTL?.(roomId, s.ttl.expiresAtMs);
-              }
-              setSettingsOpen(false);
-            } catch {}
+            // OPTIMIZED: Close modal immediately for instant feedback, save in background
+            const s = modalSettings;
+            setSettingsOpen(false);
+            
+            // Background save - don't block UI
+            (async () => {
+              try {
+                const title = String(s.basic.title||'').trim();
+                // 메타 업데이트: 제목/대표이미지/태그
+                const meta: any = {};
+                if (title && title !== (room as any)?.title) meta.title = title;
+                if (s.basic.imageUrl) meta.avatarUrl = String(s.basic.imageUrl);
+                if (Array.isArray(s.basic.tags)) meta.tags = s.basic.tags;
+                if (Object.keys(meta).length) { await updateRoomMeta(roomId, meta); }
+                // 공개/비공개 + 비밀번호
+                await setRoomPrivacy(roomId, !!s.basic.isPublic, s.permissions.lockEnabled ? (s.permissions.lockPassword||'') : '');
+                // 상세 설정 저장
+                await saveRoomSettings(roomId, {
+                  basic: {
+                    description: s.basic.description||'',
+                    participantLimit: s.basic.participantLimit ?? null,
+                    tags: s.basic.tags||[],
+                    imageUrl: s.basic.imageUrl||null,
+                    isPublic: !!s.basic.isPublic,
+                    title,
+                  },
+                  permissions: { lockEnabled: !!s.permissions.lockEnabled, lockPassword: s.permissions.lockPassword||'' } as any,
+                  notifications: {
+                    enabled: !!s.notifications.enabled,
+                    keywordAlerts: s.notifications.keywordAlerts||[],
+                    mentionAlertEnabled: !!s.notifications.mentionAlertEnabled,
+                    mode: s.notifications.mode||'sound',
+                  },
+                  theme: {
+                    bubbleColorHex: s.theme.bubbleColorHex||undefined,
+                    backgroundColorHex: s.theme.backgroundColorHex||'#0C0C0C',
+                    fontScaleLevel: s.theme.fontScaleLevel||3,
+                    backgroundImageUrl: (s.theme as any).backgroundImageUrl,
+                  } as any
+                });
+                if (modalRoomType === 'TTL' && (s.ttl?.expiresAtMs || 0) > 0) {
+                  (useKakaoRoomsStore as any).getState().setRoomTTL?.(roomId, s.ttl.expiresAtMs);
+                }
+              } catch {}
+            })();
           }}
           onLeave={async()=>{ try { await leaveRoom(roomId, uid); setSettingsOpen(false); router.push('/chat/rooms'); } catch {} }}
           onInvite={async()=>{ 
