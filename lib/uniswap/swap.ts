@@ -13,6 +13,8 @@ import {
     ROUTER_ABI,
     TOKEN_INFO
 } from './constants';
+import { getTokenAddressBySymbol, isAllowedPair, SwapSymbol } from '@/lib/swapConfig';
+import { quoteExactInputSingle } from './quote';
 
 // Mock ethers.js types (실제로는 ethers.js import 필요)
 interface Signer {
@@ -160,9 +162,15 @@ export async function executeSwap(
     const ethersMod = await import('ethers');
     const { Contract, parseUnits } = ethersMod;
 
-    // 2. 토큰 주소 확인
-    const fromTokenAddress = TOKEN_ADDRESSES[fromToken as keyof typeof TOKEN_ADDRESSES];
-    const toTokenAddress = TOKEN_ADDRESSES[toToken as keyof typeof TOKEN_ADDRESSES];
+    // 0. 허용 페어 검증 (UI 심볼 기준)
+    const a = fromToken as SwapSymbol;
+    const b = toToken as SwapSymbol;
+    if (!isAllowedPair(a, b)) {
+      throw new Error('이 앱에서는 YOY 중심 스왑만 지원됩니다');
+    }
+    // 2. 토큰 주소 확인 (ETH → WETH 매핑)
+    const fromTokenAddress = getTokenAddressBySymbol(a);
+    const toTokenAddress = getTokenAddressBySymbol(b);
     
     if (!fromTokenAddress || !toTokenAddress) {
       throw new Error('유효하지 않은 토큰입니다.');
@@ -176,11 +184,27 @@ export async function executeSwap(
     const fromDecimals = TOKEN_INFO[fromTokenAddress as keyof typeof TOKEN_INFO]?.decimals || 18;
     const amountInWei = parseUnits(amountIn, fromDecimals).toString();
 
-    // 5. 토큰 승인 확인 및 실행
+    // 4.5 ETH 입력 시 WETH 예치(필요 시)
+    try {
+      if (a === 'ETH') {
+        const WETH_ABI = ['function deposit() payable', 'function balanceOf(address) view returns (uint256)'];
+        const weth = new Contract(fromTokenAddress, WETH_ABI, signer as any);
+        const currentWeth: bigint = await weth.balanceOf(userAddress);
+        if (currentWeth < BigInt(amountInWei)) {
+          const txWrap = await weth.deposit({ value: amountInWei });
+          await txWrap.wait?.();
+          console.log('WETH deposit 완료:', txWrap.hash || txWrap);
+        }
+      }
+    } catch (wrapErr) {
+      console.warn('WETH 예치 단계 경고:', wrapErr);
+    }
+
+    // 5. 토큰 승인 확인 및 실행 (ETH->WETH 경로 제외하고 ERC20 승인)
     try {
       const erc20 = new Contract(fromTokenAddress, ERC20_ABI, signer as any);
       const allowance = await erc20.allowance(userAddress, UNISWAP_V3_ROUTER);
-      if (allowance < amountInWei) {
+      if (BigInt(allowance.toString()) < BigInt(amountInWei)) {
         const txApprove = await erc20.approve(UNISWAP_V3_ROUTER, amountInWei);
         await txApprove.wait?.();
       }
@@ -188,14 +212,33 @@ export async function executeSwap(
       console.warn('토큰 승인 시도 중 경고:', approveErr);
     }
     
+    // 6. 최저 수령량 계산(Quoter 기반)
+    const feeTier = FEE_TIERS.MEDIUM;
+    let minOutWei = '0';
+    try {
+      const quotedOut = await quoteExactInputSingle(
+        fromTokenAddress,
+        toTokenAddress,
+        feeTier,
+        amountInWei,
+        // signer may not have provider type here; the quoter creates its own provider
+        {} as any
+      );
+      const slip = (slippage || DEFAULT_SLIPPAGE || 0.5) / 100;
+      const quotedBig = BigInt(quotedOut.toString());
+      const minBig = quotedBig - (quotedBig * BigInt(Math.floor(slip * 10_000))) / BigInt(10_000);
+      minOutWei = minBig.toString();
+    } catch (qErr) {
+      console.warn('Quoter 기반 최소 수령량 계산 실패, 0으로 진행:', qErr);
+    }
     // 6. 스왑 파라미터 설정
     const deadline = Math.floor(Date.now() / 1000) + DEFAULT_DEADLINE * 60;
-    const amountOutMinimum = '0'; // TODO: Quoter 값에서 (1 - slippage) 반영
+    const amountOutMinimum = minOutWei;
     
     const swapParams: SwapParams = {
       tokenIn: fromTokenAddress,
       tokenOut: toTokenAddress,
-      fee: FEE_TIERS.MEDIUM, // 0.3% 수수료
+      fee: feeTier, // 0.3% 수수료
       recipient: userAddress,
       deadline,
       amountIn: amountInWei,
@@ -211,10 +254,8 @@ export async function executeSwap(
       console.log('Router exactInputSingle 성공:', tx.hash || tx);
       return (tx.hash || tx) as string;
     } catch (routerErr) {
-      console.warn('Router 호출 실패, 시뮬레이션 경로로 대체:', routerErr);
-      // 폴백: 기존 시뮬레이션 로직 실행
-      const txHash = await executeExactInputSingle(swapParams, signer);
-      return txHash;
+      console.error('Router 호출 실패:', routerErr);
+      throw new Error((routerErr as any)?.message || '스왑 트랜잭션 전송 실패');
     }
     
   } catch (error) {

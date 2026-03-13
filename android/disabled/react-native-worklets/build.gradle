@@ -7,11 +7,31 @@ android {
   compileSdk rootProject.ext.compileSdkVersion
   defaultConfig {
     minSdkVersion rootProject.ext.minSdkVersion
+    externalNativeBuild {
+      cmake {
+        abiFilters 'armeabi-v7a','arm64-v8a','x86','x86_64'
+      }
+    }
+  }
+  buildTypes {
+    debug {}
+    release {}
+  }
+  externalNativeBuild {
+    cmake {
+      path "CMakeLists.txt"
+    }
   }
   publishing {
     singleVariant("release")
   }
 }
 
-// No sources; publish an empty aar so variant resolution succeeds
+// Build a tiny native stub library (libworklets.so) so link dependencies resolve
 
+// Stub tasks no longer needed; AGP will create externalNativeBuild* tasks for CMake
+
+dependencies {
+  // Needed for type references in stub classes
+  implementation("com.facebook.react:react-android")
+}

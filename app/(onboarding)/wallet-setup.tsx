@@ -1,11 +1,14 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Alert, ScrollView, StyleSheet, TextInput, TouchableOpacity, View, Text } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { router } from 'expo-router';
 import { createNewWallet, importWalletFromMnemonic } from '@/src/wallet/wallet';
+import { useLocalSearchParams } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function WalletSetupScreen() {
+  const params = useLocalSearchParams<{ tab?: string }>();
   const [tab, setTab] = useState<'create'|'import'>('create');
   const [mnemonic, setMnemonic] = useState<string>('');
   const [generated, setGenerated] = useState<string>('');
@@ -14,12 +17,28 @@ export default function WalletSetupScreen() {
   const [revealed, setRevealed] = useState(true);
 
   const words = useMemo(() => (generated || '').split(' ').filter(Boolean), [generated]);
+  useEffect(() => {
+    try {
+      const t = String(params?.tab || '').toLowerCase();
+      if (t === 'import') setTab('import');
+    } catch {}
+  }, [params?.tab]);
 
   const handleCreate = async () => {
     try {
       setBusy(true);
       const w = await createNewWallet();
       setGenerated(w.mnemonic);
+      // 생성 즉시 앱 지갑 목록을 새 EVM 주소로 동기화(ETH/YOY 기본 엔트리)
+      try {
+        const addr = w.address;
+        const now = new Date().toISOString();
+        const base = [
+          { id: `ETH_${Date.now()}`, symbol: 'ETH', name: 'ETH', network: 'Ethereum', address: addr, createdAt: now, isActive: true },
+          { id: `YOY_${Date.now()+1}`, symbol: 'YOY', name: 'YOY', network: 'Ethereum', address: addr, createdAt: now, isActive: true },
+        ];
+        await AsyncStorage.setItem('user_wallets', JSON.stringify(base));
+      } catch {}
       setChecked(false);
       setRevealed(true);
       Alert.alert('지갑 생성', '니모닉을 안전한 곳에 적어두세요.');
@@ -64,7 +83,22 @@ export default function WalletSetupScreen() {
         Alert.alert('형식 오류', '12/24 단어 니모닉을 입력하세요.');
         return;
       }
-      await importWalletFromMnemonic(norm);
+      const { address } = await importWalletFromMnemonic(norm);
+      // 복구 시 기존 생성 지갑 전부 초기화 후, EVM 기반 지갑을 새 주소로 재구성
+      try {
+        const now = new Date().toISOString();
+        const evmSyms = ['ETH','YOY','USDT','USDC']; // 기본 표시용
+        const list = evmSyms.map((sym, i) => ({
+          id: `${sym}_${Date.now()+i}`,
+          symbol: sym,
+          name: sym,
+          network: 'Ethereum',
+          address,
+          createdAt: now,
+          isActive: true,
+        }));
+        await AsyncStorage.setItem('user_wallets', JSON.stringify(list));
+      } catch {}
       Alert.alert('완료', '지갑을 복구했습니다.');
       router.replace('/(tabs)/dashboard');
     } catch (e: any) {

@@ -23,6 +23,8 @@ export interface MarketData {
 
 // 실시간 가격 데이터 저장소
 let realTimePrices: Record<string, CoinPrice> = {};
+let lastUpdateAt = 0;
+let updateInFlight: Promise<void> | null = null;
 let marketData: MarketData = {
   upbitKrw: [],
   binanceUsdt: [],
@@ -68,7 +70,14 @@ const BASE_COIN_PRICES: Record<string, number> = {
  * Exchange 페이지와 동일한 API 호출로 실시간 가격 업데이트
  */
 export async function updateRealTimePrices(): Promise<void> {
-  try {
+  // 글로벌 1Hz 스로틀 + 디듀플리케이션
+  const now = Date.now();
+  if (now - lastUpdateAt < 1000 && updateInFlight) {
+    return updateInFlight;
+  }
+  lastUpdateAt = now;
+  updateInFlight = (async () => {
+    try {
     console.log('🔄 실시간 가격 업데이트 시작...');
     
     // 1. 업비트 API (KRW 마켓)
@@ -126,10 +135,18 @@ export async function updateRealTimePrices(): Promise<void> {
     }
     
     console.log('✅ 실시간 가격 업데이트 완료');
-    
   } catch (error) {
     console.error('❌ 실시간 가격 업데이트 실패:', error);
-  }
+  } finally {
+    // 최소 1초 간격 보장
+    const elapsed = Date.now() - now;
+    if (elapsed < 1000) {
+      await new Promise((r) => setTimeout(r, 1000 - elapsed));
+    }
+    updateInFlight = null;
+    lastUpdateAt = Date.now();
+  }})();
+  return updateInFlight;
 }
 
 /**
@@ -154,13 +171,12 @@ function calculateCoinPrice(symbol: string, upbitData: any[], binanceData: any[]
     };
   }
   
-  // ETH는 바이낸스에서 가져와서 KRW로 변환
+  // ETH는 우선 업비트 KRW 가격을 사용(Exchange와 일치), 없으면 바이낸스 USDT → KRW 변환
   if (symbol === 'ETH') {
-    const ethUsdtData = binanceData.find((item: any) => item.symbol === 'ETHUSDT');
-    if (ethUsdtData) {
-      const ethUsdPrice = parseFloat(ethUsdtData.lastPrice);
-      const ethKrwPrice = ethUsdPrice * usdtKrwRate;
-      
+    const ethKrwData = upbitData.find((item: any) => item.market === 'KRW-ETH');
+    if (ethKrwData && typeof ethKrwData.trade_price === 'number' && ethKrwData.trade_price > 0) {
+      const ethKrwPrice = ethKrwData.trade_price;
+      const ethUsdPrice = ethKrwPrice / usdtKrwRate;
       return {
         symbol: 'ETH',
         usd: ethUsdPrice,
@@ -173,6 +189,25 @@ function calculateCoinPrice(symbol: string, upbitData: any[], binanceData: any[]
         usdt: ethUsdPrice,
         usdc: ethUsdPrice,
       };
+    } else {
+      const ethUsdtData = binanceData.find((item: any) => item.symbol === 'ETHUSDT');
+      if (ethUsdtData) {
+        const ethUsdPrice = parseFloat(ethUsdtData.lastPrice);
+        const ethKrwPrice = ethUsdPrice * usdtKrwRate;
+        
+        return {
+          symbol: 'ETH',
+          usd: ethUsdPrice,
+          krw: ethKrwPrice,
+          eur: ethUsdPrice * 0.85,
+          jpy: ethUsdPrice * 110,
+          cny: ethUsdPrice * 7.2,
+          btc: ethUsdPrice / 45000,
+          eth: 1,
+          usdt: ethUsdPrice,
+          usdc: ethUsdPrice,
+        };
+      }
     }
   }
   

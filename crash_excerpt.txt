@@ -1,0 +1,316 @@
+  12-29 21:13:28.147 32457 32485 W Bundle  : Key MESSAGE_OBJECT expected com.samsung.euicc.lib.message.Response but value was of a different type.  The default value <null> was returned.
+  12-29 21:13:28.147 26016 26235 D InputMethodManagerService: isImeSwitcherDisabledPackage : false
+  12-29 21:13:28.147 26016 26235 D InputMethodManagerService: shouldShowImeSwitcherLocked : checking vis : 3
+  12-29 21:13:28.147 25269 25346 I Finsky:background: [196] RECEIVER_ENGAGE_PACKAGE_CHANGED#logWorkEndAndFinishGoAsync: SUCCESS
+  12-29 21:13:28.147 32457 32485 W Bundle  : Attempt to cast generated internal exception:
+> 12-29 21:13:28.147 32457 32485 W Bundle  : java.lang.ClassCastException: Cannot cast com.samsung.euicc.lib.message.ListProfileInfo to com.samsung.euicc.lib.message.Response
+> 12-29 21:13:28.147 32457 32485 W Bundle  : 	at java.lang.Class.cast(Class.java:4183)
+  12-29 21:13:28.147 32457 32485 W Bundle  : 	at android.os.BaseBundle.getValueAt(BaseBundle.java:435)
+  12-29 21:13:28.147 32457 32485 W Bundle  : 	at android.os.BaseBundle.getValue(BaseBundle.java:397)
+  12-29 21:13:28.147 32457 32485 W Bundle  : 	at android.os.BaseBundle.getValue(BaseBundle.java:380)
+  12-29 21:13:28.147 32457 32485 W Bundle  : 	at android.os.BaseBundle.get(BaseBundle.java:765)
+  12-29 21:13:28.147 32457 32485 W Bundle  : 	at android.os.Bundle.getParcelable(Bundle.java:1121)
+  12-29 21:13:28.147 32457 32485 W Bundle  : 	at com.samsung.euicc.internal.lib.lpa.LpaConnector$RxHandler.handleMessage(LpaConnector.java:413)
+  12-29 21:13:28.147 32457 32485 W Bundle  : 	at android.os.Handler.dispatchMessage(Handler.java:110)
+  12-29 21:13:28.147 32457 32485 W Bundle  : 	at android.os.Looper.loopOnce(Looper.java:273)
+  12-29 21:13:28.147 32457 32485 W Bundle  : 	at android.os.Looper.loop(Looper.java:363)
+  12-29 21:13:28.147 32457 32485 W Bundle  : 	at android.os.HandlerThread.run(HandlerThread.java:85)
+  12-29 21:13:28.148 26016 26235 V InputMethodManagerService: Checking com.google.android.tts/com.google.android.apps.speech.tts.googletts.settings.asr.voiceime.VoiceInputMethodService
+  12-29 21:13:28.148 32457 32501 E SLPASVC : not blocking request: ListProfileRequest                                                            [at com.samsung.euicc.lpaService.gsma.phase2.state.Idle.handleMessage(Idle.java:103)]
+  12-29 21:13:28.148 26016 26235 V InputMethodManagerService: Found an input method InputMethodInfo{com.google.android.tts/com.google.android.apps.speech.tts.googletts.settings.asr.voiceime.VoiceInputMethodService, settings: com.google.android.apps.speech.tts.googletts.settings.asr.voiceime.ui.VoiceImeSettingsActivity, languageSettings: null}
+  12-29 21:13:28.148 26016 26235 V InputMethodManagerService: Checking com.samsung.android.honeyboard/.service.HoneyBoardService
+  12-29 21:13:28.150 26016 26235 V InputMethodManagerService: Found an input method InputMethodInfo{com.samsung.android.honeyboard/.service.HoneyBoardService, settings: com.samsung.android.honeyboard.settings.common.HoneyBoardSettingsActivity, languageSettings: null}
+  12-29 21:13:28.150 26016 26235 V InputMethodManagerService: Checking com.samsung.android.honeyboard/com.samsung.android.writingtoolkit.service.FakeHoneyBoardService
+  12-29 21:13:28.150 32457 32501 I SLPASVC : { iccid=113F profileClass=1 profileState=0 enabledOnEsimPort=0 serviceProviderName=SPGtoEzCx profileName=InstantConnect Provisioning }[at com.samsung.euicc.lpaService.gsma.phase2.state.ProfileManagement.$r8$lambda$lga_TAtIBAv2hWPLl4BT_4jZSAY(ProfileManagement.java:117)]
+  12-29 21:13:28.150 26016 26235 V InputMethodManagerService: Found an input method InputMethodInfo{com.samsung.android.honeyboard/com.samsung.android.writingtoolkit.service.FakeHoneyBoardService, settings: null, languageSettings: null}
+  12-29 21:13:28.150 26016 26235 V InputMethodManagerService: Checking com.skmc.okcashbag.home_google/com.enliple.keyboard.activity.SoftKeyboard
+  12-29 21:13:28.151 26016 26235 V InputMethodManagerService: Found an input method InputMethodInfo{com.skmc.okcashbag.home_google/com.enliple.keyboard.activity.SoftKeyboard, settings: com.enliple.keyboard.activity.KeyboardSettingsActivity, languageSettings: null}
+  12-29 21:13:28.151 26016 26235 V InputMethodManagerService: Checking com.snapchat.android/com.snap.keyboard.lib.SnapKeyboardIME
+  12-29 21:13:28.151 32457 32501 I SLPASVC : writeFile : 0                                                                                       [at com.samsung.euicc.util.FileUtils.writeFile(FileUtils.java:30)]
+  12-29 21:13:28.151 26016 26235 V InputMethodManagerService: Found an input method InputMethodInfo{com.snapchat.android/com.snap.keyboard.lib.SnapKeyboardIME, settings: com.snap.keyboard.lib.rkr.simplekeyboard.inputmethod.latin.settings.SettingsActivity, languageSettings: null}
+  12-29 21:13:28.151 26016 26235 V InputMethodManagerService: Checking com.translate.talkingtranslator/com.designkeyboard.keyboard.keyboard.Ime
+  12-29 21:13:28.151 26016 26235 V InputMethodManagerService: Found an input method InputMethodInfo{com.translate.talkingtranslator/com.designkeyboard.keyboard.keyboard.Ime, settings: com.designkeyboard.keyboard.keyboard.KeyboardSettingActivity, languageSettings: null}
+  12-29 21:13:28.265 16953 28786 W PhBaseOp: 	at bden.c(:com.google.android.gms@254730035@25.47.30 (260400-833691957):50)
+  12-29 21:13:28.265 16953 28786 W PhBaseOp: 	at bden.run(:com.google.android.gms@254730035@25.47.30 (260400-833691957):73)
+  12-29 21:13:28.265 16953 28786 W PhBaseOp: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1156)
+  12-29 21:13:28.265 16953 28786 W PhBaseOp: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:651)
+  12-29 21:13:28.265 16953 28786 W PhBaseOp: 	at bdke.run(:com.google.android.gms@254730035@25.47.30 (260400-833691957):8)
+> 12-29 21:13:28.265 16953 28786 W PhBaseOp: 	at java.lang.Thread.run(Thread.java:1119)
+  12-29 21:13:28.265 25894 25894 D Zygote  : Forked child process 32609
+  12-29 21:13:28.265 16953 28786 W AsyncOperation: operation=CommitToConfigurationOperationCall, opStatusCode=29537 [CONTEXT service_id=51 ]
+  12-29 21:13:28.265 16953 28786 W AsyncOperation: OperationException[Status{statusCode=Stale snapshot for com.google.android.gms.gmslogger#com.google.android.gms(new configuration available), resolution=null}]
+  12-29 21:13:28.265 16953 28786 W AsyncOperation: 	at enqq.h(:com.google.android.gms@254730035@25.47.30 (260400-833691957):61)
+  12-29 21:13:28.265 16953 28786 W AsyncOperation: 	at enqq.f(:com.google.android.gms@254730035@25.47.30 (260400-833691957):13)
+  12-29 21:13:28.265 16953 28786 W AsyncOperation: 	at coag.fB(:com.google.android.gms@254730035@25.47.30 (260400-833691957):1)
+  12-29 21:13:28.265 16953 28786 W AsyncOperation: 	at coak.run(:com.google.android.gms@254730035@25.47.30 (260400-833691957):118)
+  12-29 21:13:28.265 16953 28786 W AsyncOperation: 	at gjql.run(:com.google.android.gms@254730035@25.47.30 (260400-833691957):19)
+  12-29 21:13:28.265 16953 28786 W AsyncOperation: 	at bden.c(:com.google.android.gms@254730035@25.47.30 (260400-833691957):50)
+  12-29 21:13:28.265 16953 28786 W AsyncOperation: 	at bden.run(:com.google.android.gms@254730035@25.47.30 (260400-833691957):73)
+  12-29 21:13:28.265 16953 28786 W AsyncOperation: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1156)
+  12-29 21:13:28.265 16953 28786 W AsyncOperation: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:651)
+  12-29 21:13:28.265 16953 28786 W AsyncOperation: 	at bdke.run(:com.google.android.gms@254730035@25.47.30 (260400-833691957):8)
+> 12-29 21:13:28.265 16953 28786 W AsyncOperation: 	at java.lang.Thread.run(Thread.java:1119)
+  12-29 21:13:28.267 26016 26083 I ActivityManager: Start proc 32609:com.microsoft.appmanager/u0a162 for broadcast {com.microsoft.appmanager/com.samsung.android.sdk.mdx.windowslink.tileservice.WindowsLinkTileBroadcastReceiver}
+  12-29 21:13:28.267 26016 26083 I ActivityManager: ProcessObserver broadcast disabled
+  12-29 21:13:28.279 32609 32609 I soft.appmanager: Using CollectorTypeCMC GC.
+  12-29 21:13:28.282 32609 32609 E soft.appmanager: Not starting debugger since process cannot load the jdwp agent.
+  12-29 21:13:28.284 32609 32609 D nativeloader: Load libframework-connectivity-tiramisu-jni.so using APEX ns com_android_tethering for caller /apex/com.android.tethering/javalib/framework-connectivity-t.jar: ok
+  12-29 21:13:28.286 32609 32609 D ActivityThread: setConscryptValidator
+  12-29 21:13:28.286 32609 32609 D ActivityThread: setConscryptValidator - put
+  12-29 21:13:28.296 32609 32609 D nativeloader: Load libstats_jni.so using APEX ns com_android_os_statsd for caller /apex/com.android.os.statsd/javalib/framework-statsd.jar: ok
+  12-29 21:13:28.307 32609 32609 D nativeloader: Configuring clns-9 for other apk /system/framework/sec_camerax_impl.jar. target_sdk_version=35, uses_libraries=ALL, library_path=/data/app/~~EeySdtleaju9Ky4d-ESX_A==/com.microsoft.appmanager-ts-GfXOhJQCfAVoqyAgx4g==/lib/arm64:/data/app/~~EeySdtleaju9Ky4d-ESX_A==/com.microsoft.appmanager-ts-GfXOhJQCfAVoqyAgx4g==/base.apk!/lib/arm64-v8a, permitted_path=/data:/mnt/expand:/data/user/0/com.microsoft.appmanager
+  12-29 21:13:28.307 32609 32609 D nativeloader: Extending system_exposed_libraries: libhumantracking.arcsoft.so:libface_recognition.arcsoft.so:libpic_best.arcsoft.so:libPortraitDistortionCorrection.arcsoft.so:libPortraitDistortionCorrectionCali.arcsoft.so:libface_landmark.arcsoft.so:libFacialStickerEngine.arcsoft.so:libfrtracking_engine.arcsoft.so:libFaceRecognition.arcsoft.so:libveengine.arcsoft.so:lib_pet_detection.arcsoft.so:libae_bracket_hdr.arcsoft.so:libdigital_tele_scope.arcsoft.so:libdigital_tele_scope_rawsr.arcsoft.so:libhybrid_high_dynamic_range.arcsoft.so:libimage_enhancement.arcsoft.so:liblow_light_hdr.arcsoft.so:libhigh_dynamic_range.arcsoft.so:libFacialAttributeDetection.arcsoft.so:libobjectcapture_jni.arcsoft.so:libobjectcapture.arcsoft.so:libmultisourceseparator.audio.samsung.so:libaudiomirroring_jni.audiomirroring.samsung.so:libBeauty_v4.camera.samsung.so:libexifa.camera.samsung.so:libjpega.camera.samsung.so:libOpenCv.camera.samsung.so:libaifrcInterface.camera.samsung.so:libBestPhoto.camera.samsung.so:libC2paDps.camera.samsung.so:libVideo
+  12-29 21:13:28.308 32609 32609 D ApplicationLoaders: Returning zygote-cached class loader: /system_ext/framework/androidx.window.extensions.jar
+  12-29 21:13:28.308 32609 32609 D ApplicationLoaders: Returning zygote-cached class loader: /system_ext/framework/androidx.window.sidecar.jar
+  12-29 21:13:28.310  1227  1251 E HeatmapThread: ECT Thread time in milliseconds: 1767010408
+  12-29 21:13:28.312  1227  1251 D HeatmapThread: !@ batteryplugType : 2
+  12-29 21:13:28.312  1227  1251 D HeatmapThread: !@ batteryLevel : 77  batteryTemperature : 299 
+  12-29 21:13:28.312  1227  1251 D HeatmapThread: !@ Heatmap currtime: 29450173
+  12-29 21:13:28.312  1227  1251 D HeatmapThread: !@ Heatmap prevtime: 29450160
+  12-29 21:13:28.312  1227  1251 D HeatmapThread: !@ Heatmap plugstarttime: 29450127
+  12-29 21:13:28.312  1227  1251 D HeatmapThread: !@ Heatmap prevv_dsoh_update_time: 29448640
+  12-29 21:13:28.312  1227  1251 E HeatmapThread: !@ CAM New BSOH: 100
+  12-29 21:13:28.335 32609 32609 D nativeloader: Configuring clns-10 for other apk /data/app/~~EeySdtleaju9Ky4d-ESX_A==/com.microsoft.appmanager-ts-GfXOhJQCfAVoqyAgx4g==/base.apk. target_sdk_version=35, uses_libraries=, library_path=/data/app/~~EeySdtleaju9Ky4d-ESX_A==/com.microsoft.appmanager-ts-GfXOhJQCfAVoqyAgx4g==/lib/arm64:/data/app/~~EeySdtleaju9Ky4d-ESX_A==/com.microsoft.appmanager-ts-GfXOhJQCfAVoqyAgx4g==/base.apk!/lib/arm64-v8a, permitted_path=/data:/mnt/expand:/data/user/0/com.microsoft.appmanager
+  12-29 21:13:28.336 32609 32609 D CompatChangeReporter: Compat change id reported: 202956589; UID 10162; state: ENABLED
+  12-29 21:13:28.341 32609 32609 V GraphicsEnvironment: Currently set values for:
+  12-29 21:13:28.341 32609 32609 V GraphicsEnvironment:   angle_gl_driver_selection_pkgs=[]
+  12-29 21:13:28.341 32609 32609 V GraphicsEnvironment:   angle_gl_driver_selection_values=[]
+  12-29 21:13:28.566 26016 26629 D SecContentProvider: called from com.samsung.android.mdx
+  12-29 21:13:28.566 26016 26629 D RestrictionPolicy: isSettingsChangesAllowedAsUser, userId 0 : true
+  12-29 21:13:28.566 26016 26629 D KNOX_MDM_SettingsProvider: ret = 1
+  12-29 21:13:28.566 32635 32635 I WindowsLink: (CoverRepository) disableCoverManager() : false
+  12-29 21:13:28.567 26016 26629 D SEP_UNION_CoverManager_CoverDisabler: disableCoverManagerLocked : disable=false pkg=com.samsung.android.mdx token=android.os.BinderProxy@822e6ba 
+> 12-29 21:13:28.568 32579 32579 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+  12-29 21:13:28.568 26016 26629 I ActivityManager: Changes in 10099 19 to 11, 0 to 128
+  12-29 21:13:28.572 26016 26629 I ActivityManager: Changes in 10099 11 to 19, 128 to 0
+> 12-29 21:13:28.574 32579 32579 I AndroidRuntime: Using default boot image
+> 12-29 21:13:28.574 32579 32579 I AndroidRuntime: Leaving lock profiling enabled
+  12-29 21:13:28.574 32609 32609 E ActivityThread: Failed to find provider info for com.microsoft.yourphonecompanion.contentprovider.featureoverride
+  12-29 21:13:28.579 32579 32579 I app_process: Using CollectorTypeCMC GC.
+  12-29 21:13:28.582 32609 32678 D CompatChangeReporter: Compat change id reported: 312399441; UID 10162; state: ENABLED
+  12-29 21:13:28.594 32609 32678 D nativeloader: Load /data/app/~~EeySdtleaju9Ky4d-ESX_A==/com.microsoft.appmanager-ts-GfXOhJQCfAVoqyAgx4g==/base.apk!/lib/arm64-v8a/libdatastore_shared_counter.so using class loader ns clns-10 (caller=/data/app/~~EeySdtleaju9Ky4d-ESX_A==/com.microsoft.appmanager-ts-GfXOhJQCfAVoqyAgx4g==/base.apk): ok
+  12-29 21:13:28.597 32635 32643 I WindowsLink: (YpcSignatureChecker) isSignatureAllowed in
+  12-29 21:13:28.598 32635 32643 I WindowsLink: (BaseContentProvider) call: method = PermissionManager@getPregrantedPermissions / subMethod = getPregrantedPermissions
+  12-29 21:13:28.599 32635 32643 I WindowsLink: (YpcSignatureChecker) isSignatureAllowed in
+  12-29 21:13:28.599 32635 32643 I WindowsLink: (BaseContentProvider) call: method = PermissionManager@deactivatePermissionManager / subMethod = deactivatePermissionManager
+  12-29 21:13:28.622 26016 26629 D PackageManager: setEnabledSetting : userId = 0 packageName = com.microsoft.appmanager cmp = com.microsoft.appmanager.quicksettings.WindowsLinkTileService newState = 2 callingPackage = com.microsoft.appmanager
+  12-29 21:13:28.623 26016 26629 D PackageManager: setEnabledSetting : userId = 0 packageName = com.microsoft.appmanager cmp = com.microsoft.appmanager.receiver.LocaleChangeReceiver newState = 2 callingPackage = com.microsoft.appmanager
+  12-29 21:13:28.626 32635 32643 I WindowsLink: (YpcSignatureChecker) isSignatureAllowed in
+  12-29 21:13:28.626 32635 32643 I WindowsLink: (BaseContentProvider) call: method = capability_proximity_sending_user_present / subMethod = capability_proximity_sending_user_present
+  12-29 21:13:28.626 32635 32645 I WindowsLink: (YpcSignatureChecker) isSignatureAllowed in
+  12-29 21:13:28.627 32635 32645 I WindowsLink: (BaseContentProvider) call: method = capability_android_apps_on_windows / subMethod = capability_android_apps_on_windows
+  12-29 21:13:28.627 32635 32644 I WindowsLink: (YpcSignatureChecker) isSignatureAllowed in
+  12-29 21:13:28.627 32635 32644 I WindowsLink: (BaseContentProvider) call: method = capability_get_last_anr / subMethod = capability_get_last_anr
+  12-29 21:13:28.627 32635 32645 I WindowsLink: (YpcSignatureChecker) isSignatureAllowed in
+  12-29 21:13:28.627 32635 32645 I WindowsLink: (BaseContentProvider) call: method = PreviewMode@isPreviewModeEnabled / subMethod = isPreviewModeEnabled
+  12-29 21:13:28.628 32635 32643 I AAOW_RemoteAppModeService: mRemoteAppModeManager : com.samsung.android.remoteappmode.SemRemoteAppModeManager@f870036, Version : 9
+  12-29 21:13:28.629 26016 26626 D PackageManager: setEnabledSetting : userId = 0 packageName = com.microsoft.appmanager cmp = com.microsoft.appmanager.StartUpCoreActivity newState = 2 callingPackage = com.microsoft.appmanager
+  12-29 21:13:28.629 26016 26626 D PackageManager: setEnabledSetting : userId = 0 packageName = com.microsoft.appmanager cmp = com.microsoft.appmanager.oem.account.AccountAuthenticatorService newState = 1 callingPackage = com.microsoft.appmanager
+  12-29 21:13:28.629 26016 26626 D ApplicationPolicy: getApplicationStateEnabled : pkg = com.microsoft.appmanager userId : 0
+  12-29 21:13:28.629 26016 26626 D ApplicationPolicy: getApplicationComponentState : pkg = com.microsoft.appmanager userId : 0
+  12-29 21:13:28.630 26016 26473 D [RAMS]RemoteAppModeService: isAllowed = true
+  12-29 21:13:28.630 26016 26915 D [RAMS]RemoteAppModeService: isAllowed = true
+  12-29 21:13:28.736 32609 32653 I OneAuthLog: [OneAuth:0002:Info:9zj7z:a7f25526] Language code 'ko-KR' is not supported, fall back to 'ko'
+  12-29 21:13:28.743   620   624 D io_stats: !@ cpu boost: status(ON), curr_traffic_level(2), curr_set_freq(1959000), curr_set_lpm(0)
+  12-29 21:13:28.748 32579 32579 E SemDvfsManager_JNI: SemDvfsManager: registerfunction enter
+  12-29 21:13:28.749 32579 32579 E SemAffinityControl: SemAffinityControl: registerfunction enter
+  12-29 21:13:28.757 32579 32579 D nativeloader: Load libframework-connectivity-tiramisu-jni.so using APEX ns com_android_tethering for caller /apex/com.android.tethering/javalib/framework-connectivity-t.jar: ok
+> 12-29 21:13:28.757 32579 32579 D AndroidRuntime: Calling main entry com.android.commands.monkey.Monkey
+  12-29 21:13:28.758 32579 32579 D nativeloader: Load /system/lib64/libmonkey_jni.so using ns default for caller /system/framework/monkey.jar in same partition (is_bridged=0): ok
+  12-29 21:13:28.759 32579 32579 W Monkey  : args: [-p, com.yooyland.wallet, -c, android.intent.category.LAUNCHER, 1]
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: com.android.nfc.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: android.app.admin.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: android.database.sqlite is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: com.android.server.power.feature.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: com.android.media.performance.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: android.app.contextualsearch.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: android.app.ondeviceintelligence.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: com.android.media.projection.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: android.companion is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: android.service.controls.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: com.android.text.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: com.android.providers.contactkeys.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: com.android.intentresolver is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: android.companion.virtualdevice.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: android.uprobestats.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: com.android.net.thread.platform.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: android.view.contentprotection.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: com.android.server.dreams is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: com.android.graphics.surfaceflinger.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: com.android.hardware.input is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: android.sdk is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: com.android.input.flags is mapped to system
+  12-29 21:13:28.763 32579 32579 I AconfigPackage: android.tracing is mapped to system
+  12-29 21:13:28.837 26016 26626 D KNOX_MDM_SettingsProvider: isChangeAllowed() : name = user_rotation
+  12-29 21:13:28.837 26016 26626 V WindowManager: Computed rotation=ROTATION_0 (0) for display id=0 based on lastOrientation=SCREEN_ORIENTATION_UNSPECIFIED (-1) and oldRotation=ROTATION_0 (0), caller=com.android.server.wm.WindowManagerService.updateRotationUnchecked:72 com.android.server.wm.WindowManagerService.thawDisplayRotation:113 com.android.server.wm.WindowManagerService.thawRotation:2 android.view.IWindowManager$Stub.onTransact:3013 com.android.server.wm.WindowManagerService.onTransact:1 android.os.Binder.execTransactInternal:1457 
+  12-29 21:13:28.837 32579 32579 I Monkey  : ## Network stats: elapsed time=23ms (0ms mobile, 0ms wifi, 23ms not connected)
+  12-29 21:13:28.837 26507 26638 D HWUI    : HWUI - treat SMPTE_170M as sRGB
+  12-29 21:13:28.838 32579 32579 I app_process: System.exit called, status: 0
+> 12-29 21:13:28.838 32579 32579 I AndroidRuntime: VM exiting with result code 0.
+  12-29 21:13:28.838 26952 25449 I HoneySpace.RecentTasks: onRecentTasksChanged
+  12-29 21:13:28.839 28225 28225 I SSS     : [ChatRoomComponentManager] onContentCaptureEvent[2020132328]: SESSION_PAUSED
+  12-29 21:13:28.839 28225 28225 I SSS     : [ChatRoomContext] onContentCaptureEvent[PAUSE]: ActivityId(46612671), Component({com.kakao.talk/com.kakao.talk.activity.chatroom.ChatRoomHolderActivity})
+  12-29 21:13:28.839 28225 28225 I SSS     : [ChatRoomSessionManager] destroyChatRoomSession[2020132328] by onContentCaptureEvent[2020132328]: SESSION_PAUSED
+  12-29 21:13:28.839 28225 28225 I SSS     : [TranslatorDelegate] close
+  12-29 21:13:28.839 28225 28225 I ScsApi@NeuralTranslator: NeuralTranslator -- close() executed
+  12-29 21:13:28.839 26016 26626 I AppsFilter: interaction: PackageSetting{aa138dd com.hustay.swing.dc7070ff7640d46e0aac6d102f1f71325/10423} -> PackageSetting{9dd9fdf com.yooyland.wallet/10735} BLOCKED
+  12-29 21:13:28.839 26507 26507 D Navbar.Store: handleEvent(0) OnRotationLockedChanged(rotationLocked=false) [Module] NavBarStoreImpl
+  12-29 21:13:28.840 26016 26626 V WindowManager: Checking theme of starting window: 0x7f140242
+  12-29 21:13:28.840 26016 26626 V WindowManager: Translucent=false Floating=false ShowWallpaper=false Disable=false
+  12-29 21:13:28.840 26016 26626 V WindowManager: Collecting in transition 701: ActivityRecord{141929735 u0 com.yooyland.wallet/.MainActivity t4918}, caller=com.android.server.wm.TransitionController.collect:7 com.android.server.wm.ActivityRecord.setVisibility:132 com.android.server.wm.EnsureActivitiesVisibleHelper.process:459 com.android.server.wm.TaskFragment.updateActivityVisibilities:12 com.android.server.wm.Task$$ExternalSyntheticLambda37.accept:37 
+  12-29 21:13:28.840 26016 26626 V WindowManager: Collecting in transition 701: ActivityRecord{243353523 u0 com.kakao.talk/.activity.chatroom.ChatRoomHolderActivity t4887}, caller=com.android.server.wm.TransitionController.collect:7 com.android.server.wm.ActivityRecord.setVisibility:132 com.android.server.wm.ActivityRecord.makeInvisible:32 com.android.server.wm.EnsureActivitiesVisibleHelper.process:542 com.android.server.wm.TaskFragment.updateActivityVisibilities:12 
+  12-29 21:13:28.840 26016 26626 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{e8e304e u0 PopupWindow:288df9d}
+  12-29 21:13:28.840 26016 26626 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{3f415da u0 com.kakao.talk/com.kakao.talk.activity.chatroom.ChatRoomHolderActivity}
+  12-29 21:13:28.840 26016 26071 D SGM:FgCheckThread: notePauseComponent(), received pkgName: com.kakao.talk, userId: 0
+  12-29 21:13:28.841 26016 26626 D SurfaceComposerClient: setCornerRadius ## 8365c64 Splash Screen com.yooyland.wallet#54174 cornerRadius=0.000000
+  12-29 21:13:28.841 26016 26626 D SurfaceControl: restrictHighRefreshRate, enabled=false
+  12-29 21:13:28.841  1241  1958 I SurfaceFlinger: HRR : 0
+  12-29 21:13:28.841  1241  1958 D DisplayModeController: setDesiredMode 4633128672291736003 {mode={fps=120.00 Hz, modePtr={id=0, vsyncRate=120.00 Hz, peakRefreshRate=120.00 Hz}}, emitEvent=true, force=false}
+  12-29 21:13:28.841 26016 26157 D ActivityManager Intent delay: Delaying Broadcast: 1000ms, BroadcastRecord{f8d342c android.intent.action.PACKAGE_UNSTOPPED/u0}
+  12-29 21:13:28.841 28225 32552 I SSS     : [ChatRoomNormalSession] onDestroy
+  12-29 21:13:28.842 26016 26235 V InputMethodManagerService: Checking com.google.android.tts/com.google.android.apps.speech.tts.googletts.settings.asr.voiceime.VoiceInputMethodService
+  12-29 21:13:28.843 26016 26071 I ImeTracker: system_server:f812c4ab: onRequestHide at ORIGIN_SERVER reason HIDE_WHEN_INPUT_TARGET_INVISIBLE fromUser false
+  12-29 21:13:28.843 26016 26071 V InputMethodManagerService: applyImeVisibility state=5
+  12-29 21:13:28.843 26016 26235 V InputMethodManagerService: Found an input method InputMethodInfo{com.google.android.tts/com.google.android.apps.speech.tts.googletts.settings.asr.voiceime.VoiceInputMethodService, settings: com.google.android.apps.speech.tts.googletts.settings.asr.voiceime.ui.VoiceImeSettingsActivity, languageSettings: null}
+  12-29 21:13:29.246   383   477 W unknown:BridgelessReact: renderRootSync@1:368989
+  12-29 21:13:29.246   383   477 W unknown:BridgelessReact: performWorkOnRoot@1:366412
+  12-29 21:13:29.246   383   477 W unknown:BridgelessReact: performWorkOnRootViaSchedulerTask@1:320182
+  12-29 21:13:29.246   383   477 W unknown:BridgelessReact: ")
+  --------- beginning of crash
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: FATAL EXCEPTION: mqt_v_native
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: Process: com.yooyland.wallet, PID: 383
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: com.facebook.react.common.JavascriptException: ReanimatedError: [Reanimated] Native part of Reanimated doesn't seem to be initialized.
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: See https://docs.swmansion.com/react-native-reanimated/docs/guides/troubleshooting#native-part-of-reanimated-doesnt-seem-to-be-initialized for more details., stack:
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: ReanimatedErrorConstructor@1:5257028
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: NativeReanimatedModule@1:5300593
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: createNativeReanimatedModule@1:5299689
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: anonymous@1:5275665
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: loadModuleImplementation@1:128367
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: guardedLoadModule@1:127890
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: metroRequire@1:127400
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: anonymous@1:5275507
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: loadModuleImplementation@1:128367
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: guardedLoadModule@1:127890
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: metroRequire@1:127400
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: anonymous@1:5275070
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: loadModuleImplementation@1:128367
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: guardedLoadModule@1:127890
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: metroRequire@1:127400
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: anonymous@1:5274019
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: loadModuleImplementation@1:128367
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: guardedLoadModule@1:127890
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: metroRequire@1:127400
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: anonymous@1:5273791
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: loadModuleImplementation@1:128367
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: guardedLoadModule@1:127890
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: metroRequire@1:127400
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: anonymous@1:5272670
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: loadModuleImplementation@1:128367
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: guardedLoadModule@1:127890
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: metroRequire@1:127400
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: anonymous@1:5272431
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: loadModuleImplementation@1:128367
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: guardedLoadModule@1:127890
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: metroRequire@1:127400
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: anonymous@1:5272208
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: loadModuleImplementation@1:128367
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: guardedLoadModule@1:127890
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: metroRequire@1:127400
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: anonymous@1:5254336
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: loadModuleImplementation@1:128367
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: guardedLoadModule@1:127890
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: metroRequire@1:127400
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: anonymous@1:5250774
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: loadModuleImplementation@1:128367
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: guardedLoadModule@1:127890
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: metroRequire@1:127400
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: anonymous@1:5238229
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: loadModuleImplementation@1:128367
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: guardedLoadModule@1:127846
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: metroRequire@1:127400
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: get@1:894698
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: metroContext@1:894052
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: loadRoute@1:1762940
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: getLayoutNode@1:1765104
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: _loop3@1:1762832
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: getDirectoryTree@1:1760596
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: getRoutes@1:1759581
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: getRoutes@1:1758568
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: useStore@1:1730098
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: ContextNavigator@1:1796911
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: renderWithHooks@1:324732
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: updateFunctionComponent@1:343565
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: beginWork@1:351452
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: performUnitOfWork@1:370149
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: workLoopSync@1:369157
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: renderRootSync@1:368989
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: performWorkOnRoot@1:366412
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: performWorkOnRootViaSchedulerTask@1:320182
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: 
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: 	at com.facebook.react.modules.core.ExceptionsManagerModule.reportException(SourceFile:76)
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: 	at com.facebook.jni.NativeRunnable.run(Native Method)
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: 	at android.os.Handler.handleCallback(Handler.java:995)
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:103)
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: 	at com.facebook.react.bridge.queue.MessageQueueThreadHandler.dispatchMessage(SourceFile:6)
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: 	at com.facebook.react.bridge.queue.MessageQueueThreadImpl$Companion.startNewBackgroundThread$lambda$1(SourceFile:38)
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: 	at com.facebook.react.bridge.queue.MessageQueueThreadImpl$Companion.a(SourceFile:1)
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: 	at B5.k.run(SourceFile:232)
+> 12-29 21:13:29.246   383   477 E AndroidRuntime: 	at java.lang.Thread.run(Thread.java:1119)
+  12-29 21:13:29.250 26016   669 I DropBoxManagerService: add tag=data_app_crash isTagEnabled=true flags=0x2
+  12-29 21:13:29.251 26016 27396 D Debug   : low && ship && 3rdparty app crash, do not dump
+  12-29 21:13:29.252 26016   671 W ActivityManager: crash : com.yooyland.wallet,10735
+  12-29 21:13:29.253 26016 27396 W ActivityTaskManager:   Force finishing activity com.yooyland.wallet/.MainActivity
+  12-29 21:13:29.253 26016 27396 D WindowManager: Transition is created, t=TransitionRecord{a433558 id=-1 type=CLOSE flags=0x10}, caller=com.android.server.wm.Transition.<init>:182 com.android.server.wm.TransitionController.createTransition:17 com.android.server.wm.TransitionController.requestTransitionIfNeeded:48 com.android.server.wm.RootWindowContainer$$ExternalSyntheticLambda34.accept:176 com.android.server.wm.Task.forAllLeafTasks:6 
+  12-29 21:13:29.253 26016 27396 D BLASTSyncEngine: SyncGroup is created, id=702, name=Transition-CLOSE, caller=com.android.server.wm.BLASTSyncEngine$SyncGroup.<init>:52 com.android.server.wm.TransitionController.moveToCollecting:79 com.android.server.wm.TransitionController.createTransition:46 com.android.server.wm.TransitionController.requestTransitionIfNeeded:48 com.android.server.wm.RootWindowContainer$$ExternalSyntheticLambda34.accept:176 com.android.server.wm.Task.forAllLeafTasks:6 com.android.server.wm.WindowContainer.forAllLeafTasks:4 
+  12-29 21:13:29.254 26016 27396 W BLASTSyncEngine: setSyncMethod, id=702, method=0, caller=com.android.server.wm.TransitionController.moveToCollecting:91 com.android.server.wm.TransitionController.createTransition:46 com.android.server.wm.TransitionController.requestTransitionIfNeeded:48 
+  12-29 21:13:29.254 26016 27396 V WindowManager: Start collecting in Transition: TransitionRecord{a433558 id=702 type=CLOSE flags=0x10}, caller=com.android.server.wm.TransitionController.createTransition:46 com.android.server.wm.TransitionController.requestTransitionIfNeeded:48 com.android.server.wm.RootWindowContainer$$ExternalSyntheticLambda34.accept:176 com.android.server.wm.Task.forAllLeafTasks:6 com.android.server.wm.WindowContainer.forAllLeafTasks:4 
+  12-29 21:13:29.254 26016 27396 V WindowManager: Requesting StartTransition: TransitionRecord{a433558 id=702 type=CLOSE flags=0x10}, caller=com.android.server.wm.TransitionController.requestTransitionIfNeeded:56 com.android.server.wm.RootWindowContainer$$ExternalSyntheticLambda34.accept:176 com.android.server.wm.Task.forAllLeafTasks:6 com.android.server.wm.WindowContainer.forAllLeafTasks:4 com.android.server.wm.DisplayArea.forAllLeafTasks:4 
+  12-29 21:13:29.255 26016 27396 V WindowManager: Collecting in transition 702: Task{f3cfe34 #4918 type=standard A=10735:com.yooyland.wallet}, caller=com.android.server.wm.Transition.collectExistenceChange:40 com.android.server.wm.Transition.collectClose:7 com.android.server.wm.ActivityRecord.finishIfPossible:50 com.android.server.wm.ActivityRecord.finishIfPossible:1 com.android.server.wm.RootWindowContainer$$ExternalSyntheticLambda34.accept:179 
+  12-29 21:13:29.255 26507 26548 V WindowManagerShell: Transition requested (#702): android.os.BinderProxy@ed09d8b TransitionRequestInfo { type = CLOSE, triggerTask = TaskInfo{userId=0 taskId=4918 effectiveUid=10735 displayId=0 isRunning=true baseIntent=Intent { act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] flg=0x10200000 cmp=com.yooyland.wallet/.MainActivity } baseActivity=ComponentInfo{com.yooyland.wallet/com.yooyland.wallet.MainActivity} topActivity=ComponentInfo{com.yooyland.wallet/com.yooyland.wallet.MainActivity} origActivity=null realActivity=ComponentInfo{com.yooyland.wallet/com.yooyland.wallet.MainActivity} numActivities=1 lastActiveTime=1015642089 supportsMultiWindow=true resizeMode=1 isResizeable=true minWidth=-1 minHeight=-1 maxWidth=-1 maxHeight=-1 defaultMinSize=220 desktopDefaultMinSize=304 token=WCT{android.window.IWindowContainerToken$Stub$Proxy@3559e68} topActivityType=1 pictureInPictureParams=null shouldDockBigOverlays=false launchIntoPipHostTaskId=-1 lastParentTaskIdBeforePip=-1 displayCutoutSafeInsets=Rect(0, 0 - 0, 0) topActivityInfo=ActivityInfo{e285281 com.yooyland.wallet.MainActivity} launchCookies=[] positionInParent=Point(0, 0) parentTaskId=-1 isFocused=true isVisible=true isVisibleRequested=true isTopActivityNoDisplay=false isSleeping=false locusId=null displayAreaFeatureId=1 isTopActivityTransparent=false isActivityStackTransparent=false lastNonFullscreenBounds=Rect(81, 563 - 999, 1733) capturedLink=null capturedLinkTimestamp=0 requestedVisibleTypes=-9 topActivityRequestOpenInBrowserEducationTimestamp=0 appCompatTaskInfo=AppCompatTaskInfo { topActivityInSizeCompat=false eligibleForLetterboxEducation= false isLetterboxEducationEnabled= false isLetterboxDoubleTapEnabled= false eligibleForUserAspectRatioButton= false topActivityBoundsLetterboxed= false isFromLetterboxDoubleTap= false topActivityLetterboxVerticalPosition= -1 topActivityLetterboxHorizontalPosition= -1 topActivityLetterboxWidth=-1 topActivityLetterboxHeight=-1 topActivityAppBounds=Rect(0, 0 - 1080, 2340) isUserFullscreenOverrideEnabled=false isSystemFullscreenOverrideEnabled=false hasMinAspectRatioOverride=false topActivityLetterboxBounds=null cameraCompatTaskInfo=CameraCompatTaskInfo { freeformCameraCompatMode=inactive} topActivityBounds=null topActivityInDisplayCompat=false singleTapFromLetterbox=false} topActivityMainWindowFrame=null originallySupportedMultiWindow=true hasWallpaper=false rootAffinity=10735:com.yooyland.wallet isTopTaskInStage=false CoverLauncherWidgetTask=false LaunchedFromAppsCoverLauncherTask=false LaunchedFromMultistarCoverLauncherTask=false isAllowedSeamlessRotation=false isTopTransparentActivity=false isAliasManaged=false hasConfigChanged=false snappingGuideBounds=null isAiKeyRemoveAppTask=false lastDesktopWindowingBounds=null lastExternalDesktopWindowingBounds=null safeCutoutInsets=null}, pipChange = null, remoteTransition = null, displayChange = null, flags = 16, debugId = 702 }
+  12-29 21:13:29.255 26016 27396 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{8365c64 u0 Splash Screen com.yooyland.wallet}
+  12-29 21:13:29.255 26016 27396 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{a2cd267 u0 com.yooyland.wallet/com.yooyland.wallet.MainActivity}
+  12-29 21:13:29.255 26507 26548 V ShellDesktopMode: DesktopTasksController: isDesktopModeShowing: hasVisibleTasks=false hasTopTransparentFullscreenTask=false
+  12-29 21:13:29.255 26507 26548 V ShellDesktopMode: DesktopTasksController: isDesktopModeShowing: hasVisibleTasks=false hasTopTransparentFullscreenTask=false
+  12-29 21:13:29.256 26016 27396 D ActivityTaskManager: scheduleTopResumedActivityChanged, onTop=false, r=ActivityRecord{141929735 u0 com.yooyland.wallet/.MainActivity t4918 f}}, caller=com.android.server.wm.ActivityTaskSupervisor.scheduleTopResumedActivityStateLossIfNeeded:19 com.android.server.wm.ActivityTaskSupervisor.updateTopResumedActivityIfNeeded:20 com.android.server.wm.TaskDisplayArea.positionChildAt:252 com.android.server.wm.Task.moveToFront:40 com.android.server.wm.Task.adjustFocusToNextFocusableTask:133 com.android.server.wm.ActivityRecord.finishIfPossible:71 
+  12-29 21:13:29.256 26016 27396 V WindowManager: Collecting in transition 702: ActivityRecord{141929735 u0 com.yooyland.wallet/.MainActivity t4918 f}}, caller=com.android.server.wm.TransitionController.collect:7 com.android.server.wm.ActivityRecord.setVisibility:132 com.android.server.wm.ActivityRecord.finishIfPossible:87 com.android.server.wm.ActivityRecord.finishIfPossible:1 com.android.server.wm.RootWindowContainer$$ExternalSyntheticLambda34.accept:179 
+  12-29 21:13:29.256 26952 26952 I HoneySpace.EdgePanel.EdgeVisibilityRepository: getComputedTrayVisible : keyguardState = 1
+  12-29 21:13:29.256 26952 26952 I HoneySpace.EdgePanel.EdgeVisibilityRepository: updateTrayVisible: State = 0x1, visible = true, current containerState = 0, specificMode = 0
+  12-29 21:13:29.256 26507 26548 D ShellDesktopMode: handleRequest: TransitionRequestInfo {type=2, tid=4918, f=16, debugId=702}
+  12-29 21:13:29.256 26952 26952 I HoneySpace.EdgePanel.EdgeVisibilityRepository: Same container state 0
+  12-29 21:13:29.256 26507 26548 V ShellDesktopMode: DesktopTasksController: skipping handleRequest reason=transition type not handled (2)
+  12-29 21:13:29.257   568   568 I indy::utils::logger: Logging for Android
+  12-29 21:13:29.257 26016 27396 V WindowManager: Collecting in transition 702: ActivityRecord{243353523 u0 com.kakao.talk/.activity.chatroom.ChatRoomHolderActivity t4887}, caller=com.android.server.wm.TransitionController.collect:7 com.android.server.wm.ActivityRecord.setVisibility:132 com.android.server.wm.ActivityRecord.makeVisibleIfNeeded:36 com.android.server.wm.EnsureActivitiesVisibleHelper.process:538 com.android.server.wm.TaskFragment.updateActivityVisibilities:12 
+  12-29 21:13:29.257 26016 27396 D WindowManager: prepareSync <SYNC_STATE_WAITING_FOR_DRAW>, mPrepareSyncSeqId=0, win=Window{e8e304e u0 PopupWindow:288df9d}
+  12-29 21:13:29.359 27666 10403 I NSLocationManager_FLP: getGPSUsingApps, No change
+  12-29 21:13:29.359 24615 24625 I TranslationServiceBinder: update cycle reached : false, resource update : status 1, asset version default : 2025060900, downloaded : 0
+  12-29 21:13:29.359 24615 24625 I TranslationServiceBinder: total #0
+  12-29 21:13:29.359 25896  8287 I CameraService: onUidStateChanged: uid=10053, procState is changed. (1 -> 0)
+  12-29 21:13:29.360 26016 27713 W Binder  : Outgoing transactions from this process must be FLAG_ONEWAY
+> 12-29 21:13:29.360 26016 27713 W Binder  : java.lang.Throwable
+  12-29 21:13:29.360 26016 27713 W Binder  : 	at android.os.BinderProxy.transact(BinderProxy.java:566)
+  12-29 21:13:29.360 26016 27713 W Binder  : 	at android.bluetooth.IBluetoothGatt$Stub$Proxy.getAdvertisingSetUids(IBluetoothGatt.java:1678)
+  12-29 21:13:29.360 26016 27713 W Binder  : 	at android.bluetooth.BluetoothAdapter.getAdvertisingSetUids(BluetoothAdapter.java:8476)
+  12-29 21:13:29.360 26016 27713 W Binder  : 	at android.bluetooth.BluetoothAdapter.getHWUsingApps(BluetoothAdapter.java:1342)
+  12-29 21:13:29.360 26016 27713 W Binder  : 	at com.android.server.am.mars.filter.filter.BlueToothConnectedFilter.updateBTUsingPackages(qb/103690709 fd78fbc58a155f2d8555b3bace0d1b0350676c4422e6eb67b411356d536409a7:22)
+  12-29 21:13:29.360 26016 27713 W Binder  : 	at com.android.server.am.FreecessController.freeze(qb/103690709 fd78fbc58a155f2d8555b3bace0d1b0350676c4422e6eb67b411356d536409a7:117)
+  12-29 21:13:29.360 26016 27713 W Binder  : 	at com.android.server.am.FreecessHandler$MainHandler.handleLcdOnFreeze(qb/103690709 fd78fbc58a155f2d8555b3bace0d1b0350676c4422e6eb67b411356d536409a7:55)
+  12-29 21:13:29.360 26016 27713 W Binder  : 	at com.android.server.am.FreecessHandler$MainHandler.handleMessage(qb/103690709 fd78fbc58a155f2d8555b3bace0d1b0350676c4422e6eb67b411356d536409a7:793)
+  12-29 21:13:29.360 26016 27713 W Binder  : 	at android.os.Handler.dispatchMessage(Handler.java:110)
+  12-29 21:13:29.360 26016 27713 W Binder  : 	at android.os.Looper.loopOnce(Looper.java:273)
+  12-29 21:13:29.360 26016 27713 W Binder  : 	at android.os.Looper.loop(Looper.java:363)
+  12-29 21:13:29.360 26016 27713 W Binder  : 	at android.os.HandlerThread.run(HandlerThread.java:85)
+  12-29 21:13:29.361  1241  1241 D SurfaceFlinger: Display 4633128672291736003 HWC layers:
+  12-29 21:13:29.361  1241  1241 D SurfaceFlinger:        DEVICE |          128110284505217 | 00002102 | RGBA_8888    |  315.0    0.0 1080.0 2340.0 |    0    0  765 2340 | com.kakao.talk/com.kakao.talk.activi[...].ChatRoomHolderActivity$_29828#54161 (210)
+  12-29 21:13:29.361  1241  1241 D SurfaceFlinger:   SOLID_COLOR |                        0 | 00000000 | N/A          |    0.0    0.0    0.0    0.0 |    0    0 1080 2340 | DimTransitionLayer for Surface(name=Task=4918)/@0xba98767#54188 (0)
+  12-29 21:13:29.361  1241  1241 D SurfaceFlinger:        DEVICE |          113846698120223 | 00002100 | RGBA_8888    |    0.0    0.0 1080.0   92.0 |    0    0 1080   92 | StatusBar$_26507#45846 (24858)
+  12-29 21:13:29.361  1241  1241 D SurfaceFlinger:        DEVICE |          115757958563093 | 00002100 | RGBA_8888    |    0.0    0.0   67.0  453.0 |    0 1357   67 1810 | com.sec.android.app.launcher/com.sam[...].app.CocktailBarService$_26952#54019 (3)
+  12-29 21:13:29.361  1241  1241 D SurfaceFlinger:        DEVICE |          113846698120225 | 00002100 | RGBA_8888    |    0.0    0.0 1080.0  135.0 |    0 2205 1080 2340 | NavigationBar0$_26507#45842 (19649)
+  12-29 21:13:29.361  1241  1241 D SurfaceFlinger:  DISPLAY_DECO |          113846698120135 | 00002340 | 0x0000038    |    0.0  
+  12-29 21:13:29.361  1241  1241 D SurfaceFlinger:   0.0 1080.0 2340.0 |    0    0 1080 2340 | ScreenDecorHwcOverlay$_26507#45850 (4)
+  12-29 21:13:29.361  1241  1241 D SurfaceFlinger: 
+  12-29 21:13:29.361  1241  1241 I SurfaceFlinger: destroyed Splash Screen com.yooyland.wallet$_26507#54175
+  12-29 21:13:29.361 26016 26016 D OlafRestriction:  olaf state update: state=false
+  12-29 21:13:29.361 26016 26016 D OlafRestriction:  sending trigger onRestrictionStateChanged msg.
+  12-29 21:13:29.361  1241  1241 I Layer   : id=54175 Destroyed Splash Screen com.yooyland.wallet$_26507#54175

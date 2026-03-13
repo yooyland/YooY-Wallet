@@ -5,6 +5,7 @@ import { isAdmin } from '@/constants/admins';
 // @ts-ignore
 import { v4 as uuidv4 } from 'uuid';
 import { create } from 'zustand';
+import { Platform } from 'react-native';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { doc, setDoc, updateDoc, serverTimestamp, collection, deleteDoc } from 'firebase/firestore';
 import { ref as storageRef, uploadString, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -186,7 +187,7 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
       // 주로 웹에서 익명 로그인 직후 rules에 의해 PERMISSION_DENIED가 나는 경우가 있어 즉시 멤버 문서를 기록합니다.
       _ensureMember: async (roomId: string) => {
         try {
-          if (!firebaseAuth.currentUser) { try { await signInAnonymously(firebaseAuth); } catch {} }
+          if (!firebaseAuth.currentUser && Platform.OS === 'web') { try { await signInAnonymously(firebaseAuth); } catch {} }
           const uid = firebaseAuth.currentUser?.uid || 'me';
           const memberRef = doc(firestore, 'rooms', roomId, 'members', uid);
           await setDoc(memberRef, { joinedAt: serverTimestamp() }, { merge: true });
@@ -202,9 +203,7 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
 
       // 1:1 DM 방을 기존 방 우선 → 없으면 생성(양쪽 멤버십/joinedRooms 함께 기록)
       getOrCreateDmRoom: async (me: string, other: string) => {
-        try {
-          if (!firebaseAuth.currentUser) { try { await signInAnonymously(firebaseAuth); } catch {} }
-        } catch {}
+        try { if (!firebaseAuth.currentUser && Platform.OS === 'web') { try { await signInAnonymously(firebaseAuth); } catch {} } } catch {}
         const myUid = me || (firebaseAuth.currentUser?.uid || 'me');
         const friendUid = other;
         if (!friendUid) throw new Error('friendUid required');
@@ -314,7 +313,7 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
         // Firestore에 rooms 컬렉션 동기화 (best-effort)
         try {
           // createRoom은 동기 반환이므로 익명 로그인은 fire-and-forget 처리
-          if (!firebaseAuth.currentUser) { try { signInAnonymously(firebaseAuth).catch(()=>{}); } catch {}
+          if (!firebaseAuth.currentUser && Platform.OS === 'web') { try { signInAnonymously(firebaseAuth).catch(()=>{}); } catch {}
           }
           const ref = doc(firestore, 'rooms', room.id);
           const now = Date.now();
@@ -407,7 +406,7 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
               // 메시지 구독 (최근 500건, createdAt 오름차순)
               let unsubMsgs: undefined | (() => void);
               let unsubMembers: undefined | (() => void);
-              // 메시지 onSnapshot 배치/디바운스: 잦은 이벤트를 60ms 단위로 합쳐 상태 갱신
+              // 메시지 onSnapshot 배치/디바운스: 잦은 이벤트를 100ms 단위로 합쳐 상태 갱신(채팅 페이지 부하 완화)
               let latestMsgs: any[] | null = null;
               let flushTimer: any = null;
               try {
@@ -444,22 +443,37 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
                       flushTimer = setTimeout(() => {
                         try {
                           const take = latestMsgs || [];
-                          // 서버 스냅샷이 "정답"이 되도록 이전 로컬 목록과 병합하지 않는다.
-                          // (삭제된 메시지가 로컬 병합으로 되살아나는 문제 방지)
-                          set((s) => ({
-                            messages: {
-                              ...(s.messages || {}),
-                              [roomId]: [...take].sort(
-                                (a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0)
-                              ),
-                            },
-                          }) as any);
+                          // 서버 스냅샷 기준으로 병합하되, 로컬에 imageUrl/albumUrls가 있으면 유지
+                          // (업로드 중인 이미지가 null로 덮어쓰이는 것을 방지)
+                          set((s) => {
+                            const prevMsgs = s.messages?.[roomId] || [];
+                            const merged = take.map((newMsg: any) => {
+                              const old = prevMsgs.find((m: any) => m.id === newMsg.id);
+                              // imageUrl: 서버가 null이고 로컬에 값이 있으면 로컬 유지
+                              if (old?.imageUrl && !newMsg.imageUrl) {
+                                newMsg = { ...newMsg, imageUrl: old.imageUrl };
+                              }
+                              // albumUrls: 서버가 비어있고 로컬에 값이 있으면 로컬 유지
+                              if (Array.isArray(old?.albumUrls) && old.albumUrls.length > 0 && (!newMsg.albumUrls || newMsg.albumUrls.length === 0)) {
+                                newMsg = { ...newMsg, albumUrls: old.albumUrls };
+                              }
+                              return newMsg;
+                            });
+                            return {
+                              messages: {
+                                ...(s.messages || {}),
+                                [roomId]: merged.sort(
+                                  (a: any, b: any) => Number(a.createdAt || 0) - Number(b.createdAt || 0)
+                                ),
+                              },
+                            } as any;
+                          });
                         } catch {} finally {
                           latestMsgs = null;
                           try { clearTimeout(flushTimer); } catch {}
                           flushTimer = null;
                         }
-                      }, 60);
+                      }, 100);
                     }
                   } catch {}
                 }, () => {});
@@ -491,9 +505,7 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
 
       sendMessage: (roomId, senderId, content, type = 'text', imageUrl, replyToId, albumUrls) => {
         // Ensure authenticated before any Firestore writes to avoid permission errors
-        try {
-          if (!firebaseAuth.currentUser) { try { signInAnonymously(firebaseAuth).catch(()=>{}); } catch {} }
-        } catch {}
+        try { if (!firebaseAuth.currentUser && Platform.OS === 'web') { try { signInAnonymously(firebaseAuth).catch(()=>{}); } catch {} } } catch {}
         const msg: KakaoMessage = {
           id: uuidv4(),
           roomId,
@@ -633,20 +645,33 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
                 return { imageUrl: finalUrl, albumUrls: finalAlbum };
               } catch { return { imageUrl: null, albumUrls: null }; }
             };
+            // 1차 + 2차: 비동기 IIFE 내부에서 처리하여 상위 sync 함수에 top-level await를 쓰지 않는다.
             const safePayloadPromise = preparePayload();
             void (async () => {
+              // 1차: 즉시 Firestore에 기본 메시지 레코드를 남겨 상대방 화면에 최대한 빨리 보이도록 한다.
+              try {
+                await setDoc(mref, {
+                  id: msg.id,
+                  roomId,
+                  senderId,
+                  content,
+                  type,
+                  // 초기에는 이미지/앨범 URL 없이 텍스트 메타만 기록 → 업로드 완료 후 updateDoc으로 보강
+                  imageUrl: null,
+                  albumUrls: (type === 'album' ? [] : null),
+                  replyToId: replyToId || null,
+                  createdAt: serverTimestamp(),
+                } as any, { merge: true });
+              } catch {}
+
+              // 2차: 백그라운드에서 Storage 업로드 후 안전한 URL로만 문서를 패치
               const safe = await safePayloadPromise;
-              await setDoc(mref, {
-              id: msg.id,
-              roomId,
-              senderId,
-              content,
-              type,
-              imageUrl: (safe?.imageUrl ?? null),
-              albumUrls: (type === 'album' ? (safe?.albumUrls || []) : null),
-              replyToId: replyToId || null,
-              createdAt: serverTimestamp(),
-            } as any, { merge: true });
+              try {
+                await setDoc(mref, {
+                  imageUrl: (safe?.imageUrl ?? null),
+                  albumUrls: (type === 'album' ? (safe?.albumUrls || []) : null),
+                } as any, { merge: true });
+              } catch {}
               // 로컬 메시지도 업로드된 최종 URL로 동기화하여 "이미지 → 텍스트만"으로 바뀌는 현상 방지
               try {
                 set((s) => {
@@ -786,7 +811,7 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
           rooms: (s.rooms || []).map(r => r.id === roomId ? { ...r, isPublic } : r),
         }));
         try {
-          if (!firebaseAuth.currentUser) { try { await signInAnonymously(firebaseAuth); } catch {} }
+          if (!firebaseAuth.currentUser && Platform.OS === 'web') { try { await signInAnonymously(firebaseAuth); } catch {} }
           const ref = doc(firestore, 'rooms', roomId);
           try {
             await updateDoc(ref, { settings: removeUndefinedDeep(nextSettings), isPublic, updatedAt: serverTimestamp() } as any);
@@ -961,9 +986,7 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
           ),
         }));
         try {
-          if (!firebaseAuth.currentUser) {
-            try { await signInAnonymously(firebaseAuth); } catch {}
-          }
+          if (!firebaseAuth.currentUser && Platform.OS === 'web') { try { await signInAnonymously(firebaseAuth); } catch {} }
           const ref = doc(firestore, 'rooms', roomId);
           const payload: any = { settings: removeUndefinedDeep(next), updatedAt: serverTimestamp() };
           if (typeof (updates as any)?.basic?.isPublic === 'boolean') {
@@ -983,9 +1006,7 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
       updateRoomMeta: async (roomId, meta) => {
         set((s) => ({ rooms: s.rooms.map(r => r.id === roomId ? { ...r, ...meta } : r) }));
         try {
-          if (!firebaseAuth.currentUser) {
-            try { await signInAnonymously(firebaseAuth); } catch {}
-          }
+          if (!firebaseAuth.currentUser && Platform.OS === 'web') { try { await signInAnonymously(firebaseAuth); } catch {} }
           const ref = doc(firestore, 'rooms', roomId);
           const payload: any = { ...meta, updatedAt: serverTimestamp() };
           if (typeof (meta as any)?.title === 'string') payload.title_lower = String((meta as any).title).toLowerCase();
@@ -1068,7 +1089,7 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
 
       closeChatForUser: async (roomId, userId) => {
         // 인증 보장 (권한 오류 방지)
-        try { if (!firebaseAuth.currentUser) { try { await signInAnonymously(firebaseAuth); } catch {} } } catch {}
+        try { if (!firebaseAuth.currentUser && Platform.OS === 'web') { try { await signInAnonymously(firebaseAuth); } catch {} } } catch {}
         // 로컬에서만 해당 유저를 멤버 목록에서 제거 (차단 아님)
         set((s) => ({
           rooms: s.rooms.map(r => r.id === roomId ? { ...r, members: (r.members || []).filter(id => id !== userId) } : r),

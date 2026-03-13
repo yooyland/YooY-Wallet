@@ -7,13 +7,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResult<T
     if (!Config.baseURL) {
       return { ok: false, error: 'API base URL not configured' };
     }
+    // Timeout 제어
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), Config.requestTimeoutMs);
+
+    const started = Date.now();
     const res = await fetch(`${Config.baseURL}${path}`, {
       headers: {
         'Content-Type': 'application/json',
         ...(init?.headers ?? {}),
       },
+      signal: controller.signal,
+      cache: 'no-store',
+      // Android에서 연결이 길게 유지되며 블로킹되는 현상 방지
+      keepalive: false as any,
       ...init,
     });
+
+    clearTimeout(timeout);
+
     const text = await res.text();
     const json = text ? JSON.parse(text) : undefined;
     if (!res.ok) {
@@ -21,7 +33,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResult<T
     }
     return { ok: true, data: json as T };
   } catch (e: any) {
-    return { ok: false, error: e?.message ?? 'Network error' };
+    const msg = e?.name === 'AbortError' ? 'Network timeout' : (e?.message ?? 'Network error');
+    return { ok: false, error: msg };
   }
 }
 

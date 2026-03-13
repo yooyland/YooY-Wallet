@@ -1,15 +1,4 @@
 pluginManagement {
-  plugins {
-    id("org.jetbrains.kotlin.android") version "1.9.24"
-    id("org.jetbrains.kotlin.jvm") version "1.9.24"
-  }
-  resolutionStrategy {
-    eachPlugin {
-      if (requested.id.id.startsWith("org.jetbrains.kotlin.")) {
-        useVersion("1.9.24")
-      }
-    }
-  }
   def reactNativeGradlePlugin = new File(
     providers.exec {
       workingDir(rootDir)
@@ -25,27 +14,14 @@ pluginManagement {
     }.standardOutput.asText.get().trim(),
     "../android/expo-gradle-plugin"
   ).absolutePath
-
-  // Conditionally include Expo gradle plugin composite build only when not using community autolinking
-  if (System.getenv('EXPO_USE_COMMUNITY_AUTOLINKING') != '1') {
-    includeBuild(expoPluginsPath)
-  }
+  includeBuild(expoPluginsPath)
 }
 
 plugins {
   id("com.facebook.react.settings")
+  id("expo-autolinking-settings")
 }
 
-rootProject.name = 'App-YooYLand'
-
-include ':app'
-// Conditionally include Expo composite build and its settings plugin
-if (System.getenv('EXPO_USE_COMMUNITY_AUTOLINKING') != '1') {
-  includeBuild(expoAutolinking.reactNativeGradlePlugin)
-  pluginManager.apply("expo-autolinking-settings")
-}
-
-// Configure React Native settings and Expo autolinking after the top-level blocks
 extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
   if (System.getenv('EXPO_USE_COMMUNITY_AUTOLINKING') == '1') {
     ex.autolinkLibrariesFromCommand()
@@ -53,7 +29,20 @@ extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
     ex.autolinkLibrariesFromCommand(expoAutolinking.rnConfigCommand)
   }
 }
-if (System.getenv('EXPO_USE_COMMUNITY_AUTOLINKING') != '1') {
-  expoAutolinking.useExpoModules()
-  expoAutolinking.useExpoVersionCatalog()
-}
+expoAutolinking.useExpoModules()
+
+rootProject.name = 'App-YooYLand'
+
+expoAutolinking.useExpoVersionCatalog()
+
+include ':app'
+includeBuild(expoAutolinking.reactNativeGradlePlugin)
+
+// Reanimated가 링크하는 libworklets.so는 실제 worklets 네이티브 빌드가 필요합니다.
+// (disabled 더미는 stub만 제공해 undefined symbol 에러 발생)
+def workletsNodeModules = new File(rootDir.parentFile, 'node_modules/react-native-worklets')
+include ':react-native-worklets'
+project(':react-native-worklets').projectDir = new File(workletsNodeModules, 'android')
+
+// expo-barcode-scanner: 이미지에서 QR 인식을 위해 네이티브 모듈을 활성화합니다.
+// (autolinking 기본 동작 유지)

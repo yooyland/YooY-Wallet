@@ -9,8 +9,10 @@ import {
     TOKEN_INFO,
     UNISWAP_V3_QUOTER,
     QUOTER_ABI,
-    INFURA_MAINNET_URL
+    INFURA_MAINNET_URL,
+    DEFAULT_SLIPPAGE,
 } from './constants';
+import { getTokenAddressBySymbol, isAllowedPair, SwapSymbol } from '@/lib/swapConfig';
 
 // Mock ethers.js types (실제로는 ethers.js import 필요)
 interface Provider {
@@ -93,20 +95,18 @@ export async function quoteExactInputSingle(
     
     // 2) 시뮬레이션: 가상의 환율 계산 (fallback)
     const mockRates: Record<string, number> = {
-      [TOKEN_ADDRESSES.YOY]: 0.03546,  // YOY = $0.03546
+      [TOKEN_ADDRESSES.YOY]: 0.03546,  // YOY = $0.03546 (placeholder)
       [TOKEN_ADDRESSES.WETH]: 3000,    // WETH = $3000
       [TOKEN_ADDRESSES.USDT]: 1,       // USDT = $1
       [TOKEN_ADDRESSES.USDC]: 1,       // USDC = $1
-      [TOKEN_ADDRESSES.WBTC]: 45000,   // WBTC = $45000
-      [TOKEN_ADDRESSES.DAI]: 1,        // DAI = $1
     };
     
     const fromRate = mockRates[tokenIn] || 1;
     const toRate = mockRates[tokenOut] || 1;
     const rate = fromRate / toRate;
     
-    // 슬리피지 0.5% 적용
-    const slippage = 0.005;
+    // 슬리피지 적용
+    const slippage = (DEFAULT_SLIPPAGE || 0.5) / 100;
     const adjustedRate = rate * (1 - slippage);
     
     // amountIn을 토큰 단위로 변환하여 계산
@@ -158,9 +158,15 @@ export async function getQuote(
   try {
     console.log(`환율 조회 시작: ${amountIn} ${fromToken} → ${toToken}`);
     
+    // 0. 허용 페어 검증 및 주소 매핑 (ETH → WETH)
+    const a = fromToken as SwapSymbol;
+    const b = toToken as SwapSymbol;
+    if (!isAllowedPair(a, b)) {
+      throw new Error('이 앱에서는 YOY 중심 스왑만 지원됩니다');
+    }
     // 1. 토큰 주소 확인
-    const fromTokenAddress = TOKEN_ADDRESSES[fromToken as keyof typeof TOKEN_ADDRESSES];
-    const toTokenAddress = TOKEN_ADDRESSES[toToken as keyof typeof TOKEN_ADDRESSES];
+    const fromTokenAddress = getTokenAddressBySymbol(a);
+    const toTokenAddress = getTokenAddressBySymbol(b);
     
     console.log('토큰 주소 확인:', { fromTokenAddress, toTokenAddress });
     

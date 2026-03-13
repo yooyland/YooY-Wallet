@@ -1,3 +1,4 @@
+ 
 import CoinDetailModal from '@/components/CoinDetailModal';
 import HamburgerMenu from '@/components/hamburger-menu';
 import ProfileSheet from '@/components/profile-sheet';
@@ -18,6 +19,8 @@ import { getCoinPriceByCurrency, updateRealTimePrices } from '@/lib/priceManager
 import { getAllUpbitMarkets, UpbitTicker } from '@/lib/upbit';
 import { getMockBalancesForUser } from '@/lib/userBalances';
 import { useTransactionStore } from '@/src/stores/transaction.store';
+import { useMonitorStore } from '@/lib/monitorStore';
+import { scanQRFromImage } from '@/lib/qrScanner';
 import { createVoucher, buildClaimUri, endVoucher, parseClaimUri, getVoucher, claimVoucher, type ClaimVoucher } from '@/lib/claims';
 import { collection, onSnapshot, orderBy, query, where, deleteDoc, doc as fsDoc } from 'firebase/firestore';
 import { firestore, firebaseAuth, ensureAppCheckReady } from '@/lib/firebase';
@@ -31,7 +34,8 @@ import * as MediaLibrary from 'expo-media-library';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useWalletConnect } from '@/contexts/WalletConnectContext';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Image, Modal, Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity, View, Share, Linking, RefreshControl } from 'react-native';
+import { useMarket } from '@/contexts/MarketContext';
+import { ActivityIndicator, Alert, Animated, Image, Modal, Platform, ScrollView, StyleSheet, TextInput, TouchableOpacity, View, Share, Linking, RefreshControl, PixelRatio } from 'react-native';
 // QR: 네이티브 라이브러리 우선, 없으면 Google Chart 이미지로 폴백
 let QRCode: any = null;
 try {
@@ -1050,6 +1054,7 @@ export default function WalletScreen() {
   const { currentUser, accessToken } = useAuth();
   const { tab, coin, create } = useLocalSearchParams<{ tab?: string; coin?: string; create?: string }>();
   const { currency, language } = usePreferences();
+  const { usdkrw } = useMarket();
   let wc: ReturnType<typeof useWalletConnect> | null = null;
   try { wc = useWalletConnect(); } catch {}
   
@@ -1063,6 +1068,16 @@ export default function WalletScreen() {
   const baseBalances: any[] = []; // 실제 모니터 잔액으로만 구성
   const cryptoOnlyBalances: any[] = [];
   const [realTimeBalances, setRealTimeBalances] = useState<any[]>([]);
+  // SSOT: monitorStore 잔액(온체인 + 내부자산 오버레이)
+  const monitorBalances = useMonitorStore(s => s.balancesArray);
+  // 로그인 사용자: 잔액은 monitorStore 단일 소스. 변경 시마다 그대로 반영(빈 배열 포함).
+  useEffect(() => {
+    try {
+      if (currentUserEmail && Array.isArray(monitorBalances)) {
+        setRealTimeBalances(monitorBalances as any);
+      }
+    } catch {}
+  }, [currentUserEmail, monitorBalances]);
 
   // 코인 상세 모달 상태
   const [coinDetailModalVisible, setCoinDetailModalVisible] = useState(false);
@@ -1120,6 +1135,27 @@ export default function WalletScreen() {
     }
   }
 
+  // 사용자 → 금고(늘푸르게) 전송 헬퍼 (TTL/기프트 차감 등)
+  const sendYoyToTreasury = useCallback(async (humanAmount: string) => {
+    const { getYoyContractAddress, getYoyTreasuryAddress } = await import('@/lib/config');
+    const yoy = await getYoyContractAddress();
+    const treasury = await getYoyTreasuryAddress();
+    if (!yoy || !treasury) throw new Error('treasury not configured');
+    const { ethers } = await import('ethers');
+    const { getActiveChain } = await import('@/src/wallet/chains');
+    const { getLocalWallet } = await import('@/src/wallet/wallet');
+    const active = getActiveChain();
+    const provider = new ethers.JsonRpcProvider(active.rpcUrl, active.chainIdDec);
+    const local = await getLocalWallet();
+    if (!local) throw new Error('no local wallet');
+    const signer = local.wallet.connect(provider);
+    const abi = ['function transfer(address to, uint256 value) public returns (bool)'];
+    const c = new ethers.Contract(yoy, abi, signer);
+    const value = ethers.parseUnits(String(humanAmount||'0'), 18);
+    const tx = await c.transfer(treasury, value);
+    return String(tx.hash);
+  }, []);
+
   // 모달 닫기 핸들러
   const handleCloseModal = useCallback(() => {
     setCoinDetailModalVisible(false);
@@ -1130,7 +1166,9 @@ export default function WalletScreen() {
   // 잔액을 영구적으로 저장하고 불러오기 (대시보드와 동일한 방식)
   useEffect(() => {
     const loadRealTimeBalances = async () => {
-      if (!currentUserEmail) return;
+      // 로그인 사용자는 monitor 서버 잔액만 사용하므로
+      // 로컬 AsyncStorage 기반 잔액은 완전히 사용하지 않습니다.
+      if (currentUserEmail) return;
       
       const storageKey = `user_balances_${currentUserEmail}`;
       
@@ -1175,17 +1213,14 @@ export default function WalletScreen() {
               ? convertedBalancesAll.filter(x => x.symbol === 'YOY' || x.symbol === 'ETH')
               : convertedBalancesAll);
           setRealTimeBalances(convertedBalances);
-        } else {
-          setRealTimeBalances(cryptoOnlyBalances);
         }
       } catch (error) {
         console.error('Error loading wallet balances:', error);
-        setRealTimeBalances(cryptoOnlyBalances);
       }
     };
     
     loadRealTimeBalances();
-  }, [currentUserEmail, baseBalances]);
+  }, [currentUserEmail, baseBalances, monitorBalances]);
 
   // 기프트 목록 구독
   useEffect(() => {
@@ -1216,9 +1251,22 @@ export default function WalletScreen() {
     } catch {}
   }, [currentUserEmail]);
 
-  // 주기적으로 잔액 새로고침 (포커스 중에만 15초 주기)
   const { useFocusEffect } = require('@react-navigation/native');
+  // 로그인 사용자: 월렛 포커스 시 SSOT 동기화로 온체인+내부자산 즉시 반영
   useFocusEffect(React.useCallback(() => {
+    if (currentUserEmail) {
+      try {
+        useMonitorStore.getState().syncMe('[FOCUS][WALLET]');
+      } catch {}
+      return () => {};
+    }
+  }, [currentUserEmail]));
+
+  // 주기적으로 잔액 새로고침 (비로그인만, 포커스 중 60초 주기)
+  useFocusEffect(React.useCallback(() => {
+    if (currentUserEmail) {
+      return () => {};
+    }
     const loadRealTimeBalances = async () => {
       if (!currentUserEmail) return;
       
@@ -1262,16 +1310,22 @@ export default function WalletScreen() {
 
     // 즉시 1회 + 포커스 유지 중 주기 실행
     void loadRealTimeBalances();
-    const interval = setInterval(loadRealTimeBalances, 15000);
+    const interval = setInterval(loadRealTimeBalances, 60000);
     return () => clearInterval(interval);
   }, [currentUserEmail, baseBalances]));
   
   // EVM 온체인 잔액 동기화(ETH/YOY) - 포커스 중에만 15초 주기
   useFocusEffect(React.useCallback(() => {
+    // 로그인 사용자는 monitor 서버 기준으로 이미 온체인+내부자산이 합산되어 있으므로
+    // 별도의 직접 온체인 조회로 화면 잔액을 덮어쓰지 않습니다.
+    // (비로그인/게스트 모드에서만 로컬 온체인 조회 사용)
+    if (currentUserEmail) {
+      return () => {};
+    }
     let cancelled = false;
     const syncOnChain = async () => {
       try {
-        if (!currentUserEmail) return;
+        if (currentUserEmail) return;
         const { getLocalWallet } = await import('@/src/wallet/wallet');
         const { getActiveChain } = await import('@/src/wallet/chains');
         const { default: Constants } = await import('expo-constants');
@@ -1362,7 +1416,7 @@ export default function WalletScreen() {
     };
     // 즉시 1회 + 주기 실행
     void syncOnChain();
-    const interval = setInterval(syncOnChain, 15000);
+    const interval = setInterval(syncOnChain, 60000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [currentUserEmail, baseBalances]));
   
@@ -1572,7 +1626,7 @@ export default function WalletScreen() {
     (async () => {
       try {
         const { getEthChainIdHex, getEthMonitorHttp } = await import('@/lib/config');
-        const { enrollAddress, fetchBalances, fetchTransactions, toHumanAmount, meEnrollAddress, fetchMeBalances, fetchMeTransactions } = await import('@/lib/monitor');
+        const { enrollAddress, fetchBalances, fetchTransactions, toHumanAmount, meEnrollAddress, fetchMeBalances, fetchMeTransactions, ensureMeAddressLinked, balancesMapToArray, loadCachedMeBalances, saveCachedMeBalances } = await import('@/lib/monitor');
         const chainId = await getEthChainIdHex();
         const { getLocalWallet } = await import('@/src/wallet/wallet');
         const local = await getLocalWallet().catch(()=>null);
@@ -1581,44 +1635,19 @@ export default function WalletScreen() {
         if (addr) {
           await enrollAddress(addr, (currentUser as any)?.uid || undefined);
         }
-        // === New: After Firebase login, use authenticated endpoints ===
+        // 로그인 사용자: 잔액은 monitorStore 단일 소스만 사용. setRealTimeBalances 호출 금지.
+        let isAuthed = false;
         try {
           const { firebaseAuth } = await import('@/lib/firebase');
           const u = (firebaseAuth as any)?.currentUser;
-          const idt = u ? await u.getIdToken() : null;
+          const idt = u ? await u.getIdToken(true) : null;
           if (idt) {
-            if (addr) { try { await meEnrollAddress(addr, idt); } catch {} }
-            // Fetch balances/transactions via /me/*
+            isAuthed = true;
+            if (addr) { try { await ensureMeAddressLinked(addr, idt); } catch {} }
+            // SSOT 동기화만 트리거. 화면 잔액은 useMonitorStore(s => s.balancesArray) → setRealTimeBalances 효과로만 반영
             try {
-              const { getEthMonitorHttp } = await import('@/lib/config');
-              const base = await getEthMonitorHttp();
-              // 1) prime: addresses
-              let meAddrs: string[] = [];
-              try {
-                const r = await fetch(`${base}/me/addresses`, { headers: { Authorization: `Bearer ${idt}` } });
-                const j = await r.json().catch(()=>({}));
-                meAddrs = Array.isArray(j?.addresses) ? j.addresses : [];
-              } catch {}
-              // 2) balances
-              let balsMe = await fetchMeBalances(idt);
-              // 3) if empty but have addresses, ping /balances/:addr to trigger refresh, then retry
-              if ((!balsMe || Object.keys(balsMe).length === 0) && meAddrs.length > 0) {
-                try {
-                  await Promise.all(meAddrs.map(a => fetch(`${base}/balances/${a}`).catch(()=>null)));
-                  await new Promise(r => setTimeout(r, 1000));
-                  balsMe = await fetchMeBalances(idt);
-                } catch {}
-              }
-              // Replace state with server balances map → array
-              const arr = Object.entries(balsMe || {}).map(([sym, val]) => ({
-                symbol: sym,
-                amount: Number(val as any) || 0,
-                valueUSD: 0,
-                name: sym,
-                change24h: 0,
-                change24hPct: 0,
-              })) as any[];
-              setRealTimeBalances(arr);
+              const { useMonitorStore } = await import('@/lib/monitorStore');
+              await useMonitorStore.getState().syncMe('[WALLET]');
             } catch {}
             try {
               const txsMe = await fetchMeTransactions(idt, 1, 100);
@@ -1685,7 +1714,7 @@ export default function WalletScreen() {
             const { firebaseAuth } = await import('@/lib/firebase');
             const u = (firebaseAuth as any)?.currentUser;
             const uid = u?.uid || (currentUser as any)?.uid;
-            const token = u ? await u.getIdToken() : null;
+            const token = u ? await u.getIdToken(true) : null;
             if (token) {
               const meUrl = `${base}/me/addresses`;
               console.log('[monitor][wallet] uid =', uid, 'GET', meUrl);
@@ -1705,6 +1734,11 @@ export default function WalletScreen() {
             }
           } catch {}
         } catch {}
+        // 로그인 사용자는 /me/balances 결과가 온체인+내부자산 합산 기준이므로
+        // /balances/:addr 로 가져온 온체인 스냅샷으로 YOY/ETH를 다시 덮어쓰지 않는다.
+        if (isAuthed) {
+          return;
+        }
         const pull = async () => {
           try {
             const bals = await fetchBalances(addr);
@@ -1916,7 +1950,30 @@ export default function WalletScreen() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [username, setUsername] = useState<string>('');
-  const total = useMemo(() => realTimeBalances.reduce((s, b) => s + b.valueUSD, 0), [realTimeBalances]);
+  // 총 보유 자산 합계: Dashboard와 동일하게 valueUSD를 기준으로 합산 후 환율로 변환
+  const totalUsd = useMemo(() => {
+    try {
+      const list = Array.isArray(realTimeBalances) ? realTimeBalances : [];
+      return list
+        .filter((b: any) => !['KRW','USD','JPY','CNY','EUR'].includes(String(b?.symbol || '').toUpperCase()))
+        .reduce((sum: number, b: any) => {
+          const v = Number(b?.valueUSD || 0);
+          return sum + (Number.isFinite(v) ? v : 0);
+        }, 0);
+    } catch { return 0; }
+  }, [realTimeBalances]);
+
+  const displayTotal = useMemo(() => {
+    try {
+      const usd = Number(totalUsd || 0);
+      if (!Number.isFinite(usd) || usd <= 0) return null;
+      if (currency === 'USD') return usd;
+      // rates(KRW 등)는 getExchangeRates() 결과를 setRates에 저장해둔 값
+      const r = (rates as any)?.[currency];
+      if (Number.isFinite(r) && r > 0) return usd * r;
+      return usd; // 환율이 없으면 USD로 표시(숫자만)
+    } catch { return null; }
+  }, [totalUsd, currency, rates]);
   // 즉시 반영용: 로컬 잔액 조정(optimistic) + 퍼시스트
   const adjustLocalBalance = useCallback(async (symbol: string, delta: number) => {
     try {
@@ -2004,6 +2061,30 @@ export default function WalletScreen() {
       setActiveTab(tab as TabKey);
     }
   }, [tab]);
+
+  // 딥링크(yooy://pay) 처리: AsyncStorage에서 데이터 읽어서 보내기 폼에 자동 입력
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem('@deeplink_pay');
+        if (!raw) return;
+        await AsyncStorage.removeItem('@deeplink_pay');
+        const data = JSON.parse(raw);
+        const addr = String(data?.addr || '').trim();
+        const sym = String(data?.sym || 'YOY').toUpperCase();
+        const amt = String(data?.amt || '');
+        console.log('[Wallet] deeplink pay:', { addr, sym, amt });
+        if (addr) {
+          setSendToAddress(addr);
+          setSendSelectedSymbol(sym);
+          if (amt) setSendInput(amt);
+          setIsRequest(!!amt);
+          setOriginalUrlData({ addr, sym, amt });
+          setActiveTab('send');
+        }
+      } catch (e) { console.warn('[Wallet] deeplink error:', e); }
+    })();
+  }, []);
 
   // Wallet 페이지로 이동하는 함수
   const handleNavigateToWallet = useCallback((tab: 'send' | 'receive', coinSymbol: string) => {
@@ -2355,10 +2436,10 @@ export default function WalletScreen() {
           const RNBU = (()=>{ try { const m = require('react-native-blob-util'); return m?.default ?? m; } catch { return null; } })();
           // QR PNG base64 생성 헬퍼(뷰샷 불가 시에도 동작)
           const buildPngBase64 = async (): Promise<{ b64: string; name: string } | null> => {
-            // 0) QR 박스만 뷰샷(base64) 캡처 (react-native-view-shot)
+            // 0) QR 박스만 뷰샷(base64) 고해상도 캡처 (react-native-view-shot)
             try {
               if (captureRef && (qrShotBoxRef as any)?.current) {
-                const b64 = await captureRef((qrShotBoxRef as any).current, { format: 'png', quality: 1, result: 'base64' });
+                const b64 = await captureRef((qrShotBoxRef as any).current, { format: 'png', quality: 1, result: 'base64', width: 900, height: 900 });
                 if (b64) {
                   const n0 = `yooy-qr-${Date.now()}.png`;
                   return { b64, name: n0 };
@@ -3641,17 +3722,36 @@ export default function WalletScreen() {
   const buildPayUri = (addr: string, sym: string, amt: string) => `yooy://pay?addr=${encodeURIComponent(addr)}&sym=${encodeURIComponent(sym)}&amt=${encodeURIComponent(amt||'')}`;
   const parsePayUri = (data: string) => {
     try {
-      // 1) 우리 스킴: yooy://pay?addr=&sym=&amt=
-    try {
-      const url = new URL(data);
+      const s = String(data || '').trim();
+      if (!s) return null;
+      
+      // 1) 우리 스킴: yooy://pay?addr=&sym=&amt= (직접 파싱 - 더 안정적)
+      if (/^yooy:\/\/pay\?/i.test(s)) {
+        try {
+          const qs = s.split('?')[1] || '';
+          const params = new URLSearchParams(qs);
+          const addr = params.get('addr') || '';
+          const sym = params.get('sym') || '';
+          const amt = params.get('amt') || '';
+          console.log('[parsePayUri] yooy:// parsed:', { addr, sym, amt });
+          return { addr, sym, amt };
+        } catch (e) {
+          console.warn('[parsePayUri] yooy:// parse error:', e);
+        }
+      }
+      
+      // 1-b) URL API 폴백 (다른 yooy:// 경로 지원)
+      try {
+        const url = new URL(s);
         if (url.protocol === 'yooy:') {
-      const addr = url.searchParams.get('addr') || '';
-      const sym = url.searchParams.get('sym') || '';
-      const amt = url.searchParams.get('amt') || '';
-      return { addr, sym, amt };
+          const params = new URLSearchParams(url.search);
+          const addr = params.get('addr') || '';
+          const sym = params.get('sym') || '';
+          const amt = params.get('amt') || '';
+          if (addr || sym) return { addr, sym, amt };
         }
       } catch {}
-      const s = String(data || '');
+      
       // 2) EIP-681 간단형: ethereum:0x...@chainId?value=<wei>
       if (/^ethereum:/i.test(s)) {
         const noProto = s.replace(/^ethereum:/i, '');
@@ -3670,6 +3770,7 @@ export default function WalletScreen() {
         } catch {}
         return { addr: addrPart, sym: 'ETH', amt };
       }
+      
       // 3) 일반 BIP URI: <coin>:<address>?amount=
       if (/^[a-z][a-z0-9+.-]*:/i.test(s)) {
         const [scheme, rest] = s.split(':', 2);
@@ -3682,6 +3783,7 @@ export default function WalletScreen() {
         } catch {}
         return { addr: address || '', sym: coin, amt };
       }
+      
       return null;
     } catch { return null; }
   };
@@ -4480,33 +4582,69 @@ export default function WalletScreen() {
       const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'] as any, quality: 1, base64: true, selectionLimit: 1 } as any);
       if (res.canceled || !res.assets?.length) return;
       const asset: any = res.assets[0];
-      // MIME 보정: expo-image-picker는 asset.type==='image' 인 경우가 많음 → mimeType 우선, 없으면 확장자로 추정
-      const guessMime = () => {
-        if (asset?.mimeType && typeof asset.mimeType === 'string') return asset.mimeType;
-        const uri: string = asset?.uri || '';
-        const ext = (uri.split('.').pop() || '').toLowerCase();
-        if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
-        if (ext === 'png') return 'image/png';
-        if (ext === 'webp') return 'image/webp';
-        return 'image/png';
-      };
-      // 네이티브에서도 base64 data URL 사용 시 정확한 MIME을 넣어야 인식률이 높음
-      const src = asset?.base64 ? `data:${guessMime()};base64,${asset.base64}` : (asset?.uri || '');
+      const uri = asset?.uri || '';
+      
       // 0) 파일 꼬리에 내장된 URI 우선 검색
-      let code = await trySearchEmbeddedUriAny(asset.uri, asset.base64);
-      if (!code) code = await scanImageWithAll(src);
+      let code = await trySearchEmbeddedUriAny(uri, asset.base64);
+      
+      // 1) 네이티브: ML Kit scanBarcodes 시도 (가장 안정적)
+      if (!code && Platform.OS !== 'web') {
+        try {
+          const { scanBarcodes, BarcodeFormat } = require('@react-native-ml-kit/barcode-scanning');
+          let scanTarget = uri;
+          if (/^(content|ph):\/\//i.test(uri) && FileSystem?.cacheDirectory) {
+            const dest = `${FileSystem.cacheDirectory}qr_gift_${Date.now()}.jpg`;
+            await FileSystem.copyAsync({ from: uri, to: dest });
+            scanTarget = dest;
+          }
+          console.log('[handleImageGift] ML Kit scanTarget:', scanTarget);
+          const formats = BarcodeFormat?.QR_CODE ? [BarcodeFormat.QR_CODE] : undefined;
+          const out = formats ? await scanBarcodes(scanTarget, formats) : await scanBarcodes(scanTarget);
+          console.log('[handleImageGift] ML Kit result:', out);
+          const first = Array.isArray(out) && out.length ? out[0] : null;
+          code = String(first?.displayValue || first?.rawValue || '') || null;
+        } catch (e) {
+          console.warn('[handleImageGift] ML Kit error:', e);
+        }
+      }
+      
+      // 2) ML Kit 실패 시 scanQRFromImage 폴백
+      if (!code && Platform.OS !== 'web') {
+        try {
+          code = await scanQRFromImage(uri) || null;
+          console.log('[handleImageGift] scanQRFromImage result:', code);
+        } catch (e) {
+          console.warn('[handleImageGift] scanQRFromImage error:', e);
+        }
+      }
+      
+      // 3) 웹 또는 추가 폴백: scanImageWithAll
+      if (!code) {
+        const guessMime = () => {
+          if (asset?.mimeType && typeof asset.mimeType === 'string') return asset.mimeType;
+          const ext = (uri.split('.').pop() || '').toLowerCase();
+          if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+          if (ext === 'png') return 'image/png';
+          if (ext === 'webp') return 'image/webp';
+          return 'image/png';
+        };
+        const src = asset?.base64 ? `data:${guessMime()};base64,${asset.base64}` : uri;
+        code = await scanImageWithAll(src);
+      }
+      
       if (code) {
         setGiftClaimInput(code);
         await loadGiftVoucherFromData(code);
         return;
       }
-      // 실패 시 리사이즈/압축 후 재시도(고해상도 스크린샷 대비)
+      
+      // 4) 실패 시 리사이즈/압축 후 재시도(고해상도 스크린샷 대비)
       try {
         const M = await import('expo-image-manipulator');
-        const manipulated = await M.manipulateAsync(asset.uri, [{ resize: { width: 1080 } }], { format: M.SaveFormat.PNG, compress: 0.9, base64: true });
-        if (!code && manipulated?.base64) {
+        const manipulated = await M.manipulateAsync(uri, [{ resize: { width: 1080 } }], { format: M.SaveFormat.PNG, compress: 0.9, base64: true });
+        if (manipulated?.base64) {
           const dataUri2 = `data:image/png;base64,${manipulated.base64}`;
-          code = await trySearchEmbeddedUriAny(asset.uri, manipulated.base64) || await scanImageWithAll(dataUri2);
+          code = await trySearchEmbeddedUriAny(uri, manipulated.base64) || await scanImageWithAll(dataUri2);
           if (code) {
             setGiftClaimInput(code);
             await loadGiftVoucherFromData(code);
@@ -4978,17 +5116,49 @@ export default function WalletScreen() {
 
   // 간단 가격/수익 데이터 생성 (대시보드 마켓 뷰 유사)
   const holdingsForMarket = useMemo(() => {
+    try {
+      const pm = require('@/lib/priceManager').default;
+      const { useMonitorStore } = require('@/lib/monitorStore');
+      const buyPriceMap = useMonitorStore.getState().buyPriceMap || {};
     return realTimeBalances
       .filter(b => !['KRW','USD','JPY','CNY','EUR'].includes(b.symbol))
       .map(b => {
-        const currentPrice = b.valueUSD / (b.amount || 1);
-        const buyPrice = currentPrice * 0.97; // 임시 매수가
-        const currentValue = b.valueUSD;
-        const profitLoss = currentValue - (b.amount * buyPrice);
-        const profitLossPercent = (profitLoss / Math.max(1, (b.amount * buyPrice))) * 100;
+          // 우선 사용자 통화 가격 시도
+          let unit = pm.getCoinPriceByCurrency(b.symbol, currency || 'USD') || 0;
+          let usdUnit = pm.getCoinPriceByCurrency(b.symbol, 'USD') || 0;
+          // 가격 소스가 모두 비어있지만 monitorStore의 valueUSD가 있는 경우,
+          // valueUSD/amount 를 현재 USD 가격으로 사용하여 0 으로 보이는 문제를 방지
+          if ((usdUnit <= 0 || !Number.isFinite(usdUnit)) && b.amount > 0 && b.valueUSD > 0) {
+            usdUnit = b.valueUSD / b.amount;
+          }
+          // KRW 등에서 아직 가격 소스가 비어있을 때 USD→KRW(usdkrw)로 폴백
+          if ((unit <= 0 || !Number.isFinite(unit)) && usdUnit > 0) {
+            if (currency === 'KRW' && typeof usdkrw === 'number' && usdkrw > 0) {
+              unit = usdUnit * usdkrw;
+            } else if (currency === 'USD') {
+              unit = usdUnit;
+            }
+          }
+          const currentPrice = unit > 0 ? unit : 0;
+          // buyPriceMap은 USD 기준으로 저장되어 있으므로 통화에 맞춰 변환
+          let buyPriceUsd = (buyPriceMap[String(b.symbol).toUpperCase()] || 0);
+          // 매수가 정보가 없으면, 최소한 "최초 평균 단가" 대신 현재 USD 가격이라도 사용
+          if ((buyPriceUsd <= 0 || !Number.isFinite(buyPriceUsd)) && usdUnit > 0) {
+            buyPriceUsd = usdUnit;
+          }
+          const buyPrice = (currency === 'KRW' && typeof usdkrw === 'number' && usdkrw > 0)
+            ? (buyPriceUsd > 0 ? buyPriceUsd * usdkrw : 0)
+            : buyPriceUsd;
+          const currentValue = currentPrice > 0 ? (b.amount * currentPrice) : 0;
+          const costBasis = buyPrice > 0 ? (b.amount * buyPrice) : 0;
+          const profitLoss = costBasis > 0 ? (currentValue - costBasis) : 0;
+          const profitLossPercent = costBasis > 0 ? ((profitLoss / costBasis) * 100) : 0;
         return { symbol: b.symbol, name: b.name, amount: b.amount, currentPrice, buyPrice, currentValue, profitLoss, profitLossPercent };
       });
-  }, [realTimeBalances]);
+    } catch {
+      return realTimeBalances.map(b => ({ symbol: b.symbol, name: b.name, amount: b.amount, currentPrice: 0, buyPrice: 0, currentValue: 0, profitLoss: 0, profitLossPercent: 0 }));
+    }
+  }, [realTimeBalances, currency, usdkrw]);
 
   // 코인명 번역 토글 및 정렬 상태
   const [useKoreanCoinName, setUseKoreanCoinName] = useState(false);
@@ -5005,6 +5175,18 @@ export default function WalletScreen() {
     });
     return arr;
   }, [holdingsForMarket, sortKey, sortOrder]);
+
+  // 통화 기호
+  const currencySign = useMemo(() => {
+    switch (currency) {
+      case 'KRW': return '₩';
+      case 'USD': return '$';
+      case 'JPY': return '¥';
+      case 'CNY': return '¥';
+      case 'EUR': return '€';
+      default: return '';
+    }
+  }, [currency]);
 
   // 실제 보유한 자산 확인 (amount > 0)
   const hasAsset = (symbol: string) => {
@@ -5258,7 +5440,23 @@ export default function WalletScreen() {
                     <ThemedText style={styles.totalLabel}>{language === 'en' ? `Total Assets (${currency})` : `총 보유 자산 (${currency})`}</ThemedText>
                     <ThemedText style={styles.assetsCountText}>{realTimeBalances.length} Assets</ThemedText>
                   </View>
-                  <ThemedText style={[styles.totalAmount,{ color:'#FFD700', textAlign:'center' }]}>{formatCurrency(total, currency, rates)}</ThemedText>
+                  <ThemedText style={[styles.totalAmount,{ color:'#FFD700', textAlign:'center' }]}>
+                    {(() => {
+                      const hasAnyAmount = Array.isArray(realTimeBalances) && realTimeBalances.some(b => (b?.amount || 0) > 0);
+                      let v = Number(displayTotal);
+                      // 폴백: 합계가 비어있으면 행 합계로 다시 계산
+                      if (!(Number.isFinite(v) && v > 0)) {
+                        const sum = (Array.isArray(holdingsForMarket) ? holdingsForMarket : []).reduce((s, h) => s + (h.currentValue || 0), 0);
+                        v = sum;
+                      }
+                      if (!Number.isFinite(v) || v <= 0) return hasAnyAmount ? '—' : '—';
+                      const sign = currencySign;
+                      const num = v >= 1000
+                        ? v.toLocaleString(undefined, { maximumFractionDigits: 0 })
+                        : v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                      return `${sign}${num}`;
+                    })()}
+                  </ThemedText>
                   <Image source={require('@/assets/images/logo.png')} style={styles.cardCornerLogo} resizeMode="contain" />
                 </View>
               </View>
@@ -5292,16 +5490,16 @@ export default function WalletScreen() {
               <TouchableOpacity style={styles.headerColRight} onPress={()=>{ setSortKey('price'); setSortOrder(o=> (sortKey==='price' && o==='desc') ? 'asc' : 'desc'); }}>
                 {(() => { const label = t('currentPriceBuyPrice', language); const parts = label.split('/'); return parts.length>1 ? (
                   <View style={styles.headerTwoLine}>
-                    <ThemedText style={[styles.headerTextRight, (sortKey==='price' && sortOrder==='asc') && { color: '#FFD700' }]}>{parts[0].trim()}</ThemedText>
-                    <ThemedText style={[styles.headerSubTextRight, (sortKey==='price' && sortOrder==='asc') && { color: '#FFD700' }]}>{parts[1].trim()}</ThemedText>
+                    <ThemedText style={[styles.headerTextRight, (sortKey==='price' && sortOrder==='asc') && { color: '#FFD700' }]}>{String(parts[0] || '').trim()}</ThemedText>
+                    <ThemedText style={[styles.headerSubTextRight, (sortKey==='price' && sortOrder==='asc') && { color: '#FFD700' }]}>{String(parts[1] || '').trim()}</ThemedText>
                   </View>
                 ) : (<ThemedText style={styles.headerTextRight}>{label}</ThemedText>); })()}
               </TouchableOpacity>
               <TouchableOpacity style={styles.headerColRight} onPress={()=>{ setSortKey('change'); setSortOrder(o=> (sortKey==='change' && o==='desc') ? 'asc' : 'desc'); }}>
                 {(() => { const label = t('profitRateProfitAmount', language); const parts = label.split('/'); return parts.length>1 ? (
                   <View style={styles.headerTwoLine}>
-                    <ThemedText style={[styles.headerTextRight, (sortKey==='change' && sortOrder==='asc') && { color: '#FFD700' }]}>{parts[0].trim()}</ThemedText>
-                    <ThemedText style={[styles.headerSubTextRight, (sortKey==='change' && sortOrder==='asc') && { color: '#FFD700' }]}>{parts[1].trim()}</ThemedText>
+                    <ThemedText style={[styles.headerTextRight, (sortKey==='change' && sortOrder==='asc') && { color: '#FFD700' }]}>{String(parts[0] || '').trim()}</ThemedText>
+                    <ThemedText style={[styles.headerSubTextRight, (sortKey==='change' && sortOrder==='asc') && { color: '#FFD700' }]}>{String(parts[1] || '').trim()}</ThemedText>
                   </View>
                 ) : (<ThemedText style={styles.headerTextRight}>{label}</ThemedText>); })()}
               </TouchableOpacity>
@@ -5327,22 +5525,60 @@ export default function WalletScreen() {
                         <Image source={{ uri: `https://static.upbit.com/logos/${h.symbol}.png` }} style={styles.coinLogo} />
                       )}
                     </View>
-                    <View>
-                      <ThemedText style={styles.coinSymbol}>{useKoreanCoinName ? (t(`coinNames.${h.symbol as any}`, 'ko') || h.name) : h.symbol}</ThemedText>
-                      <ThemedText style={styles.coinPair}>{useKoreanCoinName ? (t(`coinNames.${h.symbol as any}`, 'ko') || h.name) : `${h.symbol}/USD`}</ThemedText>
+                    <View style={{maxWidth: 140}}>
+                      <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.coinSymbol}>
+                        {useKoreanCoinName ? (t(`coinNames.${h.symbol as any}`, 'ko') || h.name) : h.symbol}
+                      </ThemedText>
+                      <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.coinPair}>
+                        {useKoreanCoinName ? (t(`coinNames.${h.symbol as any}`, 'ko') || h.name) : `${h.symbol}/${currency}`}
+                      </ThemedText>
                     </View>
                   </View>
                   <View style={styles.headerCol}>
-                    <ThemedText style={styles.cellText}>${h.currentPrice.toLocaleString('en-US', {minimumFractionDigits: 4, maximumFractionDigits: 4})}</ThemedText>
-                    <ThemedText style={[styles.cellSubText]}>${h.buyPrice.toLocaleString('en-US', {minimumFractionDigits: 4, maximumFractionDigits: 4})}</ThemedText>
+                    <ThemedText style={styles.cellText}>
+                      {h.currentPrice > 0
+                        ? `${currencySign}${(h.currentPrice >= 1000
+                            ? h.currentPrice.toLocaleString('en-US', { maximumFractionDigits: 0 })
+                            : h.currentPrice.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 }))}`
+                        : '--'}
+                    </ThemedText>
+                    <ThemedText style={[styles.cellSubText]}>
+                    {h.buyPrice > 0
+                      ? `${currencySign}${(h.buyPrice >= 1000
+                          ? h.buyPrice.toLocaleString('en-US', { maximumFractionDigits: 0 })
+                          : h.buyPrice.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 }))}`
+                      : '--'}
+                    </ThemedText>
                   </View>
                   <View style={styles.headerCol}>
                     <ThemedText style={[styles.cellText, { color: isProfit ? '#4CAF50' : '#F44336' }]}>{isProfit ? '+' : ''}{h.profitLossPercent.toFixed(2)}%</ThemedText>
-                    <ThemedText style={[styles.cellSubText, { color: isProfit ? '#4CAF50' : '#F44336' }]}>{isProfit ? '+' : ''}${Math.abs(h.profitLoss).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</ThemedText>
+                    <ThemedText style={[styles.cellSubText, { color: isProfit ? '#4CAF50' : '#F44336' }]}>{isProfit ? '+' : ''}{currencySign}{Math.abs(h.profitLoss).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</ThemedText>
                   </View>
                   <View style={styles.headerCol}>
-                    <ThemedText style={styles.cellText}>${h.currentValue.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</ThemedText>
+                    {h.currentValue > 0 ? (
+                      <ThemedText style={styles.cellText}>
+                        {currencySign}{(h.currentValue >= 1000
+                          ? h.currentValue.toLocaleString('en-US', { maximumFractionDigits: 0 })
+                          : h.currentValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))}
+                      </ThemedText>
+                    ) : (
+                      <ThemedText style={styles.cellText}>
+                        {Number(h.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 4 })} {h.symbol}
+                      </ThemedText>
+                    )}
                   </View>
+                  {__DEV__ ? (
+                    <View style={{ position:'absolute', left: 8, right: 8, bottom: -16 }}>
+                      {(() => {
+                        try {
+                          const { getPriceKey } = require('@/lib/prices');
+                          const key = getPriceKey({ symbol: h.symbol, chainId: 1, contractAddressLower: h.symbol==='YOY' ? '0xf999da2b5132ea62a158da8a82f2265a1b1d9701' : null });
+                          const priceFromStore = (h.currentValue && h.amount) ? (h.currentValue / (h.amount || 1)) : 0;
+                          return <ThemedText style={{ color:'#666', fontSize:10 }}>{`${h.symbol} key=${key} priceStore=${priceFromStore || 0} display=${priceFromStore || 0}`}</ThemedText>;
+                        } catch { return null; }
+                      })()}
+                    </View>
+                  ) : null}
                 </TouchableOpacity>
               );
             })}
@@ -5507,7 +5743,7 @@ export default function WalletScreen() {
                   try {
                     setGiftCreating(true);
                     // 보안 규칙 충족을 위해 인증 보장 (익명 로그인 허용)
-                    try { if (!firebaseAuth.currentUser?.uid) { await signInAnonymously(firebaseAuth); } } catch {}
+          try { if (!firebaseAuth.currentUser?.uid && (require('react-native').Platform?.OS === 'web')) { await signInAnonymously(firebaseAuth); } } catch {}
                     try { await ensureAppCheckReady(); } catch {}
                     const symbol = 'YOY';
                     // 로그인 확인
@@ -5543,7 +5779,7 @@ export default function WalletScreen() {
                       const msg = String(e?.message || e || '');
                       // 1회 재시도: AppCheck/익명 인증 토큰 준비 후 재시도
                       if (/permission|denied|PERMISSION/i.test(msg)) {
-                        try { if (!firebaseAuth.currentUser?.uid) { await signInAnonymously(firebaseAuth); } } catch {}
+                        try { if (!firebaseAuth.currentUser?.uid && (require('react-native').Platform?.OS === 'web')) { await signInAnonymously(firebaseAuth); } } catch {}
                         try { await ensureAppCheckReady(); } catch {}
                         voucher = await createVoucher({
                           createdByEmail: currentUserEmail || 'user@yooy.land',
@@ -5604,12 +5840,11 @@ export default function WalletScreen() {
                     Alert.alert(language==='en'?'Gift created':'기프트 생성됨');
                   } catch (e) {
                     const msg = String(e?.message || e || '');
-                    if (/permission|denied|PERMISSION/i.test(msg)) {
-                      Alert.alert('권한 오류', '서버 권한이 거부되었습니다. 관리자에게 문의하세요.');
-                    } else {
+                    const isPerm = /permission|denied|PERMISSION/i.test(msg);
+                    if (!isPerm) {
                       Alert.alert(language==='en'?'Create failed':'생성 실패', msg || (language==='en'?'Please try again later.':'잠시 후 다시 시도해 주세요.'));
                     }
-                    // 테스트용 로컬 바우처 생성 및 미리보기 제공
+                    // 권한 문제 등으로 서버 생성이 막힌 경우: 로컬(테스트) 바우처로 즉시 생성 처리
                     try {
                       const localId = `local_${Date.now().toString(36)}`;
                       const preview: any = {
@@ -5631,6 +5866,9 @@ export default function WalletScreen() {
                       setGiftList(prev => [preview, ...prev]);
                       setCustomQrPayload(buildClaimUri(localId));
                       setCustomQrVisible(true);
+                      if (isPerm) {
+                        Alert.alert(language==='en'?'Created (local test)':'로컬 테스트로 생성됨', language==='en'?'Server permissions blocked. Created locally for testing.':'서버 권한이 없어 로컬(테스트)로 생성했습니다.');
+                      }
                     } catch {}
                   } finally {
                     setGiftCreating(false);
@@ -6147,120 +6385,75 @@ export default function WalletScreen() {
                             }
                           }
                         } catch {}
-                        // 0-b) 네이티브: ML Kit 정지 이미지 스캔을 최우선 시도
-                        if (Platform.OS !== 'web' && MLKitBarcode && typeof MLKitBarcode.scan === 'function') {
+                        // 0-b) 네이티브: ML Kit scanBarcodes 함수로 스캔 (채팅방과 동일한 방식)
+                        if (Platform.OS !== 'web') {
+                          let mlKitDetected = '';
                           try {
-                            // MLKit expects a file path. Ensure we have a file path (not content:// or base64).
-                            let scanSrc = asset?.uri || '';
-                            const base64FromPicker: string | undefined = asset?.base64;
-                            const toFilePath = async (): Promise<string> => {
-                              const tmp = `${(FileSystem as any)?.cacheDirectory || ''}mlkit_scan_${Date.now()}.png`;
-                              if (!scanSrc) return tmp;
-                              try {
-                                // 우선: ImagePicker가 반환한 base64가 있으면 그것으로 tmp 파일 생성 (권장)
-                                if (base64FromPicker && typeof base64FromPicker === 'string' && base64FromPicker.length > 0) {
-                                  await FileSystem.writeAsStringAsync(tmp, base64FromPicker, { encoding: FileSystem.EncodingType.Base64 as any });
-                                  return tmp;
-                                }
-                                if (/^content:\/\//i.test(scanSrc)) {
-                                  // 1) 가장 안전: content:// → 캐시 파일로 직접 복사
-                                  try {
-                                    await FileSystem.copyAsync({ from: scanSrc, to: tmp });
-                                    return tmp;
-                                  } catch {
-                                    // 2) 복사 실패 시 base64로 읽어 쓰기(메모리 비용↑)
-                                    try {
-                                      const b64 = await FileSystem.readAsStringAsync(scanSrc, { encoding: FileSystem.EncodingType.Base64 });
-                                      await FileSystem.writeAsStringAsync(tmp, b64, { encoding: FileSystem.EncodingType.Base64 as any });
-                                      return tmp;
-                                    } catch {}
-                                  }
-                                }
-                                if (/^data:/i.test(scanSrc)) {
-                                  const m = scanSrc.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/);
-                                  if (m && m[1]) {
-                                    await FileSystem.writeAsStringAsync(tmp, m[1], { encoding: FileSystem.EncodingType.Base64 as any });
-                                    return tmp;
-                                  }
-                                }
-                                return scanSrc;
-                              } catch (eReadAny) {
-                                // Expo FS가 content:// 를 읽지 못하는 단말/버전 대응: RNBlobUtil 폴백
-                                try {
-                                  // eslint-disable-next-line @typescript-eslint/no-var-requires
-                                  const RNBU = (()=>{ try { const m = require('react-native-blob-util'); return m?.default ?? m; } catch { return null; } })();
-                                  if (RNBU?.fs?.readFile) {
-                                    const b64 = await RNBU.fs.readFile(scanSrc, 'base64');
-                                    if (b64) {
-                                      await FileSystem.writeAsStringAsync(tmp, b64, { encoding: FileSystem.EncodingType.Base64 as any });
-                                      return tmp;
-                                    }
-                                  }
-                                } catch {}
-                                return scanSrc;
-                              }
-                            };
-                            const filePath = await toFilePath();
-                            let results = await (typeof MLKitBarcode.scan === 'function' ? MLKitBarcode.scan(filePath) : []);
-                            let txt = Array.isArray(results) && results.length ? String((results[0]?.value) || '') : '';
-                            if (!txt) {
-                              // 회전 폴백(90/180/270)
-                              try {
-                                // eslint-disable-next-line @typescript-eslint/no-var-requires
-                                const ImageManipulator = (()=>{ try { return require('expo-image-manipulator'); } catch { return null; } })();
-                                const rotations = [90, 180, 270];
-                                for (const deg of rotations) {
-                                  if (!ImageManipulator?.manipulateAsync) break;
-                                  const out = await ImageManipulator.manipulateAsync(
-                                    filePath,
-                                    [{ rotate: deg }],
-                                    { compress: 1, format: (ImageManipulator as any).SaveFormat?.PNG || 'png' }
+                            const { scanBarcodes, BarcodeFormat } = require('@react-native-ml-kit/barcode-scanning');
+                            let scanTarget = asset?.uri || '';
+                            // content:// 또는 ph:// URI를 file:// URI로 복사
+                            if (/^(content|ph):\/\//i.test(scanTarget) && FileSystem?.cacheDirectory) {
+                              const dest = `${FileSystem.cacheDirectory}qr_mlkit_${Date.now()}.jpg`;
+                              await FileSystem.copyAsync({ from: scanTarget, to: dest });
+                              scanTarget = dest;
+                            }
+                            console.log('[wallet scan] ML Kit scanTarget:', scanTarget);
+                            const formats = BarcodeFormat?.QR_CODE ? [BarcodeFormat.QR_CODE] : undefined;
+                            const out = formats ? await scanBarcodes(scanTarget, formats) : await scanBarcodes(scanTarget);
+                            console.log('[wallet scan] ML Kit result:', out);
+                            const first = Array.isArray(out) && out.length ? out[0] : null;
+                            mlKitDetected = String(first?.displayValue || first?.rawValue || '');
+                          } catch (e) {
+                            console.warn('[wallet scan] ML Kit error:', e);
+                          }
+                          
+                          // ML Kit 실패 시 scanQRFromImage 유틸 폴백
+                          if (!mlKitDetected) {
+                            try {
+                              mlKitDetected = await scanQRFromImage(asset?.uri || '') || '';
+                              console.log('[wallet scan] scanQRFromImage result:', mlKitDetected);
+                            } catch (e) {
+                              console.warn('[wallet scan] scanQRFromImage error:', e);
+                            }
+                          }
+                          
+                          if (mlKitDetected) {
+                            const txt = mlKitDetected;
+                            const norm = normalizeScannedText(txt);
+                            if (norm) {
+                              const parsed = parsePayUri(norm);
+                              if (parsed) {
+                                setSendToAddress(parsed.addr);
+                                setSendSelectedSymbol(parsed.sym || sendSelectedSymbol);
+                                setSendAmountType('quantity');
+                                setSendInput(parsed.amt || '');
+                                setIsRequest(true);
+                                setOriginalUrlData(parsed);
+                                const validation = validateSendUrl(parsed, parsed.amt);
+                                if (!validation.isValid) {
+                                  Alert.alert(
+                                    language === 'en' ? '⚠️ Scan Warning' : '⚠️ 스캔 경고',
+                                    validation.errors.join('\n\n') + '\n\n' + (language === 'en' ? 'You can still modify the values and try again.' : '값을 수정한 후 다시 시도할 수 있습니다.'),
+                                    [{ text: language === 'en' ? 'OK' : '확인' }]
                                   );
-                                  if (out?.uri) {
-                                    results = await (typeof MLKitBarcode.scan === 'function' ? MLKitBarcode.scan(out.uri) : []);
-                                    txt = Array.isArray(results) && results.length ? String((results[0]?.value) || '') : '';
-                                    if (txt) break;
-                                  }
+                                } else if (validation.hasWarnings) {
+                                  Alert.alert(
+                                    language === 'en' ? '⚠️ Amount Warning' : '⚠️ 수량 경고',
+                                    validation.warnings.join('\n\n'),
+                                    [{ text: language === 'en' ? 'OK' : '확인' }]
+                                  );
                                 }
-                              } catch {}
-                            }
-                            if (txt) {
-                              const norm = normalizeScannedText(txt);
-                              if (norm) {
-                                const parsed = parsePayUri(norm);
-                                if (parsed) {
-                                  setSendToAddress(parsed.addr);
-                                  setSendSelectedSymbol(parsed.sym || sendSelectedSymbol);
-                                  setSendAmountType('quantity');
-                                  setSendInput(parsed.amt || '');
-                                  setIsRequest(true);
-                                  setOriginalUrlData(parsed);
-                                  const validation = validateSendUrl(parsed, parsed.amt);
-                                  if (!validation.isValid) {
-                                    Alert.alert(
-                                      language === 'en' ? '⚠️ Scan Warning' : '⚠️ 스캔 경고',
-                                      validation.errors.join('\n\n') + '\n\n' + (language === 'en' ? 'You can still modify the values and try again.' : '값을 수정한 후 다시 시도할 수 있습니다.'),
-                                      [{ text: language === 'en' ? 'OK' : '확인' }]
-                                    );
-                                  } else if (validation.hasWarnings) {
-                                    Alert.alert(
-                                      language === 'en' ? '⚠️ Amount Warning' : '⚠️ 수량 경고',
-                                      validation.warnings.join('\n\n'),
-                                      [{ text: language === 'en' ? 'OK' : '확인' }]
-                                    );
-                                  }
-                                  return;
-                                } else {
-                                  setSendToAddress(norm);
-                                  setIsRequest(false);
-                                  setOriginalUrlData(null);
-                                  return;
-                                }
+                                return;
+                              } else {
+                                setSendToAddress(norm);
+                                setIsRequest(false);
+                                setOriginalUrlData(null);
+                                return;
                               }
                             }
-                          } catch {}
+                          }
                         }
-                        // 0-b-2) MLKit 실패 시: base64가 있다면 JS 파이프라인에 data URL로 바로 전달
+                        // 0-b-2) ML Kit/scanQRFromImage 모두 실패 시: base64가 있다면 scanImageWithAll로 재시도
                         try {
                           if (asset?.base64) {
                             const mime = asset?.mimeType || 'image/png';
@@ -7641,18 +7834,47 @@ export default function WalletScreen() {
                     <View style={[styles.txMemoCell, {flex:1.4}]}> 
                       {memoEditingId===tx.id ? (
                         <View style={styles.memoEditRow}>
-                          <TextInput style={styles.memoInput} value={memoDraft} onChangeText={setMemoDraft} placeholder="Add memo" placeholderTextColor="#666" />
-                          <TouchableOpacity style={styles.memoSaveBtn} onPress={async()=>{ await updateTransactionMemo(tx.id, memoDraft); setMemoEditingId(null); }}>
+                          <TextInput
+                            style={styles.memoInput}
+                            value={memoDraft}
+                            onChangeText={setMemoDraft}
+                            placeholder="Add memo"
+                            placeholderTextColor="#666"
+                          />
+                          <TouchableOpacity
+                            style={styles.memoSaveBtn}
+                            onPress={async()=>{ await updateTransactionMemo(tx.id, memoDraft); setMemoEditingId(null); }}
+                          >
                             <ThemedText style={styles.memoSaveText}>Save</ThemedText>
                           </TouchableOpacity>
                         </View>
-                      ) : (
-                        <TouchableOpacity style={[styles.memoView,{flex:1}]} onPress={()=>{ setMemoEditingId(tx.id); setMemoDraft(tx.memo||''); }}>
-                          <ThemedText style={[styles.txCell,{textAlign:'right', maxWidth: 80, color: tx.memo ? '#FFFFFF' : '#FFD700'}]} numberOfLines={1} ellipsizeMode="tail">
-                            {tx.memo ? tx.memo : '✎'}
+                      ) : (() => {
+                        const hasMemo = typeof tx.memo === 'string' && tx.memo.trim().length > 0;
+                        return (
+                          <TouchableOpacity
+                            style={[styles.memoView,{flex:1}]}
+                            onPress={()=>{ setMemoEditingId(tx.id); setMemoDraft((tx.memo||'').trim()); }}
+                            accessibilityLabel={hasMemo ? 'memo' : 'add-memo'}
+                          >
+                            {hasMemo ? (
+                              <ThemedText
+                                style={[styles.txCell,{textAlign:'right', maxWidth: 140, color:'#FFFFFF'}]}
+                                numberOfLines={1}
+                                ellipsizeMode="tail"
+                              >
+                                {tx.memo}
+                              </ThemedText>
+                            ) : (
+                              <ThemedText
+                                style={[styles.txCell,{textAlign:'right', maxWidth: 24, color:'#FFD700'}]}
+                                numberOfLines={1}
+                              >
+                                ✎
                           </ThemedText>
-                        </TouchableOpacity>
                       )}
+                          </TouchableOpacity>
+                        );
+                      })()}
                     </View>
                   </TouchableOpacity>
                 ));
@@ -8018,10 +8240,10 @@ export default function WalletScreen() {
                 {/* PNG 저장 미리보기는 오프스크린 저장 레이아웃과 동일한 구조로 렌더 */}
                 {qrModalType === 'pngsave' ? (
                   <View style={{ alignItems:'center', justifyContent:'center' }}>
-                    {/* 정책 안내: 저장 대신 캡쳐 유도 */}
+                    {/* 저장 안내 */}
                     <View style={{ alignItems:'center', marginBottom: 8 }}>
                       <ThemedText style={{ color:'#AAAAAA', fontSize:13 }}>
-                        {language==='en' ? 'Use a screenshot taken on your phone.' : '핸드폰 캡쳐사진으로 사용하세요'}
+                        {language==='en' ? 'Press Save to download QR image' : '아래 저장 버튼을 눌러 QR 이미지를 저장하세요'}
                       </ThemedText>
                     </View>
                     {/* 상단 타이틀 */}
@@ -8033,7 +8255,7 @@ export default function WalletScreen() {
                     {/* 프레임 + 내부 화이트 패널 */}
                     <View style={{ padding:0, borderRadius:18, borderWidth:8, borderColor:'#D4AF37', backgroundColor:'#000' }}>
                       <View style={{ margin:8, backgroundColor:'#fff', borderRadius:12, padding:0, borderWidth:1, borderColor:'#000' }}>
-                        <View style={{ width:300, height:300, alignItems:'center', justifyContent:'center', backgroundColor:'#fff', borderRadius:8 }} ref={qrShotBoxRef as any}>
+                        <View style={{ width:340, height:340, alignItems:'center', justifyContent:'center', backgroundColor:'#fff', borderRadius:8 }} ref={qrShotBoxRef as any} collapsable={false}>
                           {(() => {
                             const addr = qrCoin.address;
                             const amtForUrl = recvAmountType === 'amount'
@@ -8043,25 +8265,26 @@ export default function WalletScreen() {
                             if (QRCode && Platform.OS !== 'web') {
                               const Comp = QRCode as any;
                               return (
-                                <Comp
-                                  value={payload}
-                                  size={300}
-                                  backgroundColor="#FFFFFF"
-                                  color="#000000"
-                                  quietZone={64}
-                                  ecl="H"
-                                  // 중앙 로고 포함
-                                  logo={require('@/assets/images/side_logo.png')}
-                                  logoSize={90}
-                                  logoBackgroundColor="#000000"
-                                  logoMargin={3}
-                                  getRef={(c:any)=>{ (qrRef as any).current = c; }}
-                                />
+                                <View style={{ position: 'relative' }}>
+                                  <Comp
+                                    value={payload}
+                                    size={300}
+                                    backgroundColor="#FFFFFF"
+                                    color="#000000"
+                                    quietZone={20}
+                                    ecl="H"
+                                    getRef={(c:any)=>{ (qrRef as any).current = c; }}
+                                  />
+                                  {/* 로고 크기 (인식률 보장 - 300px QR에서 50px = 16.7%, ECL H 30% 한계 내) */}
+                                  <View style={{ position:'absolute', top:'50%', left:'50%', transform:[{translateX:-25},{translateY:-25}], width:50, height:50, backgroundColor:'#000', borderRadius:8, alignItems:'center', justifyContent:'center' }}>
+                                    <Image source={require('@/assets/images/side_logo.png')} style={{ width:40, height:40 }} resizeMode="contain" />
+                                  </View>
+                                </View>
                               );
                             }
                             // 웹 폴백 이미지
-                            const url = `https://api.qrserver.com/v1/create-qr-code/?size=340x340&ecc=H&margin=12&color=000000&bgcolor=ffffff&data=${encodeURIComponent(payload)}`;
-                            return <Image source={{ uri: url }} style={{ width: 284, height: 284 }} resizeMode="contain" />;
+                            const url = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&ecc=H&margin=20&color=000000&bgcolor=ffffff&data=${encodeURIComponent(payload)}`;
+                            return <Image source={{ uri: url }} style={{ width: 300, height: 300 }} resizeMode="contain" />;
                           })()}
                         </View>
                       </View>
@@ -8288,8 +8511,59 @@ export default function WalletScreen() {
             {/* 다운로드 버튼 - 팝업 컨테이너 밖 */}
             {qrModalType === 'pngsave' && (
               <View style={styles.qrModalDownloadButtonContainer}>
-                <TouchableOpacity style={[styles.qrSaveButton, { backgroundColor:'#2B3A3F', borderColor:'#2B3A3F' }]} onPress={()=> setQrModalVisible(false)}>
-                  <ThemedText style={{ color:'#FFD700', fontWeight:'700' }}>{language==='en'?'Close':'닫기'}</ThemedText>
+                <TouchableOpacity 
+                  style={[styles.qrSaveButton, { backgroundColor:'#D4AF37', borderColor:'#D4AF37' }]} 
+                  onPress={async () => {
+                    try {
+                      // captureRef로 QR 영역 고해상도 캡처 (최소 1024px 보장)
+                      if (Platform.OS !== 'web' && captureRef && qrShotBoxRef?.current) {
+                        // 340px View를 최소 1024px 이미지로 캡처하려면 pixelRatio >= 3 필요
+                        const minPixelRatio = Math.max(PixelRatio.get(), 3);
+                        console.log('[QR Save] Using captureRef with high pixelRatio:', minPixelRatio);
+                        const tmpPng = await captureRef(qrShotBoxRef.current, { 
+                          format: 'png', 
+                          quality: 1, 
+                          result: 'tmpfile',
+                          // 고해상도 캡처: 340 * 3 = 1020px (최소 1024px급)
+                          pixelRatio: minPixelRatio
+                        });
+                        console.log('[QR Save] Captured high-res PNG:', tmpPng, 'estimated size:', 340 * minPixelRatio);
+                        
+                        // 갤러리에 저장 (PNG 그대로, JPEG 변환 없음)
+                        const perm = await MediaLibrary.requestPermissionsAsync();
+                        if (perm.status === 'granted') {
+                          const asset = await MediaLibrary.createAssetAsync(tmpPng);
+                          let album = await MediaLibrary.getAlbumAsync('YooY');
+                          if (!album) {
+                            album = await MediaLibrary.createAlbumAsync('YooY', asset, false);
+                          } else {
+                            await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+                          }
+                          Alert.alert(language === 'en' ? 'Saved' : '저장 완료', language === 'en' ? 'QR image saved to YooY album' : 'QR 이미지가 YooY 앨범에 저장되었습니다');
+                          setQrModalVisible(false);
+                          return;
+                        }
+                      }
+                      
+                      // 폴백: 기존 handleSaveQrImage 사용
+                      const addr = qrCoin?.address || '';
+                      const amtForUrl = recvAmountType === 'amount'
+                        ? convertAmountToQuantity(parseFloat(recvInput) || 0, qrCoin?.symbol || '').toString()
+                        : (recvInput || '');
+                      const payload = buildPayUri(addr, qrCoin?.symbol || '', amtForUrl);
+                      const title = `[${qrCoin?.symbol}] / ${recvInput || '0'} ${qrCoin?.symbol}`;
+                      const ok = await handleSaveQrImage(payload, title);
+                      if (ok) {
+                        Alert.alert(language === 'en' ? 'Saved' : '저장 완료', language === 'en' ? 'QR image saved' : 'QR 이미지가 저장되었습니다');
+                      }
+                      setQrModalVisible(false);
+                    } catch (e) {
+                      console.error('QR save error:', e);
+                      Alert.alert(language === 'en' ? 'Error' : '오류', language === 'en' ? 'Failed to save QR image' : 'QR 이미지 저장에 실패했습니다');
+                    }
+                  }}
+                >
+                  <ThemedText style={{ color:'#000', fontWeight:'700' }}>{language==='en'?'Save':'저장'}</ThemedText>
                 </TouchableOpacity>
               </View>
             )}
@@ -8323,18 +8597,20 @@ export default function WalletScreen() {
                   if (QRCode) {
                     const Comp = QRCode as any;
                     return (
-                      <Comp
-                        value={payload}
-                        size={300}
-                        backgroundColor="#FFFFFF"
-                        color="#000000"
-                        quietZone={64}
-                        ecl="H"
-                        logo={require('@/assets/images/side_logo.png')}
-                        logoSize={90}
-                        logoBackgroundColor="#000000"
-                        logoMargin={3}
-                      />
+                      <View style={{ position: 'relative' }}>
+                        <Comp
+                          value={payload}
+                          size={280}
+                          backgroundColor="#FFFFFF"
+                          color="#000000"
+                          quietZone={10}
+                          ecl="H"
+                        />
+                        {/* 로고 크기 축소 (인식률 보장: 60/280 = 21%) */}
+                        <View style={{ position:'absolute', top:'50%', left:'50%', transform:[{translateX:-30},{translateY:-30}], width:60, height:60, backgroundColor:'#000', borderRadius:8, alignItems:'center', justifyContent:'center' }}>
+                          <Image source={require('@/assets/images/side_logo.png')} style={{ width:50, height:50 }} resizeMode="contain" />
+                        </View>
+                      </View>
                     );
                   }
                   return null;
@@ -9080,18 +9356,18 @@ const styles = StyleSheet.create({
   },
   qrCenterLogoAbs: {
     position: 'absolute',
-    width: 72,
-    height: 72,
+    width: 56,
+    height: 56,
     backgroundColor: '#000000',
-    borderWidth: 4,
+    borderWidth: 3,
     borderColor: '#FFD700',
-    borderRadius: 14,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center'
   },
   qrCenterLogoAbsImg: {
-    width: 48,
-    height: 48
+    width: 38,
+    height: 38
   },
   qrCodeWrapper: {
     position: 'relative',

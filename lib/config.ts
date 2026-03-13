@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const KEY_YOY_CONTRACT = 'admin.yoyContractAddress';
 const KEY_ETH_CHAINID = 'admin.ethChainIdHex';
+const KEY_TREASURY = 'admin.yoyTreasuryAddress';
 
 export async function getYoyContractAddress(): Promise<string | null> {
   try {
@@ -14,6 +15,19 @@ export async function getYoyContractAddress(): Promise<string | null> {
 
 export async function setYoyContractAddress(addr: string): Promise<void> {
   await AsyncStorage.setItem(KEY_YOY_CONTRACT, addr);
+}
+
+export async function getYoyTreasuryAddress(): Promise<string | null> {
+  try {
+    const saved = await AsyncStorage.getItem(KEY_TREASURY);
+    if (saved && saved.startsWith('0x') && saved.length === 42) return saved;
+  } catch {}
+  const env = (process as any).env?.EXPO_PUBLIC_YOY_TREASURY_ADDRESS;
+  return env && typeof env === 'string' ? env : null;
+}
+
+export async function setYoyTreasuryAddress(addr: string): Promise<void> {
+  await AsyncStorage.setItem(KEY_TREASURY, addr);
 }
 
 export async function getEthChainIdHex(): Promise<string | null> {

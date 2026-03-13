@@ -135,7 +135,7 @@ export default function AddFriendContactsScreen() {
     (async () => {
       try {
         const map: Record<string,string> = {};
-        const localRaw = await AsyncStorage.getItem('local.friends');
+        const localRaw = await AsyncStorage.getItem(`u:${firebaseAuth.currentUser?.uid || 'me'}:local.friends`);
         if (localRaw) {
           const arr = JSON.parse(localRaw) as any[];
           arr.forEach(x => {
@@ -181,23 +181,35 @@ export default function AddFriendContactsScreen() {
 
   const isAlreadyFriend = useCallback((digits: string) => {
     if (!digits) return false;
-    return !!friendNameByPhone[digits] || !!friendNameByPhone['+'+digits];
-  }, [friendNameByPhone]);
+    // 이미 친구로 등록된 번호(로컬 + Firestore)
+    if (friendNameByPhone[digits] || friendNameByPhone['+' + digits]) return true;
+    // 이번 세션에서 방금 추가한 번호
+    if (addedPhones[digits] || addedPhones['+' + digits]) return true;
+    return false;
+  }, [friendNameByPhone, addedPhones]);
 
   const addFriendInternal = useCallback(async (rawDigits: string, name: string) => {
     const digits = normalizePhone(rawDigits);
-    if (!digits) { Alert.alert('안내', '올바른 전화번호를 입력해 주세요.'); return; }
+    if (!digits) {
+      Alert.alert('안내', '올바른 전화번호를 입력해 주세요.');
+      return;
+    }
+    // 이미 친구로 추가된 연락처는 중복 추가하지 않음
+    if (isAlreadyFriend(digits)) {
+      Alert.alert('안내', '이미 친구로 추가된 연락처입니다.');
+      return;
+    }
     setAddedPhones((prev) => ({ ...prev, [digits]: true }));
     // 로컬 즉시 반영
     try {
-      const key = 'local.friends';
+      const key = `u:${firebaseAuth.currentUser?.uid || 'me'}:local.friends`;
       const raw = await AsyncStorage.getItem(key);
       const list: any[] = raw ? JSON.parse(raw) : [];
       const normalized = `+${digits}`;
       const filtered = list.filter((x) => x.phone !== normalized);
       const entry = { id: `local-${Date.now()}`, name, phone: normalized, status: 'invited', addedAt: Date.now() };
       filtered.unshift(entry);
-      await AsyncStorage.setItem(key, JSON.stringify(filtered.slice(0, 200)));
+      await AsyncStorage.setItem(key, JSON.stringify(filtered));
     } catch {}
 
     try {
@@ -286,12 +298,20 @@ export default function AddFriendContactsScreen() {
     } catch (e) {
       Alert.alert(t('error', language), t('addFriendError', language));
     }
-  }, [normalizePhone]);
+  }, [normalizePhone, isAlreadyFriend, language]);
 
   const onInvite = useCallback((c: PhoneContact) => {
-    if (!c.phone) { Alert.alert('안내', '전화번호가 없습니다.'); return; }
+    if (!c.phone) {
+      Alert.alert('안내', '전화번호가 없습니다.');
+      return;
+    }
+    const digits = normalizePhone(c.phone);
+    if (isAlreadyFriend(digits)) {
+      Alert.alert('안내', '이미 친구로 추가된 연락처입니다.');
+      return;
+    }
     addFriendInternal(c.phone, c.name);
-  }, [addFriendInternal]);
+  }, [addFriendInternal, normalizePhone, isAlreadyFriend]);
 
   const onInviteByPhone = useCallback((phone: string, presetName?: string) => {
     const digits = normalizePhone(phone);
@@ -307,14 +327,14 @@ export default function AddFriendContactsScreen() {
     setAddVisible(false);
     // 1) 즉시 로컬에 '초대중'으로 반영 (서버 실패해도 목록에 보이도록)
     try {
-      const key = 'local.friends';
+      const key = `u:${firebaseAuth.currentUser?.uid || 'me'}:local.friends`;
       const raw = await AsyncStorage.getItem(key);
       const list: any[] = raw ? JSON.parse(raw) : [];
       const normalized = phone.startsWith('+') ? phone : `+${phone}`;
       const filtered = list.filter((x) => x.phone !== normalized);
       const entry = { id: `local-${Date.now()}`, name, phone: normalized, status: 'invited', addedAt: Date.now() };
       filtered.unshift(entry);
-      await AsyncStorage.setItem(key, JSON.stringify(filtered.slice(0, 200)));
+      await AsyncStorage.setItem(key, JSON.stringify(filtered));
     } catch {}
 
     // 2) 서버 함수 호출(웹은 CORS 회피를 위해 바로 Firestore fallback 경로 사용)
@@ -403,7 +423,7 @@ export default function AddFriendContactsScreen() {
       }
       // 서버 결과에 맞춰 로컬 상태 보정
       try {
-        const key = 'local.friends';
+        const key = `u:${firebaseAuth.currentUser?.uid || 'me'}:local.friends`;
         const raw = await AsyncStorage.getItem(key);
         const list: any[] = raw ? JSON.parse(raw) : [];
         const normalized = phone.startsWith('+') ? phone : `+${phone}`;
@@ -438,7 +458,7 @@ export default function AddFriendContactsScreen() {
     setBulkProcessed(0);
     try {
       let success = 0, invited = 0, skipped = 0;
-      const key = 'local.friends';
+      const key = `u:${firebaseAuth.currentUser?.uid || 'me'}:local.friends`;
       const raw = await AsyncStorage.getItem(key);
       const list: any[] = raw ? JSON.parse(raw) : [];
       const seenPhones = new Set<string>(list.map(x => (x.phone || '').replace(/\D/g,'')));
@@ -540,7 +560,7 @@ export default function AddFriendContactsScreen() {
           continue;
         }
       }
-      await AsyncStorage.setItem(key, JSON.stringify(list.slice(0, 500)));
+      await AsyncStorage.setItem(key, JSON.stringify(list));
       Alert.alert(
         t('bulkAddFriends', language),
         `연결 ${success}명, 초대 ${invited}명, 제외/실패 ${skipped}명`,

@@ -9,7 +9,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import React, { useEffect, useMemo, useState, Suspense } from 'react';
 import { useMediaStore, mediaSelectors, mediaIdForUri } from '@/src/features/chat/store/media.store';
 import { Image, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, Linking, Alert } from 'react-native';
-import { Image as EImage } from 'expo-image';
+import * as FileSystem from 'expo-file-system';
 import { useKakaoRoomsStore } from '@/src/features/chat/store/kakao-rooms.store';
 import { useNotificationStore } from '@/src/features/chat/store/notification.store';
 import { firebaseAuth, firebaseStorage, firestore, ensureAuthedUid } from '@/lib/firebase';
@@ -21,6 +21,53 @@ import { useFollowStore } from '@/src/features/chat/store/follow.store';
 const ChatViewer = React.lazy(() => import('@/src/features/chat/components/ChatViewer'));
 import { detectType as mediaDetectType } from '@/src/features/chat/lib/media';
 
+// expo-image가 없을 때를 대비한 폴백
+let EImage: any = null;
+try { EImage = require('expo-image').Image; } catch {}
+const ImgC: any = EImage || Image;
+// content://, file:// 썸네일 보정
+async function normalizeThumbUri(raw: string): Promise<string> {
+  try {
+    const u = String(raw || '');
+    if (!u) return '';
+    if (/^https?:/i.test(u) || /^data:/i.test(u)) return u;
+    // 웹에서 blob: URL은 RN Image가 실패할 수 있어 dataURL로 변환
+    if (/^blob:/i.test(u)) {
+      try {
+        if (Platform.OS === 'web') {
+          const res = await fetch(u);
+          const blob = await res.blob();
+          const toDataUrl = (b: Blob) => new Promise<string>((resolve, reject) => {
+            try {
+              const fr = new FileReader();
+              fr.onload = () => resolve(String(fr.result || ''));
+              fr.onerror = () => reject(new Error('reader'));
+              fr.readAsDataURL(b);
+            } catch (e) { reject(e as any); }
+          });
+          const data = await toDataUrl(blob);
+          if (data) return data;
+        }
+      } catch {}
+      return '';
+    }
+    if (/^file:/i.test(u)) {
+      try { const b64 = await FileSystem.readAsStringAsync(u, { encoding: FileSystem.EncodingType.Base64 }); return `data:image/jpeg;base64,${b64}`; } catch {}
+      return '';
+    }
+    if (/^content:/i.test(u)) {
+      try {
+        const RNBU = (()=>{ try { return require('react-native-blob-util'); } catch { return null; } })();
+        if (RNBU?.fs?.readFile) {
+          const b64 = await RNBU.fs.readFile(u, 'base64');
+          if (b64) return `data:image/jpeg;base64,${b64}`;
+        }
+      } catch {}
+      return '';
+    }
+    return '';
+  } catch { return ''; }
+}
 export default function FriendProfileScreen() {
   const { language } = usePreferences();
   const params = useLocalSearchParams<{ id?: string; name?: string; avatar?: string }>();
@@ -62,6 +109,9 @@ export default function FriendProfileScreen() {
   // 비디오 썸네일 캐시(웹)
   const [videoThumbs, setVideoThumbs] = useState<Record<string,string>>({});
   const videoKey = React.useCallback((s:string)=>{ try { const u=new URL(String(s)); u.search=''; u.hash=''; return u.toString(); } catch { try { return String(s).split('?')[0]; } catch { return String(s||''); } } }, []);
+  // 그리드 이미지 onError 보정용(파일/콘텐츠 URI → dataURL 변환)
+  const [gridOverrideThumbs, setGridOverrideThumbs] = useState<Record<number, string>>({});
+  const [gridBroken, setGridBroken] = useState<Record<number, boolean>>({});
   const ensureVideoThumb = React.useCallback(async (url:string): Promise<string> => {
     try {
       if (Platform.OS!=='web') return '';
@@ -127,6 +177,10 @@ export default function FriendProfileScreen() {
   useEffect(() => {
     if (serverProfile) setFriendProfile(serverProfile);
   }, [serverProfile]);
+  // 보물창고는 본인 전용: 상대 프로필 열면 강제로 grid 유지
+  useEffect(() => {
+    if (!isSelf && activeTab !== 'grid') setActiveTab('grid');
+  }, [isSelf, activeTab]);
 
   const rebuildGrid = React.useCallback(() => {
     try {
@@ -249,7 +303,7 @@ export default function FriendProfileScreen() {
 
         // 1) 최근 저장 이력에서 우선 복구
         try {
-          const last = await AsyncStorage.getItem('chat.profile.lastAvatar');
+          const last = await AsyncStorage.getItem(`u:${me}:chat.profile.lastAvatar`);
           if (last && /^https?:\/\//i.test(last)) {
             useChatProfileStore.getState().setAvatar(last);
             useChatProfileStore.getState().updateProfile({ avatar: last });
@@ -286,7 +340,7 @@ export default function FriendProfileScreen() {
           useChatProfileStore.getState().setAvatar(finalUrl);
           useChatProfileStore.getState().updateProfile({ avatar: finalUrl });
           setFriendProfile(p => ({ ...(p||{}), avatar: finalUrl }));
-          try { await AsyncStorage.setItem('chat.profile.lastAvatar', finalUrl); } catch {}
+          try { await AsyncStorage.setItem(`u:${me}:chat.profile.lastAvatar`, finalUrl); } catch {}
         }
       } catch {}
     })();
@@ -297,7 +351,7 @@ export default function FriendProfileScreen() {
   useEffect(() => {
     (async () => {
       try {
-        const raw = await AsyncStorage.getItem('local.friends');
+        const raw = await AsyncStorage.getItem(`u:${selfUid}:local.friends`);
         if (!raw) return;
         const list: any[] = JSON.parse(raw) || [];
         const f = list.find((x) => String(x.id) === String(friendId));
@@ -310,7 +364,7 @@ export default function FriendProfileScreen() {
   useEffect(() => {
     (async () => {
       try {
-        const raw = await AsyncStorage.getItem('friends.blocked');
+        const raw = await AsyncStorage.getItem(`u:${selfUid}:friends.blocked`);
         const arr: string[] = raw ? JSON.parse(raw) : [];
         setIsBlocked(arr.includes(String(friendId)));
       } catch { setIsBlocked(false); }
@@ -319,11 +373,11 @@ export default function FriendProfileScreen() {
 
   const handleToggleBlock = async () => {
     try {
-      const raw = await AsyncStorage.getItem('friends.blocked');
+      const raw = await AsyncStorage.getItem(`u:${selfUid}:friends.blocked`);
       const arr: string[] = raw ? JSON.parse(raw) : [];
       const id = String(friendId);
       const next = isBlocked ? arr.filter(v => v !== id) : Array.from(new Set([...arr, id]));
-      await AsyncStorage.setItem('friends.blocked', JSON.stringify(next));
+      await AsyncStorage.setItem(`u:${selfUid}:friends.blocked`, JSON.stringify(next));
       setIsBlocked(!isBlocked);
     } catch {}
   };
@@ -366,12 +420,12 @@ export default function FriendProfileScreen() {
     try {
       // 단일 키(구버전 호환)
       await AsyncStorage.setItem(`friend:${friendId}:name`, String(friendName));
-      // 이름 오버라이드 맵 갱신(로컬 디바이스 한정 반영)
+      // 이름 오버라이드 맵 갱신(계정별)
       try {
-        const raw = await AsyncStorage.getItem('friends.nameOverrides');
+        const raw = await AsyncStorage.getItem(`u:${selfUid}:friends.nameOverrides`);
         const map: Record<string,string> = raw ? JSON.parse(raw) : {};
         map[String(friendId)] = String(friendName);
-        await AsyncStorage.setItem('friends.nameOverrides', JSON.stringify(map));
+        await AsyncStorage.setItem(`u:${selfUid}:friends.nameOverrides`, JSON.stringify(map));
       } catch {}
       router.back();
     } catch { router.back(); }
@@ -382,20 +436,68 @@ export default function FriendProfileScreen() {
     if (!next) { setRenameOpen(false); return; }
     setFriendName(next);
     try {
-      await AsyncStorage.setItem(`friend:${friendId}:name`, next);
-      const raw = await AsyncStorage.getItem('friends.nameOverrides');
+      await AsyncStorage.setItem(`u:${selfUid}:friend:${friendId}:name`, next);
+      const raw = await AsyncStorage.getItem(`u:${selfUid}:friends.nameOverrides`);
       const map: Record<string,string> = raw ? JSON.parse(raw) : {};
       map[String(friendId)] = next;
-      await AsyncStorage.setItem('friends.nameOverrides', JSON.stringify(map));
+      await AsyncStorage.setItem(`u:${selfUid}:friends.nameOverrides`, JSON.stringify(map));
     } catch {}
     setRenameOpen(false);
   };
 
   // 프로필 아바타 소스: 다른 조건 없이
   const currentProfileAvatar = useChatProfileStore((s)=> s.currentProfile?.avatar || '');
+  const [headerResolved, setHeaderResolved] = useState<string>('');
   const headerAvatar = useMemo(() => {
-    return isSelf ? currentProfileAvatar : String(friendProfile?.avatar || '');
+    const raw = isSelf ? currentProfileAvatar : String(friendProfile?.avatar || '');
+    return String(headerResolved || raw || '');
+  }, [isSelf, currentProfileAvatar, friendProfile?.avatar, headerResolved]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = isSelf ? currentProfileAvatar : String(friendProfile?.avatar || '');
+        if (!raw) { setHeaderResolved(''); return; }
+        if (/^https?:\/\//i.test(String(raw)) || /^data:/i.test(String(raw))) { setHeaderResolved(''); return; }
+        const url = await getDownloadURL(storageRef(firebaseStorage, String(raw)));
+        setHeaderResolved(url);
+      } catch { setHeaderResolved(''); }
+    })();
   }, [isSelf, currentProfileAvatar, friendProfile?.avatar]);
+
+  // 서버 프로필 실시간 구독: 본인/상대 구분 없이 users/{friendId}를 구독하여 아바타/대화명 변경 즉시 반영
+  useEffect(() => {
+    if (!friendId) return;
+    try {
+      const { doc, onSnapshot } = require('firebase/firestore');
+      const unsub = onSnapshot(doc(firestore, 'users', String(friendId)), async (snap: any) => {
+        try {
+          if (!snap.exists()) return;
+          const d: any = snap.data() || {};
+          let avatar: string | undefined = d.avatarUrl || d.photoURL || d.avatar || undefined;
+          try {
+            if (avatar && !/^https?:\/\//i.test(String(avatar))) {
+              const url = await getDownloadURL(storageRef(firebaseStorage, String(avatar)));
+              avatar = url;
+            }
+          } catch {}
+          const prof = {
+            id: `chat_profile_${friendId}`,
+            userId: String(friendId),
+            displayName: d.displayName || '',
+            chatName: d.chatName || d.displayName || '',
+            useHashInChat: false,
+            avatar,
+            status: 'online',
+            createdAt: Date.now(),
+            lastActive: Date.now(),
+          };
+          try { useChatProfileStore.getState().updateProfileById(String(friendId), prof as any); } catch {}
+          setFriendProfile((prev) => ({ ...(prev || {}), ...prof }));
+        } catch {}
+      }, () => {});
+      return () => { try { unsub(); } catch {} };
+    } catch { return; }
+  }, [friendId]);
 
   // 아바타/ID 기반 일관 랜덤 포인트 컬러
   const accentColor = useMemo(() => {
@@ -430,7 +532,7 @@ export default function FriendProfileScreen() {
           >
             <View style={styles.profileImage}>
               {useChatProfileStore.getState().currentProfile?.avatar ? (
-                <EImage source={{ uri: String(useChatProfileStore.getState().currentProfile?.avatar||'') }} style={styles.profileImagePlaceholder} contentFit="cover" />
+                <ImgC source={{ uri: String(useChatProfileStore.getState().currentProfile?.avatar||'') }} style={styles.profileImagePlaceholder} {...(EImage?{contentFit:'cover'}:{})} />
               ) : (
                 <Text style={styles.profileText}>👤</Text>
               )}
@@ -460,7 +562,7 @@ export default function FriendProfileScreen() {
           <View style={{ flexDirection:'row', alignItems:'center' }}>
             <View style={styles.avatarWrapLg}>
               {headerAvatar ? (
-                <EImage source={{ uri: headerAvatar }} style={styles.avatarImg} contentFit="cover" cachePolicy="memory-disk" />
+                <ImgC source={{ uri: headerAvatar }} style={styles.avatarImg} {...(EImage?{contentFit:'cover', cachePolicy:'memory-disk'}:{})} />
               ) : (
                 <View style={styles.avatarFallback}><ThemedText style={styles.avatarFallbackText}>{String(friendName).charAt(0)}</ThemedText></View>
               )}
@@ -481,6 +583,13 @@ export default function FriendProfileScreen() {
               </TouchableOpacity>
               <View style={styles.countBox}><Text style={styles.countNum}>{isSelf ? followingCount : targetFollowingCount}</Text><Text style={styles.countLabel}>{t('following', language)}</Text></View>
             </View>
+          </View>
+          {/* 친구 이름 + 편집 버튼 (별명) */}
+          <View style={{ marginTop: 12, flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+            <Text style={{ color:'#F6F6F6', fontWeight:'800', fontSize:16 }} numberOfLines={1}>{friendName}</Text>
+            <TouchableOpacity onPress={()=>{ setTempName(friendName); setRenameOpen(true); }} style={{ paddingHorizontal:12, paddingVertical:6, borderRadius:999, borderWidth:1, borderColor:'#FFD700' }}>
+              <Text style={{ color:'#FFD700', fontWeight:'800' }}>편집</Text>
+            </TouchableOpacity>
           </View>
           {/* 상세소개/마지막 접속 */}
           <View style={{ marginTop: 10 }}>
@@ -506,7 +615,11 @@ export default function FriendProfileScreen() {
                 <TouchableOpacity style={[styles.actionPill, { flex: 1 }]} onPress={()=>follow(String(friendId))}><Text style={styles.actionPillText}>{t('follow', language)}</Text></TouchableOpacity>
               )
             )}
-            <TouchableOpacity style={[styles.actionPill, isBlocked && { borderColor:'#2A2A2A', opacity:0.7 }]} onPress={handleToggleBlock}><Text style={styles.actionPillText}>{isBlocked ? t('unblock', language) : t('block', language)}</Text></TouchableOpacity>
+            <TouchableOpacity style={[styles.actionPill, isBlocked && { borderColor:'#2A2A2A', opacity:0.7 }]} onPress={handleToggleBlock}>
+              <Text style={styles.actionPillText}>
+                {language==='ko' ? (isBlocked ? '차단 해제' : '차단') : (isBlocked ? t('unblock', language) : t('block', language))}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -534,20 +647,22 @@ export default function FriendProfileScreen() {
           </View>
         )}
 
-        {/* 탭 (그리드/태그됨) */}
+        {/* 탭 (그리드/보물창고) - 보물창고는 본인에게만 표시 */}
         <View style={[styles.tabsRow, { justifyContent:'space-between' }]}>
           {/* Left 50%: Grid (정렬 아이콘 제거) */}
           <TouchableOpacity onPress={() => setActiveTab('grid')} style={[styles.tabHalf, activeTab==='grid' && styles.tabHalfActive]}>
             <Text style={[styles.tabText, activeTab==='grid' && styles.tabTextActive]}>{t('grid', language)}</Text>
           </TouchableOpacity>
 
-          {/* Right 50%: Treasure */}
-          <TouchableOpacity onPress={() => setActiveTab('tagged')} style={[styles.tabHalf, activeTab==='tagged' && styles.tabHalfActive]}>
-            <Text style={[styles.tabText, activeTab==='tagged' && styles.tabTextActive]}>{t('treasure', language)}</Text>
-          </TouchableOpacity>
+          {/* Right 50%: Treasure (only self) */}
+          {isSelf && (
+            <TouchableOpacity onPress={() => setActiveTab('tagged')} style={[styles.tabHalf, activeTab==='tagged' && styles.tabHalfActive]}>
+              <Text style={[styles.tabText, activeTab==='tagged' && styles.tabTextActive]}>{t('treasure', language)}</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        {activeTab === 'grid' ? (
+        {(!isSelf || activeTab === 'grid') ? (
           gridItems.length === 0 ? (
             <View style={styles.empty}><ThemedText style={{ color:'#777' }}>{t('noPosts', language)}</ThemedText></View>
           ) : (
@@ -558,24 +673,45 @@ export default function FriendProfileScreen() {
                 if (kind === 'link') { try { void ensureLinkMeta(String(it.uri)); } catch {} }
                 const renderThumb = () => {
                   if (kind === 'image' || kind === 'qr' || !kind) {
-                    return (<EImage source={{ uri: it.uri }} style={styles.gridImage} contentFit="cover" cachePolicy="memory-disk" />);
+                    const src = gridOverrideThumbs[idx] || String(it.uri);
+                    if (gridBroken[idx]) {
+                      const ph = 'data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"200\" height=\"200\"><rect width=\"100%\" height=\"100%\" fill=\"%23111111\"/><text x=\"50%\" y=\"50%\" dominant-baseline=\"middle\" text-anchor=\"middle\" fill=\"%23FFD700\" font-size=\"28\" font-weight=\"900\">IMG</text></svg>';
+                      return (<ImgC source={{ uri: ph }} style={styles.gridImage} {...(EImage?{contentFit:'cover', cachePolicy:'memory-disk'}:{})} />);
+                    }
+                    return (
+                      <ImgC
+                        source={{ uri: src }}
+                        style={styles.gridImage}
+                        {...(EImage?{contentFit:'cover', cachePolicy:'memory-disk'}:{})}
+                        onError={async () => {
+                          try {
+                            const fixed = await normalizeThumbUri(src);
+                            if (fixed) { setGridOverrideThumbs(p=>({ ...p, [idx]: fixed })); return; }
+                          } catch {}
+                          setGridBroken(p=>({ ...p, [idx]: true }));
+                        }}
+                      />
+                    );
                   }
                   if (kind === 'video') {
                     return (Platform.OS === 'web'
                       ? (<video src={String(it.uri)} style={{ width:'100%', height:'100%', objectFit:'cover' }} muted playsInline preload="metadata" autoPlay />)
-                      : (<Image source={{ uri: it.uri }} style={styles.gridImage} />));
+                      : (()=>{
+                          const data = 'data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"320\" height=\"180\"><rect width=\"100%\" height=\"100%\" fill=\"%23111111\"/><polygon points=\"130,90 210,135 210,45\" fill=\"%23FFD700\"/></svg>';
+                          return (<ImgC source={{ uri: data }} style={styles.gridImage} {...(EImage?{contentFit:'cover'}:{})} />);
+                        })());
                   }
                   if (kind === 'file') {
                     const name = deriveName(String(it.uri));
                     const ext = String(name).split('.').pop()?.toLowerCase() || '';
                     const svg = fileIconSvg(ext);
-                    return (<EImage source={{ uri: svg }} style={styles.gridImage} contentFit="cover" />);
+                    return (<ImgC source={{ uri: svg }} style={styles.gridImage} {...(EImage?{contentFit:'cover'}:{})} />);
                   }
                   if (kind === 'link') {
                     const meta = linkMetaRef.current[String(it.uri)] || {};
                     const yt = ytThumbFor(String(it.uri));
                     const thumb = meta.image || yt || faviconFor(String(it.uri)) || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="100%" height="100%" fill="%23111111"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="%23FFD700" font-size="28">LINK</text></svg>';
-                    return (<EImage source={{ uri: thumb }} style={styles.gridImage} contentFit="cover" cachePolicy="memory-disk" />);
+                    return (<ImgC source={{ uri: thumb }} style={styles.gridImage} {...(EImage?{contentFit:'cover', cachePolicy:'memory-disk'}:{})} />);
                   }
                   // other
                   return (<View style={{ flex:1, backgroundColor:'#111' }} />);
@@ -684,8 +820,8 @@ export default function FriendProfileScreen() {
         </View>
       </Modal>
 
-      {/* 공통 ChatViewer 사용 */}
-      {Platform.OS === 'web' && previewOpen && (
+      {/* 공통 ChatViewer 사용: 웹/네이티브 공통 */}
+      {previewOpen && (
         <Suspense fallback={null}>
         <ChatViewer
           visible={true}
@@ -728,7 +864,7 @@ function TreasurePreviewBridge() {
     };
     return () => { try { delete (globalThis as any).__treasureOpen; } catch {} };
   }, []);
-  if (Platform.OS !== 'web' || !open) return null;
+  if (!open) return null;
   const cur = list[index] || null;
   const uri = String(cur?.uri || '');
   let kindRaw = String(cur?.type || 'image');
@@ -781,7 +917,14 @@ function TreasureBox({ friendId, friendName }: { friendId: string, friendName: s
   const { language } = usePreferences();
   const [items, setItems] = useState<any[]>([]);
   const [filter, setFilter] = useState<'all'|'image'|'video'|'file'|'link'|'qr'|'other'>('all');
+  const [privateOnly, setPrivateOnly] = useState<boolean>(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [broken, setBroken] = useState<Record<number, boolean>>({});
+  // 로컬 미리보기(글로벌 브릿지 실패 대비 폴백)
+  const [tOpen, setTOpen] = useState(false);
+  const [tUri, setTUri] = useState<string | null>(null);
+  const [tIdx, setTIdx] = useState<number>(0);
+  const [tKind, setTKind] = useState<'image'|'video'|'file'|'link'|'qr'|'other'|'web'|'youtube'|'map'|'pdf'>('image');
   const me = firebaseAuth.currentUser?.uid || (useChatProfileStore.getState().currentProfile?.userId || 'anonymous');
   const email = (firebaseAuth.currentUser?.email || '').toLowerCase();
   // 관리자 식별: 중앙 화이트리스트 + 익명은 관리자 아님
@@ -796,6 +939,7 @@ function TreasureBox({ friendId, friendName }: { friendId: string, friendName: s
   const normalizeVideoKey = React.useCallback((s:string)=>{ try { const u=new URL(String(s)); u.search=''; u.hash=''; return u.toString(); } catch { try { return String(s).split('?')[0]; } catch { return String(s||''); } } }, []);
   // Local thumbnail cache for Treasure tab
   const [videoThumbs2, setVideoThumbs2] = useState<Record<string, string>>({});
+  const [overrideThumbs, setOverrideThumbs] = useState<Record<number, string>>({});
   const ensureLinkMeta = React.useCallback(async (linkUrl:string) => {
     if (linkMetaRef.current[linkUrl]) return;
     try {
@@ -868,6 +1012,23 @@ function TreasureBox({ friendId, friendName }: { friendId: string, friendName: s
     } catch { setItems([]); }
   }, [friendId]);
   useEffect(() => { reloadTreasure(); }, [reloadTreasure]);
+  // 썸네일 사전 보정: content://, file:// → data: (상위 24개 우선)
+  useEffect(() => {
+    (async () => {
+      try {
+        const max = Math.min(items.length, 24);
+        for (let i=0;i<max;i++) {
+          try {
+            const uri = String(items[i]?.uri||'');
+            if (/^(content:|file:)/i.test(uri)) {
+              const fixed = await normalizeThumbUri(uri);
+              if (fixed) setOverrideThumbs(p=>({ ...p, [i]: fixed }));
+            }
+          } catch {}
+        }
+      } catch {}
+    })();
+  }, [items]);
   // 스토어 하이드레이션/변경 구독 → 자동 새로고침
   useEffect(() => {
     const unsub = useMediaStore.subscribe(() => { try { reloadTreasure(); } catch {} });
@@ -896,8 +1057,10 @@ function TreasureBox({ friendId, friendName }: { friendId: string, friendName: s
     if (filter === 'all') return true;
     const k = kindOf(it);
     if (filter === 'other') return k === 'other';
-    return k === filter;
+    const ok = k === filter;
+    return ok;
   });
+  const filteredWithPrivacy = privateOnly ? filtered.filter((it:any) => (it?.protect === true) || (it?.public === false)) : filtered;
 
   // 보물창고 탭별 아이템 수 집계
   const treasureCounts = React.useMemo(() => {
@@ -980,7 +1143,10 @@ function TreasureBox({ friendId, friendName }: { friendId: string, friendName: s
         }
         const { setAvatar, updateProfile } = useChatProfileStore.getState();
         setAvatar(final); updateProfile({ avatar: final });
-        try { await AsyncStorage.setItem('chat.profile.lastAvatar', final); } catch {}
+        try {
+          const me = firebaseAuth.currentUser?.uid || 'me';
+          await AsyncStorage.setItem(`u:${me}:chat.profile.lastAvatar`, final);
+        } catch {}
       }
       setSelected(new Set());
     } catch {}
@@ -1002,33 +1168,60 @@ function TreasureBox({ friendId, friendName }: { friendId: string, friendName: s
             </TouchableOpacity>
           );
         })}
+        {/* 비공개 토글 */}
+        <TouchableOpacity onPress={()=> setPrivateOnly(v=>!v)} style={{ marginLeft:8, paddingHorizontal:10, paddingVertical:4, borderRadius:999, borderWidth:1, borderColor: privateOnly?'#FFD700':'#333' }}>
+          <Text style={{ color: privateOnly ? '#FFD700' : '#B8B8B8', fontSize:12 }}>🔒 비공개</Text>
+        </TouchableOpacity>
         </View>
       </ScrollView>
-      {filtered.length === 0 ? (
+      {filteredWithPrivacy.length === 0 ? (
         <View style={styles.empty}><ThemedText style={{ color:'#777' }}>{(() => { const tabLabel = filter==='all'?t('all', language):filter==='image'?t('photo', language):filter==='video'?t('video', language):filter==='file'?t('file', language):filter==='link'?t('link', language):filter==='qr'?t('qr', language):t('other', language); return `${tabLabel} ${t('noItems', language)}`; })()}</ThemedText></View>
       ) : (
         <View style={[styles.gridWrap, { paddingHorizontal: 16 }]}>
           {(() => {
             const nodes: React.ReactNode[] = [];
-            filtered.forEach((it, idx) => {
+            filteredWithPrivacy.forEach((it, idx) => {
               const k = kindOf(it);
               // 링크 미리보기 메타 준비
               if (k === 'link') { try { void ensureLinkMeta(String(it.uri)); } catch {} }
               const renderThumb = () => {
-                if (k === 'image' || k === 'qr') return (<EImage source={{ uri: String(it.uri) }} style={styles.gridImage} contentFit={'cover'} cachePolicy={'memory-disk'} />);
+                if (k === 'image' || k === 'qr') {
+                  const src = overrideThumbs[idx] || String(it.uri);
+                  if (broken[idx]) {
+                    const ph = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="100%" height="100%" fill="%23111111"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="%23FFD700" font-size="28" font-weight="900">IMG</text></svg>';
+                    return (<ImgC source={{ uri: ph }} style={styles.gridImage} {...(EImage?{contentFit:'cover', cachePolicy:'memory-disk'}:{})} />);
+                  }
+                  return (
+                    <React.Suspense fallback={null}>
+                      <ImgC
+                        source={{ uri: src }}
+                        style={styles.gridImage}
+                        {...(EImage?{contentFit:'cover', cachePolicy:'memory-disk'}:{})}
+                        onError={async () => {
+                          try {
+                            // content:// or file:// → dataURL 변환 시도
+                        const fixed = await normalizeThumbUri(src);
+                        if (fixed) { setOverrideThumbs(p=>({ ...p, [idx]: fixed })); return; }
+                          } catch {}
+                          try { setBroken((p)=>({ ...p, [idx]: true })); } catch {}
+                        }}
+                      />
+                    </React.Suspense>
+                  );
+                }
                 if (k === 'video') {
                   if (Platform.OS==='web') {
-                    try { const u=new URL(String(it.uri)); const h=u.host.toLowerCase(); if (h.includes('youtu.be')||h.endsWith('youtube.com')) { const thumb = ytThumbFor(String(it.uri)); return (<EImage source={{ uri: thumb||'' }} style={styles.gridImage} contentFit={'cover'} cachePolicy={'memory-disk'} />); } } catch {}
+                    try { const u=new URL(String(it.uri)); const h=u.host.toLowerCase(); if (h.includes('youtu.be')||h.endsWith('youtube.com')) { const thumb = ytThumbFor(String(it.uri)); return (<ImgC source={{ uri: thumb||'' }} style={styles.gridImage} {...(EImage?{contentFit:'cover', cachePolicy:'memory-disk'}:{})} />); } } catch {}
                     const key = normalizeVideoKey(String(it.uri));
                     const cached = videoThumbs2[key];
-                    if (cached) return (<EImage source={{ uri: cached }} style={styles.gridImage} contentFit={'cover'} cachePolicy={'memory-disk'} />);
+                    if (cached) return (<ImgC source={{ uri: cached }} style={styles.gridImage} {...(EImage?{contentFit:'cover', cachePolicy:'memory-disk'}:{})} />);
                     try { void (async()=>{ 
                       try { 
                         // 1) try local storage
                         const prev = await AsyncStorage.getItem(`video.thumb:${key}`);
                         if (prev) { setVideoThumbs2(p=>({ ...p, [key]: prev })); return; }
                         // 2) capture frame
-                        const v = document.createElement('video'); try { v.crossOrigin='anonymous'; } catch {} 
+                        const v = document.createElement('video'); try { v.crossOrigin='anonymous'; (v as any).playsInline = true; } catch {} 
                         v.muted=true; v.preload='metadata'; v.src=String(it.uri);
                         await new Promise<void>((res, rej)=>{ v.onloadeddata=()=>res(); v.onerror=()=>rej(new Error('video')); });
                         const canvas=document.createElement('canvas'); 
@@ -1041,14 +1234,20 @@ function TreasureBox({ friendId, friendName }: { friendId: string, friendName: s
                         if(!data) return; 
                         setVideoThumbs2(p=>({ ...p, [key]: data }));
                         try { await AsyncStorage.setItem(`video.thumb:${key}`, data); } catch {} 
-                      } catch {} 
+                      } catch { 
+                        // 캡쳐 실패 시 아이콘형 썸네일로 대체
+                        const data = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='320' height='180'><rect width='100%' height='100%' fill='%23111111'/><polygon points='130,90 210,135 210,45' fill='%23FFD700'/></svg>`;
+                        setVideoThumbs2(p=>({ ...p, [key]: data })); try { await AsyncStorage.setItem(`video.thumb:${key}`, data); } catch {}
+                      } 
                     })(); } catch {} 
-                    return (<View style={{ flex:1, backgroundColor:'#111' }} />);
+                    return (<View style={{ flex:1, backgroundColor:'#111', alignItems:'center', justifyContent:'center' }}><Text style={{ color:'#FFD700' }}>▶</Text></View>);
                   }
-                  return (<Image source={{ uri: String(it.uri) }} style={styles.gridImage} />);
+                  // 네이티브: 비디오는 직접 렌더 불가 → 플레이 아이콘 썸네일
+                  const data = 'data:image/svg+xml;utf8,<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"320\" height=\"180\"><rect width=\"100%\" height=\"100%\" fill=\"%23111111\"/><polygon points=\"130,90 210,135 210,45\" fill=\"%23FFD700\"/></svg>';
+                  return (<ImgC source={{ uri: data }} style={styles.gridImage} {...(EImage?{contentFit:'cover', cachePolicy:'memory-disk'}:{})} />);
                 }
-                if (k === 'file') { const name = (()=>{ const raw = String(it?.name||'')||String(it?.uri||''); return raw || ''; })(); const ext = String(name).split('.').pop()?.toLowerCase() || ''; const svg = fileIconSvg(ext); return (<EImage source={{ uri: svg }} style={styles.gridImage} contentFit={'cover'} />); }
-                if (k === 'link') { const meta = linkMetaRef.current[String(it.uri)] || {}; const yt = ytThumbFor(String(it.uri)); const thumb = meta.image || yt || faviconFor(String(it.uri)) || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="100%" height="100%" fill="%23111111"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="%23FFD700" font-size="28">LINK</text></svg>'; return (<EImage source={{ uri: thumb }} style={styles.gridImage} contentFit={'cover'} cachePolicy={'memory-disk'} />); }
+                if (k === 'file') { const name = (()=>{ const raw = String(it?.name||'')||String(it?.uri||''); return raw || ''; })(); const ext = String(name).split('.').pop()?.toLowerCase() || ''; const svg = fileIconSvg(ext); return (<ImgC source={{ uri: svg }} style={styles.gridImage} {...(EImage?{contentFit:'cover'}:{})} />); }
+                if (k === 'link') { const meta = linkMetaRef.current[String(it.uri)] || {}; const yt = ytThumbFor(String(it.uri)); const fallbackSvg = `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><rect width='100%' height='100%' fill='%23111111'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='%23FFD700' font-size='28'>LINK</text></svg>`; const thumb = meta.image || yt || faviconFor(String(it.uri)) || fallbackSvg; return (<ImgC source={{ uri: thumb }} style={styles.gridImage} {...(EImage?{contentFit:'cover', cachePolicy:'memory-disk'}:{})} onError={() => { try { setLinkMetaTick(v=>v+1); } catch {} }} />); }
                 return (<View style={{ flex:1, backgroundColor:'#111' }} />);
               };
               const title = (()=>{
@@ -1057,15 +1256,37 @@ function TreasureBox({ friendId, friendName }: { friendId: string, friendName: s
                 if (k==='video') return deriveName(String(it.uri));
                 return '';
               })();
+              const onRemove = async () => {
+                try {
+                  const keyT = `u:${friendId}:treasure.items`;
+                  const list = [...items];
+                  const globalIndex = items.findIndex((x)=> x === it);
+                  if (globalIndex >= 0) {
+                    list.splice(globalIndex,1);
+                    setItems(list);
+                    try { await AsyncStorage.setItem(keyT, JSON.stringify(list)); } catch {}
+                  }
+                } catch {}
+              };
               nodes.push(
                 <View key={`${it.type}-${idx}`} style={[styles.gridCell, { flexBasis: '25%', maxWidth: '25%' }]}>
-                  <TouchableOpacity onLongPress={() => { setSelected(new Set([idx])); }} onPress={() => { try { setSelected(new Set()); (globalThis as any).__treasureOpen?.({ list: filtered, index: idx }); } catch {} }} style={[styles.gridItem, selected.has(idx) && { borderWidth: 1, borderColor: '#FFD700' }] }>
+                  <TouchableOpacity onLongPress={() => { setSelected(new Set([idx])); }} onPress={() => { try { setSelected(new Set()); (globalThis as any).__treasureOpen?.({ list: filtered, index: idx }); } catch {} try { setTIdx(idx); setTUri(String(it.uri)); setTKind(kindOf(it)); setTOpen(true); } catch {} }} style={[styles.gridItem, selected.has(idx) && { borderWidth: 1, borderColor: '#FFD700' }] }>
                     {renderThumb()}
+                    {/* 잠금 배지 */}
                     {!!title && (
                       <View style={{ position:'absolute', left:6, right:28, bottom:6 }}>
                         <Text style={{ color:'#CFCFCF', fontSize:11 }} numberOfLines={1}>{title}</Text>
                       </View>
                     )}
+                    {it.protect === true || it.public === false ? (
+                      <View style={{ position:'absolute', top:6, left:6, backgroundColor:'rgba(0,0,0,0.5)', borderRadius:10, paddingHorizontal:6, paddingVertical:2 }}>
+                        <Text style={{ color:'#FFD700', fontSize:12 }}>🔒</Text>
+                      </View>
+                    ) : null}
+                    {/* X 삭제 버튼 */}
+                    <TouchableOpacity onPress={onRemove} style={{ position:'absolute', top:6, right:6, width:18, height:18, borderRadius:9, backgroundColor:'rgba(0,0,0,0.6)', alignItems:'center', justifyContent:'center', borderWidth:1, borderColor:'#FFD700' }}>
+                      <Text style={{ color:'#FFD700', fontSize:10, fontWeight:'900' }}>✕</Text>
+                    </TouchableOpacity>
                   </TouchableOpacity>
                 </View>
               );
@@ -1073,6 +1294,20 @@ function TreasureBox({ friendId, friendName }: { friendId: string, friendName: s
             return nodes;
           })()}
         </View>
+      )}
+      {/* 로컬 폴백 미리보기 */}
+      {tOpen && (
+        <Suspense fallback={null}>
+          <ChatViewer
+            visible={true}
+            url={String(tUri||'')}
+            kind={(tKind==='link'?'web':tKind) as any}
+            onClose={() => setTOpen(false)}
+            onOpen={() => { try { if (tUri) Linking.openURL(String(tUri)); } catch {} }}
+            onPrev={tIdx>0 ? (()=>{ const i=Math.max(0,tIdx-1); setTIdx(i); try{ setTUri(String(filtered[i]?.uri||'')); setTKind(kindOf(filtered[i])); }catch{} }) : undefined}
+            onNext={tIdx<filtered.length-1 ? (()=>{ const i=Math.min(filtered.length-1,tIdx+1); setTIdx(i); try{ setTUri(String(filtered[i]?.uri||'')); setTKind(kindOf(filtered[i])); }catch{} }) : undefined}
+          />
+        </Suspense>
       )}
       {/* 하단 고정 툴바 */}
       {selected.size>0 && (

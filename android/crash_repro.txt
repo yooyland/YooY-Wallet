@@ -1,0 +1,91 @@
+12-30 16:38:15.506 27378 27378 D AndroidRuntime: >>>>>> START com.android.internal.os.RuntimeInit uid 2000 <<<<<<
+12-30 16:38:15.514 27378 27378 I AndroidRuntime: Using default boot image
+12-30 16:38:15.514 27378 27378 I AndroidRuntime: Leaving lock profiling enabled
+12-30 16:38:15.675 27378 27378 D AndroidRuntime: Calling main entry com.android.commands.monkey.Monkey
+12-30 16:38:15.759 27378 27378 I AndroidRuntime: VM exiting with result code 0.
+12-30 16:38:15.842 27676 27676 W SoLoader: Initializing SoLoader: 0
+12-30 16:38:15.842 27676 27676 W SoLoader: Recording new base apk path: /data/app/~~euOwKM33I6juyS-jBPJ6uQ==/com.yooyland.wallet-caZy4_-p_CFm2PWrUNXk3g==/base.apk
+12-30 16:38:15.842 27676 27676 W SoLoader: Previously recorded 0 base apk paths.
+12-30 16:38:15.842 27676 27676 I SoLoader: Preparing SO source: DirectorySoSource[root = /vendor/lib64 flags = 2]
+12-30 16:38:15.842 27676 27676 I SoLoader: Preparing SO source: DirectorySoSource[root = /system/lib64 flags = 2]
+12-30 16:38:15.842 27676 27676 I SoLoader: Preparing SO source: DirectApkSoSource[root = [/data/app/~~euOwKM33I6juyS-jBPJ6uQ==/com.yooyland.wallet-caZy4_-p_CFm2PWrUNXk3g==/split_config.xxhdpi.apk!/lib/arm64-v8a, /data/app/~~euOwKM33I6juyS-jBPJ6uQ==/com.yooyland.wallet-caZy4_-p_CFm2PWrUNXk3g==/split_config.ko.apk!/lib/arm64-v8a, /data/app/~~euOwKM33I6juyS-jBPJ6uQ==/com.yooyland.wallet-caZy4_-p_CFm2PWrUNXk3g==/base.apk!/lib/arm64-v8a, /data/app/~~euOwKM33I6juyS-jBPJ6uQ==/com.yooyland.wallet-caZy4_-p_CFm2PWrUNXk3g==/split_config.arm64_v8a.apk!/lib/arm64-v8a]]
+12-30 16:38:15.843 27676 27676 I SoLoader: Preparing SO source: ApplicationSoSource[DirectorySoSource[root = /data/app/~~euOwKM33I6juyS-jBPJ6uQ==/com.yooyland.wallet-caZy4_-p_CFm2PWrUNXk3g==/lib/arm64 flags = 0]]
+12-30 16:38:15.844 27676 27676 I SoLoader: init finish: 4 SO sources prepared
+12-30 16:38:15.844 27676 27676 W SoLoader: SoLoader initialized: 8
+12-30 16:38:15.870 27676 27676 D nativeloader: Load /data/app/~~euOwKM33I6juyS-jBPJ6uQ==/com.yooyland.wallet-caZy4_-p_CFm2PWrUNXk3g==/split_config.arm64_v8a.apk!/lib/arm64-v8a/libreactnative.so using class loader ns clns-9 (caller=/data/app/~~euOwKM33I6juyS-jBPJ6uQ==/com.yooyland.wallet-caZy4_-p_CFm2PWrUNXk3g==/base.apk): ok
+12-30 16:38:15.870 27676 27676 D jni_lib_merge: Preparing to register libreactnativeblob_so.  onload_func: 0x78f047d5b0
+12-30 16:38:15.870 27676 27676 D jni_lib_merge: Preparing to register libreactnativejni_so.  onload_func: 0x78f0497b24
+12-30 16:38:15.870 27676 27676 D jni_lib_merge: Preparing to register libreactnativejni_common_so.  onload_func: 0x78f049e458
+12-30 16:38:15.872 27676 27676 W SoLoader: SoLoader already initialized
+12-30 16:38:15.873 27676 27676 D nativeloader: Load /data/app/~~euOwKM33I6juyS-jBPJ6uQ==/com.yooyland.wallet-caZy4_-p_CFm2PWrUNXk3g==/split_config.arm64_v8a.apk!/lib/arm64-v8a/libhermes.so using class loader ns clns-9 (caller=/data/app/~~euOwKM33I6juyS-jBPJ6uQ==/com.yooyland.wallet-caZy4_-p_CFm2PWrUNXk3g==/base.apk): ok
+12-30 16:38:15.874 27676 27676 D nativeloader: Load /data/app/~~euOwKM33I6juyS-jBPJ6uQ==/com.yooyland.wallet-caZy4_-p_CFm2PWrUNXk3g==/split_config.arm64_v8a.apk!/lib/arm64-v8a/libhermestooling.so using class loader ns clns-9 (caller=/data/app/~~euOwKM33I6juyS-jBPJ6uQ==/com.yooyland.wallet-caZy4_-p_CFm2PWrUNXk3g==/base.apk): ok
+12-30 16:38:15.874 27676 27676 D jni_lib_merge: Preparing to register libhermes_executor_so.  onload_func: 0x79c21d74b0
+12-30 16:38:15.874 27676 27676 D jni_lib_merge: Preparing to register libhermesinstancejni_so.  onload_func: 0x79c21de900
+12-30 16:38:15.874 27676 27676 W SoLoader: SoLoader already initialized
+12-30 16:38:15.957 27676 27861 W unknown:ViewManagerPropertyUpdater: Could not find generated setter for class com.shopify.reactnative.flash_list.AutoLayoutViewManager
+12-30 16:38:15.957 27676 27861 W unknown:ViewManagerPropertyUpdater: Could not find generated setter for class com.shopify.reactnative.flash_list.CellContainerManager
+12-30 16:38:15.970 27676 27861 W unknown:ViewManagerPropertyUpdater: Could not find generated setter for class com.reactnativecommunity.webview.RNCWebViewManager
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: FATAL EXCEPTION: mqt_js
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: Process: com.yooyland.wallet, PID: 27676
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: com.facebook.react.common.JavascriptException: [Reanimated] Native part of Reanimated doesn't seem to be initialized.
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: See https://docs.swmansion.com/react-native-reanimated/docs/guides/troubleshooting#native-part-of-reanimated-doesnt-seem-to-be-initialized for more details., stack:
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: ReanimatedError: [Reanimated] Native part of Reanimated doesn't seem to be initialized.
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: See https://docs.swmansion.com/react-native-reanimated/docs/guides/troubleshooting#native-part-of-reanimated-doesnt-seem-to-be-initialized for more details.
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at ReanimatedErrorConstructor (address at index.android.bundle:1:809198)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at NativeReanimatedModule (address at index.android.bundle:1:852694)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at createNativeReanimatedModule (address at index.android.bundle:1:851790)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at anonymous (address at index.android.bundle:1:827819)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at loadModuleImplementation (address at index.android.bundle:1:130335)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at guardedLoadModule (address at index.android.bundle:1:129858)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at metroRequire (address at index.android.bundle:1:129368)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at anonymous (address at index.android.bundle:1:827661)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at loadModuleImplementation (address at index.android.bundle:1:130335)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at guardedLoadModule (address at index.android.bundle:1:129858)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at metroRequire (address at index.android.bundle:1:129368)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at anonymous (address at index.android.bundle:1:827224)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at loadModuleImplementation (address at index.android.bundle:1:130335)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at guardedLoadModule (address at index.android.bundle:1:129858)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at metroRequire (address at index.android.bundle:1:129368)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at anonymous (address at index.android.bundle:1:826173)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at loadModuleImplementation (address at index.android.bundle:1:130335)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at guardedLoadModule (address at index.android.bundle:1:129858)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at metroRequire (address at index.android.bundle:1:129368)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at anonymous (address at index.android.bundle:1:825945)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at loadModuleImplementation (address at index.android.bundle:1:130335)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at guardedLoadModule (address at index.android.bundle:1:129858)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at metroRequire (address at index.android.bundle:1:129368)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at anonymous (address at index.android.bundle:1:824824)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at loadModuleImplementation (address at index.android.bundle:1:130335)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at guardedLoadModule (address at index.android.bundle:1:129858)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at metroRequire (address at index.android.bundle:1:129368)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at anonymous (address at index.android.bundle:1:824585)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at loadModuleImplementation (address at index.android.bundle:1:130335)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at guardedLoadModule (address at index.android.bundle:1:129858)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at metroRequire (address at index.android.bundle:1:129368)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at anonymous (address at index.android.bundle:1:824362)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at loadModuleImplementation (address at index.android.bundle:1:130335)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at guardedLoadModule (address at index.android.bundle:1:129858)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at metroRequire (address at index.android.bundle:1:129368)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at anonymous (address at index.android.bundle:1:193917)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at loadModuleImplementation (address at index.android.bundle:1:130335)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at guardedLoadModule (address at index.android.bundle:1:129858)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at metroRequire (address at index.android.bundle:1:129368)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at anonymous (address at index.android.bundle:1:190355)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at loadModuleImplementation (address at index.android.bundle:1:130335)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at guardedLoadModule (address at index.android.bundle:1:129858)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at metroRequire (address at index.android.bundle:1:129368)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at anonymous (address at index.android.bundle:1:183014)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at loadModuleImplementation (address at index.android.bundle:1:130335)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at guardedLoadModule (address at index.android.bundle:1:129814)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at metroRequire (address at index.android.bundle:1:129368)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime:     at global (address at index.android.bundle:1:128823)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: 	at com.facebook.jni.NativeRunnable.run(Native Method)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: 	at android.os.Handler.handleCallback(Handler.java:995)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: 	at android.os.Handler.dispatchMessage(Handler.java:103)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: 	at com.facebook.react.bridge.queue.MessageQueueThreadHandler.dispatchMessage(SourceFile:6)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: 	at android.os.Looper.loopOnce(Looper.java:273)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: 	at android.os.Looper.loop(Looper.java:363)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: 	at com.facebook.react.bridge.queue.MessageQueueThreadImpl$Companion.startNewBackgroundThread$lambda$1(SourceFile:38)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: 	at com.facebook.react.bridge.queue.MessageQueueThreadImpl$Companion.a(SourceFile:1)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: 	at C5.k.run(SourceFile:232)
+12-30 16:38:15.980 27676 27860 E AndroidRuntime: 	at java.lang.Thread.run(Thread.java:1119)

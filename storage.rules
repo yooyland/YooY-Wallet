@@ -1,32 +1,38 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // DEV: 공개 읽기 허용. 운영 전 엄격히 조이세요.
+    // 공통: 로그인 사용자만 쓰기 허용
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // 채팅 이미지: 본인(userId == uid) 만 쓰기, 읽기는 로그인 사용자만
     match /chat/{userId}/{allPaths=**} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId;
     }
 
+    // QR 코드 이미지
     match /qr/{userId}/{allPaths=**} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId;
     }
 
+    // 채팅 미디어
     match /chatMedia/{userId}/{allPaths=**} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == userId;
     }
 
-    // 게시판 업로드 (필요시 세분화)
+    // 게시판 업로드: 읽기 모두 허용, 쓰기는 로그인 사용자
     match /boards/{boardId}/{allPaths=**} {
       allow read: if true;
-      allow write: if request.auth != null; 
+      allow write: if isSignedIn();
     }
 
-    // 기타 경로: 인증 사용자만 쓰기
+    // 기타 경로: 로그인 사용자만 읽기/쓰기
     match /{allPaths=**} {
-      allow read: if true;
-      allow write: if request.auth != null;
+      allow read, write: if isSignedIn();
     }
   }
 }

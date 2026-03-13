@@ -32,12 +32,28 @@ export function MarketProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
+  // Hydrate last known KRW rate immediately (SWR: cache first)
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem('market.usdkrw');
+        if (raw) {
+          const v = parseFloat(raw);
+          if (!Number.isNaN(v) && v > 0) setUsdkrw(v);
+        }
+      } catch {}
+    })();
+  }, []);
+
   useEffect(() => {
     let mounted = true;
     const load = async () => {
       try {
         const rate = await getUSDKRWRate();
-        if (mounted) setUsdkrw(rate);
+        if (mounted) {
+          setUsdkrw(rate);
+          try { await AsyncStorage.setItem('market.usdkrw', String(rate)); } catch {}
+        }
       } catch {}
     };
     load();
@@ -67,7 +83,15 @@ export function MarketProvider({ children }: { children: React.ReactNode }) {
 
 export function useMarket() {
   const ctx = useContext(MarketContext);
-  if (!ctx) throw new Error('useMarket must be used within MarketProvider');
+  // Be resilient if provider is not mounted yet (avoid app-wide crash)
+  if (!ctx) {
+    return {
+      usdkrw: null,
+      yoyPriceKRW: null,
+      yoyPriceUSD: null,
+      setYoyPriceUSD: async () => {},
+    };
+  }
   return ctx;
 }
 

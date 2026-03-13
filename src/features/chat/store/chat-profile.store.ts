@@ -1,4 +1,4 @@
-import { firebaseAuth } from '@/lib/firebase';
+import { firebaseAuth, firestore } from '@/lib/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { create } from 'zustand';
@@ -158,16 +158,45 @@ export const useChatProfileStore = create<ChatProfileState & ChatProfileActions>
       // 프로필 관리
       setCurrentProfile: (profile) => set({ currentProfile: profile }),
 
-      updateProfile: (updates) => set((state) => ({
-        currentProfile: state.currentProfile ? { ...state.currentProfile, ...updates } : null,
-        profiles: state.currentProfile ? {
-          ...state.profiles,
-          [state.currentProfile.userId]: {
-            ...state.profiles[state.currentProfile.userId],
-            ...updates
-          }
-        } : state.profiles,
-      })),
+      updateProfile: (updates) => {
+        set((state) => ({
+          currentProfile: state.currentProfile ? { ...state.currentProfile, ...updates } : null,
+          profiles: state.currentProfile ? {
+            ...state.profiles,
+            [state.currentProfile.userId]: {
+              ...state.profiles[state.currentProfile.userId],
+              ...updates
+            }
+          } : state.profiles,
+        }));
+        // Firestore users/{uid} 동기화: 프로필 페이지에서 변경한 값들을 최대한 반영
+        const uid = firebaseAuth.currentUser?.uid;
+        if (uid) {
+          (async () => {
+            try {
+              const { doc, setDoc, serverTimestamp } = await import('firebase/firestore');
+              const authUser = firebaseAuth.currentUser;
+              const email = authUser?.email || undefined;
+              const payload: any = {
+                email,
+                updatedAt: serverTimestamp(),
+              };
+              if (typeof updates.displayName === 'string') payload.displayName = updates.displayName;
+              if (typeof updates.chatName === 'string') payload.chatName = updates.chatName || updates.displayName;
+              if (typeof updates.customStatus === 'string') payload.customStatus = updates.customStatus;
+              if (typeof updates.bio === 'string') payload.bio = updates.bio;
+              if (typeof (updates as any).username === 'string') {
+                payload.username = (updates as any).username;
+                payload.usernameLower = String((updates as any).username).toLowerCase();
+              }
+              if (typeof updates.avatar === 'string') payload.avatar = updates.avatar;
+              await setDoc(doc(firestore, 'users', uid), payload, { merge: true });
+            } catch {
+              // 네트워크/권한 오류는 조용히 무시
+            }
+          })();
+        }
+      },
 
       clearProfile: () => set({ currentProfile: null }),
 
@@ -214,22 +243,67 @@ export const useChatProfileStore = create<ChatProfileState & ChatProfileActions>
       
       setLastActive: (timestamp) => get().updateProfile({ lastActive: timestamp }),
 
-      setAvatar: (uri) => get().updateProfile({ avatar: uri }),
+      setAvatar: (uri) => {
+        const prev = get().currentProfile;
+        const uid = firebaseAuth.currentUser?.uid;
+        // 스토어 업데이트
+        get().updateProfile({ avatar: uri });
+        // Firestore users/{uid} 아바타/프로필 동기화
+        if (uid) {
+          (async () => {
+            try {
+              const { doc, setDoc, serverTimestamp } = await import('firebase/firestore');
+              await setDoc(
+                doc(firestore, 'users', uid),
+                {
+                  avatar: uri,
+                  updatedAt: serverTimestamp(),
+                } as any,
+                { merge: true }
+              );
+            } catch {
+              // 네트워크/권한 오류는 조용히 무시 (UI는 로컬 상태로 유지)
+            }
+          })();
+        }
+      },
 
       // 초기화
       initialize: async () => {
         try {
           const uid = firebaseAuth.currentUser?.uid || 'anonymous-user';
           const state = get();
-          // 이미 현재 프로필이 있으면 그대로 사용
-          if (state.currentProfile) {
-            set({ isInitialized: true });
-            return;
+          // 현재 프로필이 다른 계정의 것이라면 무시
+          if (state.currentProfile && state.currentProfile.userId !== uid) {
+            set({ currentProfile: null });
           }
           // 해당 uid의 프로필이 있으면 로드
           const existing = state.profiles[uid];
           if (existing) {
             set({ currentProfile: existing, isInitialized: true });
+            // Firestore users/{uid} 문서에 이메일/닉네임/아바타 자동 동기화
+            if (uid && uid !== 'anonymous-user') {
+              try {
+                const { doc, setDoc, serverTimestamp } = await import('firebase/firestore');
+                const authUser = firebaseAuth.currentUser;
+                const email = authUser?.email || undefined;
+                await setDoc(
+                  doc(firestore, 'users', uid),
+                  {
+                    email,
+                    displayName: existing.displayName || authUser?.displayName || '사용자',
+                    chatName: existing.chatName || existing.displayName || authUser?.displayName || '사용자',
+                    username: (existing as any).username || undefined,
+                    usernameLower: (existing as any).username ? String((existing as any).username).toLowerCase() : undefined,
+                    avatar: existing.avatar || undefined,
+                    updatedAt: serverTimestamp(),
+                  } as any,
+                  { merge: true }
+                );
+              } catch {
+                // 동기화 실패는 치명적이지 않으므로 무시
+              }
+            }
             return;
           }
           // 없으면 생성
@@ -240,6 +314,30 @@ export const useChatProfileStore = create<ChatProfileState & ChatProfileActions>
             bio: '채팅 프로필을 설정해보세요!',
           });
           set({ currentProfile: created, isInitialized: true });
+          // 새 프로필 생성 시 Firestore users/{uid} 기본 문서도 함께 생성
+          if (uid && uid !== 'anonymous-user') {
+            try {
+              const { doc, setDoc, serverTimestamp } = await import('firebase/firestore');
+              const authUser = firebaseAuth.currentUser;
+              const email = authUser?.email || undefined;
+              await setDoc(
+                doc(firestore, 'users', uid),
+                {
+                  email,
+                  displayName: created.displayName || authUser?.displayName || '사용자',
+                  chatName: created.chatName || created.displayName || authUser?.displayName || '사용자',
+                  username: (created as any).username || undefined,
+                  usernameLower: (created as any).username ? String((created as any).username).toLowerCase() : undefined,
+                  avatar: created.avatar || undefined,
+                  updatedAt: serverTimestamp(),
+                  bio: created.bio ?? '채팅 프로필을 설정해보세요!',
+                } as any,
+                { merge: true }
+              );
+            } catch {
+              // 실패해도 앱 동작에는 영향 없음
+            }
+          }
         } catch (error) {
           console.error('Chat profile initialization failed:', error);
         }

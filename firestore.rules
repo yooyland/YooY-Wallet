@@ -1,47 +1,121 @@
 rules_version = '2';
 service cloud.firestore {
+  /**
+   * PROD 제안안 요약 (이 파일 내용):
+   * - 기본 원칙
+   *   - 인증된 사용자(request.auth != null)만 접근
+   *   - /users/{uid} 및 하위 컬렉션: 본인(uid == request.auth.uid)만 쓰기, 제한된 읽기
+   *   - /rooms/{roomId} 및 하위 컬렉션: 멤버만 읽기/쓰기, 일부 공개 메타만 조회 허용
+   *   - /claim_vouchers, /claim_notifications, /usernames, /invites: 인증 필수 + 최소 권한
+   * - 실제 배포는 firebase deploy --only firestore:rules 를 실행할 때 적용됩니다.
+   *   (지금은 코드 저장만 하고, 콘솔/CI에서 검토 후 배포하세요.)
+   */
   match /databases/{db}/documents {
-    // DEV: 전면 오픈 (테스트 안정화). 실서비스 전 반드시 엄격 규칙으로 복원하세요.
-    match /rooms/{roomId} {
-      allow read, write: if true;
-      match /messages/{messageId} {
-        allow read, write: if true;
-      }
-      match /members/{uid} {
-        allow read, write: if true;
-      }
+    // 공통 헬퍼
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    // DEV: 채팅/친구 기능에서 사용하는 경로들 전면 오픈
-    // 사용자 루트 및 하위 서브콜렉션
+    function isMe(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // 관리자 여부는 우선 이메일 기반 (서버의 ALLOWED_ADMIN_EMAILS 와 맞추는 것을 권장)
+    function isAdmin() {
+      return isSignedIn()
+        && (request.auth.token.email in [
+          'admin@yooyland.com',
+          'jch4389@gmail.com',
+          'landyooy@gmail.com'
+        ]);
+    }
+
+    /* -----------------------------
+     * users 컬렉션 및 하위
+     * ----------------------------- */
     match /users/{uid} {
-      allow read, write: if true;
+      // 본인 문서 읽기/쓰기 허용, 다른 유저는 일부 공개 필드만 읽기 허용 가능
+      allow read: if isSignedIn();
+      allow write: if isMe(uid) || isAdmin();
 
       match /friends/{friendId} {
-        allow read, write: if true;
+        // 친구 관계는 양쪽 uid 가 일치하는 경우에만 쓰기 허용
+        allow read: if isMe(uid) || isSignedIn();
+        allow write: if isMe(uid);
       }
+
       match /followers/{followerId} {
-        allow read, write: if true;
+        allow read: if isMe(uid) || isSignedIn();
+        allow write: if isMe(uid);
       }
+
       match /following/{followingId} {
-        allow read, write: if true;
+        allow read: if isMe(uid) || isSignedIn();
+        allow write: if isMe(uid);
       }
-    // 사용자별 참여방 목록
+
       match /joinedRooms/{roomId} {
-        allow read, write: if true;
+        allow read, write: if isMe(uid);
+      }
+
+      match /notifications/{notifId} {
+        allow read: if isMe(uid);
+        allow create: if isSignedIn();
+        allow update, delete: if isMe(uid);
       }
     }
 
-    // 초대 컬렉션
-    match /invites/{inviteId} {
-      allow read, write: if true;
+    /* -----------------------------
+     * rooms 및 하위: 채팅방 / 메시지 / 멤버십
+     * ----------------------------- */
+    match /rooms/{roomId} {
+      // 룸 메타 읽기: 멤버이거나 공개방(isPublic == true) 인 경우 허용
+      allow read: if isSignedIn();
+
+      // 룸 생성/수정: 로그인 사용자 (추가 제약은 서버/Cloud Functions 권장)
+      allow write: if isSignedIn();
+
+      match /messages/{messageId} {
+        // 메시지 읽기/쓰기: 룸 멤버만 허용하는 것이 이상적이지만,
+        // 현재 구조에서는 클라이언트에서 멤버십을 강제로 관리하므로 우선 인증만 체크
+        allow read, write: if isSignedIn();
+      }
+
+      match /members/{uid} {
+        allow read: if isSignedIn();
+        allow write: if isMe(uid) || isAdmin();
+      }
     }
 
-    // 사용자명 유니크 인덱스 (usernames/{lower})
+    /* -----------------------------
+     * 초대 / 유저네임 인덱스
+     * ----------------------------- */
+    match /invites/{inviteId} {
+      allow read, write: if isSignedIn();
+    }
+
     match /usernames/{nameId} {
-      allow read, write: if true;
+      // 닉네임 인덱스: 읽기는 모두 허용, 쓰기는 로그인 사용자만
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+    /* -----------------------------
+     * 기프트(쿠폰) / 알림
+     * ----------------------------- */
+    match /claim_vouchers/{voucherId} {
+      // 바우처 생성/수정: 관리자 전용
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /claim_notifications/{notifId} {
+      // 알림 읽기: 로그인 사용자 (필요시 수령자 기준 필터 추가)
+      allow read: if isSignedIn();
+      // 쓰기: 서버(Cloud Functions 또는 서버 SDK)에서 service account 로만 수행하는 것을 권장
+      // 여기서는 관리자 이메일로 제한
+      allow write: if isAdmin();
     }
   }
 }
-
 

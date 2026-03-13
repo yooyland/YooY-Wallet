@@ -8,10 +8,11 @@ export function getMockBalancesForUser(email: string | null | undefined): Balanc
     return mockBalances;
   }
   
-  // 일반 사용자는 모든 자산이 0
+  // 일반 사용자는 모든 자산을 0으로 초기화 (금액/가치 모두 0)
   return mockBalances.map(balance => ({
     ...balance,
-    amount: 0
+    amount: 0,
+    valueUSD: 0
   }));
 }
 

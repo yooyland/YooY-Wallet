@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, ScrollView, TouchableOpacity, TextInput } from 'react-native';
+import Constants from 'expo-constants';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useAuth } from '@/contexts/AuthContext';
@@ -17,6 +18,7 @@ export default function SyncDebug() {
   const [txRes, setTxRes] = useState<{ status?: number; ms?: number; requestUrl?: string; raw?: string; error?: string }>({});
   const [linkAddr, setLinkAddr] = useState<string>('');
   const [linkRes, setLinkRes] = useState<{ status?: number; ms?: number; requestUrl?: string; raw?: string; error?: string }>({});
+  const [timeline, setTimeline] = useState<any[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -24,6 +26,11 @@ export default function SyncDebug() {
         const b = await getEthMonitorHttp();
         setBase(b);
         if (accessToken) setTokenHead(accessToken.slice(0, 20));
+        try {
+          const { useMonitorStore } = require('@/lib/monitorStore');
+          const unsub = useMonitorStore.subscribe((s: any) => setTimeline(s.timeline || []));
+          return () => { try { unsub(); } catch {} };
+        } catch {}
       } catch (e:any) {
         // ignore
       }
@@ -101,9 +108,12 @@ export default function SyncDebug() {
     await runMe('/me/transactions?page=1&limit=50');
   }
 
+  const buildFingerprint = (Constants.expoConfig as any)?.extra?.BUILD_FINGERPRINT ?? '—';
+
   return (
     <ThemedView style={{ flex: 1, padding: 16 }}>
       <ThemedText style={{ fontWeight: '800', fontSize: 16, marginBottom: 8 }}>Sync Debug</ThemedText>
+      <ThemedText style={{ marginBottom: 4 }}>빌드: {buildFingerprint}</ThemedText>
       <ThemedText>uid: {currentUser?.uid || '—'}</ThemedText>
       <ThemedText>base: {base || '—'}</ThemedText>
       <ThemedText>idToken(head): {tokenHead}</ThemedText>
@@ -114,6 +124,9 @@ export default function SyncDebug() {
         <ThemedText style={{ color:'#FFD700', fontWeight:'800', marginTop:8 }}>Copy JSON</ThemedText>
       </TouchableOpacity>
       <ScrollView style={{ marginTop: 12 }}>
+        <ThemedText style={{ fontWeight:'800', marginBottom:6 }}>[Timeline]</ThemedText>
+        <ThemedText selectable>{JSON.stringify(timeline, null, 2)}</ThemedText>
+
         <TouchableOpacity onPress={runHealth} style={{ backgroundColor:'#333', padding:10, borderRadius:6, marginBottom:6 }}>
           <ThemedText>GET /health</ThemedText>
         </TouchableOpacity>

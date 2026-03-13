@@ -61,6 +61,21 @@ export default function ExchangeScreen() {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [nameLanguage, setNameLanguage] = useState<'en' | 'ko'>('en');
+  // SSOT: 보유 잔액(실제 보유 코인/수량)
+  const { useMonitorStore } = require('@/lib/monitorStore');
+  const storeBalances = useMonitorStore((s: any) => s.balancesArray);
+  const amountBySymbol = React.useMemo<Record<string, number>>(() => {
+    const m: Record<string, number> = {};
+    try {
+      (storeBalances || []).forEach((b: any) => {
+        const sym = String(b?.symbol || '').toUpperCase();
+        const amt = Number(b?.amount || 0);
+        if (!sym || !(amt > 0)) return;
+        m[sym] = (m[sym] || 0) + amt;
+      });
+    } catch {}
+    return m;
+  }, [storeBalances]);
   const [upbitPrices, setUpbitPrices] = useState<Record<string, UpbitPrice>>({});
   const [upbitMarkets, setUpbitMarkets] = useState<{
     KRW: UpbitTicker[];
@@ -786,50 +801,28 @@ export default function ExchangeScreen() {
       
       tickers = Object.values(favMarkets).filter(ticker => ticker && ticker.market);
     } else if (selectedMarket === 'MY') {
-      // 내 보유 코인: 마켓 우선순위에 따라 중복 제거 (USDT > KRW > ETH > BTC)
-      const myMarkets: { [key: string]: UpbitTicker } = {};
-      
-      // 1. USDT 마켓 우선
-      upbitMarkets.USDT.forEach(ticker => {
-        if (ticker.market) {
-          const base = ticker.market.split('-')[1];
-          if (userHoldings.includes(base) && !myMarkets[base]) {
-            myMarkets[base] = ticker;
-          }
-        }
+      // 내 보유 코인: 모니터 스토어 기반으로 실제 보유 수량이 있는 심볼만
+      const pm = require('@/lib/priceManager').default;
+      const symList = Object.keys(amountBySymbol).filter((s) => amountBySymbol[s] > 0);
+      // 사용자 설정 통화 기준 가격
+      const toCurrency = String(currency || 'USD').toUpperCase();
+      const markets: Market[] = symList.map((sym) => {
+        const p = pm.getCoinPriceByCurrency(sym, toCurrency) || 0;
+        const amt = amountBySymbol[sym] || 0;
+        return {
+          id: `${toCurrency}-${sym}`,
+          base: sym,
+          quote: toCurrency,
+          symbol: `${sym}/${toCurrency}`,
+          name: sym,
+          price: p,
+          change: 0,
+          change24hPct: 0,
+          // MY 탭에서는 volume24h 필드를 '총 보유 금액'으로 재활용
+          volume24h: p * amt,
+        };
       });
-      
-      // 2. KRW 마켓 (USDT에 없는 경우만)
-      upbitMarkets.KRW.forEach(ticker => {
-        if (ticker.market) {
-          const base = ticker.market.split('-')[1];
-          if (userHoldings.includes(base) && !myMarkets[base]) {
-            myMarkets[base] = ticker;
-          }
-        }
-      });
-      
-      // 3. ETH 마켓 (USDT, KRW에 없는 경우만)
-      upbitMarkets.ETH.forEach(ticker => {
-        if (ticker.symbol) {
-          const base = ticker.symbol.replace('ETH', '');
-          if (userHoldings.includes(base) && !myMarkets[base]) {
-            myMarkets[base] = ticker;
-          }
-        }
-      });
-      
-      // 4. BTC 마켓 (USDT, KRW, ETH에 없는 경우만)
-      upbitMarkets.BTC.forEach(ticker => {
-        if (ticker.market) {
-          const base = ticker.market.split('-')[1];
-          if (userHoldings.includes(base) && !myMarkets[base]) {
-            myMarkets[base] = ticker;
-          }
-        }
-      });
-      
-      tickers = Object.values(myMarkets).filter(ticker => ticker && ticker.market);
+      return markets;
     } else if (selectedMarket === 'ETH') {
       // ETH 마켓: 바이낸스 데이터 사용
       return upbitMarkets.ETH.map(convertBinanceToMarket);
@@ -923,6 +916,20 @@ export default function ExchangeScreen() {
     });
 
 
+  // 검색 모달 결과: 쿼리가 있을 때만 보여줄 전용 필터
+  const searchResults = React.useMemo(() => {
+    const q = String(searchText || '').trim().toLowerCase();
+    if (!q) return [];
+    try {
+      return currentMarketData.filter(m =>
+        (m.base || '').toLowerCase().includes(q) ||
+        (m.name || '').toLowerCase().includes(q)
+      );
+    } catch {
+      return [];
+    }
+  }, [searchText, currentMarketData]);
+
   return (
     <ThemedView style={{ flex: 1 }}>
       {/* 거래소 상단바 */}
@@ -961,14 +968,19 @@ export default function ExchangeScreen() {
         )}
         
         <View style={styles.exchangeIcons}>
-          <TouchableOpacity onPress={() => setShowSearchModal(true)} style={{ paddingHorizontal: 6, paddingVertical: 6 }}>
-            <ThemedText style={{ color: '#FFD700', fontSize: 16, fontWeight: '700' }}>🔎</ThemedText>
+          <TouchableOpacity
+            onPress={() => setShowSearchModal(v => !v)}
+            style={{ paddingHorizontal: 6, paddingVertical: 6 }}
+          >
+            <ThemedText style={{ color: '#FFD700', fontSize: 16, fontWeight: '700' }}>
+              {showSearchModal ? '✕' : '🔎'}
+            </ThemedText>
           </TouchableOpacity>
         </View>
 
         {/* Absolute search button to ensure visibility on all devices */}
-        <TouchableOpacity onPress={() => setShowSearchModal(true)} style={styles.exchangeSearchButton}>
-          <ThemedText style={styles.exchangeSearchText}>🔎</ThemedText>
+        <TouchableOpacity onPress={() => setShowSearchModal(v => !v)} style={styles.exchangeSearchButton}>
+          <ThemedText style={styles.exchangeSearchText}>{showSearchModal ? '✕' : '🔎'}</ThemedText>
         </TouchableOpacity>
       </View>
 
@@ -1001,6 +1013,33 @@ export default function ExchangeScreen() {
               </TouchableOpacity>
             ))}
             </View>
+
+            {/* 인라인 검색 바 (일반적인 검색 UI) */}
+            {showSearchModal && (
+              <View style={[styles.searchContainer, { paddingVertical: 8 }]}>
+                <View style={styles.searchInputContainer}>
+                  <ThemedText style={styles.searchIcon}>🔍</ThemedText>
+                  <TextInput
+                    style={styles.searchInput}
+                    placeholder={t('coinSearch', language)}
+                    placeholderTextColor="#666"
+                    value={searchText}
+                    onChangeText={setSearchText}
+                    autoFocus
+                    returnKeyType="search"
+                    onSubmitEditing={() => setShowSearchModal(false)}
+                  />
+                  {!!String(searchText || '').length && (
+                    <TouchableOpacity onPress={() => setSearchText('')} style={styles.searchClearButton}>
+                      <ThemedText style={styles.searchClearText}>✕</ThemedText>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity onPress={() => setShowSearchModal(false)} style={{ marginLeft: 8 }}>
+                    <ThemedText style={{ color: '#FFD700', fontWeight: '600' }}>{t('close', language) || '취소'}</ThemedText>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
 
             {/* 마켓 리스트 헤더 */}
             <View style={styles.listHeader}>
@@ -1056,6 +1095,7 @@ export default function ExchangeScreen() {
               contentContainerStyle={{ paddingBottom: 80 }}
               style={{ flex: 1 }}
               showsVerticalScrollIndicator={true}
+              onScrollBeginDrag={() => { if (showSearchModal) setShowSearchModal(false); }}
               renderItem={({ item }) => {
               // 실제 업비트 가격 사용
               const currentPrice = item.price || 0;
@@ -1064,14 +1104,16 @@ export default function ExchangeScreen() {
               const isFavorite = favorites.includes(item.id);
               const isMyTab = selectedMarket === 'MY';
               
-              const formattedPrice = formatPrice(currentPrice, selectedMarket);
-              const displayPrice = selectedMarket === 'KRW' ? 
+              // 통화 표기: MY 탭은 사용자 설정 통화 사용, 그 외는 마켓 탭 기준
+              const cur = isMyTab ? String(currency || 'USD').toUpperCase() : selectedMarket;
+              const formattedPrice = formatPrice(currentPrice, cur);
+              const displayPrice = cur === 'KRW' ? 
                 `₩${formattedPrice}` : 
-                selectedMarket === 'USDT' ? 
+                cur === 'USDT' || cur === 'USD' ? 
                   `$${formattedPrice}` :
-                  selectedMarket === 'ETH' ?
+                  cur === 'ETH' ?
                     `${formattedPrice} ETH` :
-                    selectedMarket === 'BTC' ?
+                    cur === 'BTC' ?
                       `${formattedPrice} BTC` :
                       `$${formattedPrice}`;
               
@@ -1116,34 +1158,40 @@ export default function ExchangeScreen() {
                     <ThemedText style={styles.price}>
                       {displayPrice}
                     </ThemedText>
-                    {isMyTab && (
-                      <ThemedText style={styles.buyPrice}>
-                        {displayPrice}
-                      </ThemedText>
-                    )}
+                    {isMyTab && (() => {
+                      const amt = amountBySymbol[String(item.base || '').toUpperCase()] || 0;
+                      return (
+                        <ThemedText style={styles.buyPrice}>
+                          {amt.toLocaleString(undefined, { maximumFractionDigits: 6 })} {item.base}
+                        </ThemedText>
+                      );
+                    })()}
                   </View>
                   
                   <View style={styles.changeInfo}>
                     <ThemedText style={[styles.change, { color: isUp ? '#FF4444' : '#00C851' }]}>
                       {isUp ? '+' : ''}{currentChange.toFixed(2)}%
                     </ThemedText>
-                    {isMyTab && (
-                      <ThemedText style={[styles.profit, { color: isUp ? '#FF4444' : '#00C851' }]}>
-                        {isUp ? '+' : ''}₩{(currentPrice * 0.1).toFixed(0)}
-                      </ThemedText>
-                    )}
+                    {/* MY 탭에서는 손익 대신 24h 변동률만 표시(또는 향후 실제 손익 계산 연결) */}
                   </View>
                   
                   <View style={styles.volumeInfo}>
                     <ThemedText style={styles.volume}>
                       {isMyTab ? 
-                        `₩${(currentPrice * 1.5).toLocaleString()}` : 
                         (() => {
-                          const formatted = formatVolume(item.volume24h, selectedMarket);
-                          const currency = selectedMarket === 'KRW' ? '₩' : 
-                                        selectedMarket === 'USDT' ? '$' :
-                                        selectedMarket === 'ETH' ? ' ETH' :
-                                        selectedMarket === 'BTC' ? ' BTC' : '$';
+                          const amt = amountBySymbol[String(item.base || '').toUpperCase()] || 0;
+                          const total = currentPrice * amt;
+                          const sign = cur === 'KRW' ? '₩' : (cur === 'USDT' || cur === 'USD') ? '$' : '';
+                          const num = total >= 1000 ? total.toLocaleString(undefined, { maximumFractionDigits: 0 }) : total.toLocaleString(undefined, { maximumFractionDigits: 2 });
+                          return `${sign}${num}`;
+                        })()
+                        : 
+                        (() => {
+                          const formatted = formatVolume(item.volume24h, cur);
+                          const currency = cur === 'KRW' ? '₩' : 
+                                        cur === 'USDT' || cur === 'USD' ? '$' :
+                                        cur === 'ETH' ? ' ETH' :
+                                        cur === 'BTC' ? ' BTC' : '$';
                           
                           return (
                             <>
@@ -1169,30 +1217,7 @@ export default function ExchangeScreen() {
         </View>
       )}
 
-      {/* 검색 모달 */}
-      {showSearchModal && (
-        <View style={styles.searchModal}>
-          <View style={styles.searchModalContent}>
-            <View style={styles.searchInputContainer}>
-              <ThemedText style={styles.searchIcon}>🔍</ThemedText>
-              <TextInput
-                style={styles.searchInput}
-                placeholder={t('coinSearch', language)}
-                placeholderTextColor="#666"
-                value={searchText}
-                onChangeText={setSearchText}
-                autoFocus={true}
-              />
-            </View>
-            <TouchableOpacity 
-              style={styles.searchCloseButton}
-              onPress={() => setShowSearchModal(false)}
-            >
-              <ThemedText style={styles.searchCloseText}>✕</ThemedText>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
+      {/* 모달 검색 UI 제거 → 인라인 검색으로 대체 */}
 
       
       <HamburgerMenu visible={menuOpen} onClose={() => setMenuOpen(false)} avatarUri={avatarUri} />
@@ -1267,7 +1292,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#2A2A2A',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 12,
     borderWidth: 1,
     borderColor: '#444',
   },
@@ -1279,7 +1304,7 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 16,
   },
 
   // 고정 마켓 섹션
@@ -1500,23 +1525,107 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 100,
   },
+  searchBackdrop: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: '#000000AA',
+  },
   searchModalContent: {
     backgroundColor: '#1A1A1A',
     marginHorizontal: 16,
     borderRadius: 8,
     padding: 12,
+    width: '96%',
+    maxHeight: '80%',
+  },
+  searchResults: {
+    marginTop: 12,
+    maxHeight: 420,
+  },
+  searchResultsContent: {
+    paddingBottom: 8,
+  },
+  searchResultRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    width: '96%',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+  },
+  searchResultLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 1,
+  },
+  searchResultIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    marginRight: 10,
+    overflow: 'hidden',
+    backgroundColor: '#222',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchResultLogo: {
+    width: 24,
+    height: 24,
+    resizeMode: 'contain',
+  },
+  searchResultNames: {
+    flexShrink: 1,
+  },
+  searchResultName: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  searchResultPair: {
+    color: '#AAAAAA',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  searchResultPrice: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+    marginLeft: 8,
+  },
+  searchResultSeparator: {
+    height: 1,
+    backgroundColor: '#2A2A2A',
+  },
+  searchEmpty: {
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  searchEmptyText: {
+    color: '#888',
+    fontSize: 13,
   },
   searchCloseButton: {
-    marginLeft: 12,
-    padding: 8,
+    marginTop: 12,
+    alignSelf: 'flex-end',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#2A2A2A',
+    borderRadius: 6,
   },
   searchCloseText: {
     color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  searchClearButton: {
+    marginLeft: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: '#3A3A3A',
+  },
+  searchClearText: {
+    color: '#FFFFFF',
+    fontSize: 12,
   },
 
 });

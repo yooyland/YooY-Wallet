@@ -1,0 +1,25 @@
+plugins {
+  id 'com.android.library'
+}
+
+android {
+  namespace 'expo.modules.barcodescanner'
+  compileSdk rootProject.ext.compileSdkVersion
+  defaultConfig {
+    minSdkVersion rootProject.ext.minSdkVersion
+  }
+  buildTypes {
+    release { minifyEnabled false }
+    debug { minifyEnabled false }
+  }
+  publishing {
+    singleVariant("release")
+  }
+}
+
+dependencies {
+  implementation("com.facebook.react:react-android")
+  implementation(project(":expo-modules-core"))
+}
+
+

@@ -71,7 +71,7 @@ export function ChatTopBar({ showBack = false }: ChatTopBarProps) {
 
         <View style={[styles.profileMeta, { flex: 1 }]}> {/* 대화명 영역 최대 확장 */}
           <ThemedText style={styles.profileName} numberOfLines={1} ellipsizeMode="tail">
-            {currentProfile?.displayName || t('username', language)}
+            {(currentProfile as any)?.chatName || currentProfile?.displayName || t('username', language)}
           </ThemedText>
           <ThemedText style={styles.profileStatus} numberOfLines={1} ellipsizeMode="tail">
             {currentProfile?.customStatus ||

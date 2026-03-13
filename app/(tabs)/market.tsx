@@ -22,7 +22,7 @@ export default function MarketTab() {
   const locale = language === 'ko' ? 'ko-KR' : language === 'ja' ? 'ja-JP' : language === 'zh' ? 'zh-CN' : 'en-US';
   const [coins, setCoins] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedCurrency, setSelectedCurrency] = useState<'USD' | 'KRW' | 'EUR' | 'JPY' | 'CNY'>('USD');
+  const [selectedCurrency, setSelectedCurrency] = useState<'USD' | 'KRW' | 'EUR' | 'JPY' | 'CNY'>('KRW');
   const [sortBy, setSortBy] = useState<'marketCap' | 'price' | 'change'>('marketCap');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [searchQuery, setSearchQuery] = useState('');
@@ -258,7 +258,7 @@ export default function MarketTab() {
     'XTZ': 'Tezos',
   };
 
-  // 실시간 가격 업데이트
+  // 실시간 가격 1회 로드
   useEffect(() => {
     const loadCoins = async () => {
       try {
@@ -291,10 +291,34 @@ export default function MarketTab() {
     };
     
     loadCoins();
-    // 1분마다 가격 업데이트
-    const interval = setInterval(loadCoins, 60000);
-    return () => clearInterval(interval);
   }, [selectedCurrency, getCoinLogo]);
+
+  // 포커스 중에만 가격을 120초 주기로 갱신
+  const { useFocusEffect } = require('@react-navigation/native');
+  useFocusEffect(React.useCallback(() => {
+    let cancelled = false;
+    const loadCoins = async () => {
+      if (cancelled) return;
+      try {
+        setLoading(true);
+        await updateRealTimePrices();
+        const supportedCoins = getAllSupportedCoins();
+        const coinsData = supportedCoins.map(symbol => {
+          const price = getCoinPriceByCurrency(symbol, selectedCurrency);
+          const change = (Math.random() - 0.5) * 20;
+          const marketCap = price * (Math.random() * 1000000000 + 100000000);
+          return { symbol, name: coinNames[symbol] || symbol, price, change, marketCap, volume24h: Math.random() * 1e9, logo: getCoinLogo(symbol) };
+        });
+        if (!cancelled) setCoins(coinsData);
+      } catch (e) {
+        console.error('Failed to load coins:', e);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    const interval = setInterval(loadCoins, 120000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [selectedCurrency, getCoinLogo]));
 
   // 검색 및 정렬된 코인 목록
   const filteredAndSortedCoins = [...coins]
@@ -813,25 +837,25 @@ export default function MarketTab() {
                 <View style={styles.coinInfo}>
                   <View style={styles.coinHeader}>
                     <ThemedText style={styles.coinSymbol}>{coin.symbol}</ThemedText>
-                    <ThemedText style={styles.coinName}>{coin.name}</ThemedText>
+                    <ThemedText style={styles.coinName} numberOfLines={1} allowFontScaling={false}>{coin.name}</ThemedText>
                   </View>
                 </View>
               </View>
               
               <View style={styles.coinRight}>
                 <View style={styles.priceContainer}>
-                  <ThemedText style={styles.priceText}>
+                  <ThemedText style={styles.priceText} numberOfLines={1} allowFontScaling={false}>
                     {getCurrencySymbol()}{formatPrice(coin.price)}
                   </ThemedText>
                   <ThemedText style={[
                     styles.changeText,
                     coin.change >= 0 ? styles.positiveChange : styles.negativeChange
-                  ]}>
+                  ]} numberOfLines={1} allowFontScaling={false}>
                     {coin.change >= 0 ? '+' : ''}{coin.change.toFixed(2)}%
                   </ThemedText>
                 </View>
                 <View style={styles.marketCapContainer}>
-                  <ThemedText style={styles.marketCapText}>
+                  <ThemedText style={styles.marketCapText} numberOfLines={1} allowFontScaling={false}>
                     {t('marketCap', language)}: {getCurrencySymbol()}{(coin.marketCap / 1000000000).toFixed(2)}B
                   </ThemedText>
                 </View>
@@ -1872,6 +1896,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: '#333333',
+    height: 72, // fixed row height to prevent vertical jitter
   },
   coinLeft: {
     flexDirection: 'row',

@@ -15,6 +15,8 @@ import { Alert, RefreshControl, ScrollView, StyleSheet, TextInput, TouchableOpac
 
 // Uniswap 모듈 import
 import { useUniswap } from '@/lib/hooks/useUniswap';
+import { DEFAULT_SLIPPAGE } from '@/lib/uniswap/constants';
+import { SUPPORTED_SWAP_TOKENS, isAllowedPair, SwapSymbol } from '@/lib/swapConfig';
 
 // 사용자 자산 import
 import { mockBalances } from '@/data/balances';
@@ -288,132 +290,87 @@ export default function PaymentsScreen() {
   };
 
   const selectToken = (tokenSymbol: string) => {
-    if (selectingToken === 'from') {
-      uniswap.setFromToken(tokenSymbol);
-    } else {
-      uniswap.setToToken(tokenSymbol);
+    const other = selectingToken === 'from' ? (uniswap.swapState.toToken as SwapSymbol) : (uniswap.swapState.fromToken as SwapSymbol);
+    const next = tokenSymbol as SwapSymbol;
+    if (other === next) {
+      Alert.alert('안내', '같은 토큰끼리는 스왑할 수 없습니다.');
+      return;
     }
+    if (!isAllowedPair(selectingToken === 'from' ? next : (uniswap.swapState.fromToken as SwapSymbol),
+                       selectingToken === 'from' ? (uniswap.swapState.toToken as SwapSymbol) : next)) {
+      Alert.alert('안내', '이 앱에서는 YOY 중심 스왑만 지원됩니다');
+      return;
+    }
+    if (selectingToken === 'from') uniswap.setFromToken(tokenSymbol);
+    else uniswap.setToToken(tokenSymbol);
     setShowTokenSelector(false);
   };
 
   // 스왑 실행 함수
   const executeSwap = async () => {
-    if (!uniswap.isValidSwap) {
-      Alert.alert('오류', '올바른 스왑 정보를 입력해주세요.');
-      return;
-    }
-
+    if (!uniswap.isValidSwap) { Alert.alert('오류', '올바른 스왑 정보를 입력해주세요.'); return; }
     const fromToken = uniswap.swapState.fromToken;
-    const toToken = uniswap.swapState.toToken;
+    const toTokenSnap = uniswap.swapState.toToken;
     const fromAmount = parseFloat(uniswap.swapState.amountIn || '0');
-    const quotedOut = parseFloat(uniswap.swapState.amountOut || '0');
-    if (!fromToken || !toToken || !isFinite(fromAmount) || fromAmount <= 0) {
-      Alert.alert('오류', '토큰과 수량을 확인해주세요.');
-      return;
-    }
-
-    // 잔액 확인
-    if (userBalances[fromToken] < fromAmount) {
-      Alert.alert('잔액 부족', `${fromToken} 잔액이 부족합니다.`);
-      return;
-    }
-
+    const toAmountSnap = parseFloat(uniswap.swapState.amountOut || '0');
+    if (!fromToken || !isFinite(fromAmount) || fromAmount <= 0) { Alert.alert('오류','토큰과 수량을 확인해주세요.'); return; }
+    if (userBalances[fromToken] < fromAmount) { Alert.alert('잔액 부족', `${fromToken} 잔액이 부족합니다.`); return; }
     try {
-      // 스왑 실행 (Mock: 실제 환경에서는 쿼트 API로 amountOut 확정 후 전송)
-      const mockResult = {
-        success: true,
-        transactionHash: `0x${Math.random().toString(16).substring(2, 10)}${Date.now().toString(16)}`,
-        blockNumber: Math.floor(Math.random()*1e7),
-        gasUsed: Math.floor(Math.random()*100000)+21000
-      };
-      
-      if (mockResult.success) {
-        // 최종 수령량 확정: 표시된 견적 없으면 시장가로 유사 계산(보수적으로 0.998 곱)
-        const fromPrice = getCoinPriceByCurrency(fromToken, currency as any) || 0;
-        const toPrice = getCoinPriceByCurrency(toToken, currency as any) || 0;
-        const calcOut = fromPrice && toPrice ? (fromAmount * fromPrice) / toPrice : 0;
-        const finalOut = quotedOut > 0 ? quotedOut : parseFloat((calcOut * 0.998).toFixed(6));
-
-        // 잔액 업데이트
-        const newBalances = {
-          ...userBalances,
-          [fromToken]: (userBalances[fromToken] || 0) - fromAmount,
-          [toToken]: (userBalances[toToken] || 0) + finalOut
-        };
-        setUserBalances(newBalances);
-        
-        // 즉시 AsyncStorage에 저장
-        const storageKey = `user_balances_${currentUser?.email}`;
-        try {
-          await AsyncStorage.setItem(storageKey, JSON.stringify(newBalances));
-          console.log('Swap balances saved to AsyncStorage:', newBalances);
-        } catch (error) {
-          console.error('Error saving swap balances:', error);
+      // 서명자 준비: 웹은 MetaMask, 네이티브는 로컬 월렛
+      let signer: any = null;
+      try {
+        if (typeof window !== 'undefined' && (window as any).ethereum && webProvider) {
+          const { BrowserProvider } = require('ethers');
+          const provider = new BrowserProvider((window as any).ethereum);
+          signer = await provider.getSigner();
         }
-
-        // 전역 거래 스토어에 스왑 기록 (2개 거래로 분리)
-        const swapResult = recordSwap({
-          fromToken,
-          toToken,
-          fromAmount: parseFloat(fromAmount.toFixed(6)),
-          toAmount: finalOut,
-          transactionHash: mockResult.transactionHash,
-          fee: 0.003 // 0.3% 수수료
-        });
-        
-        console.log('Swap recorded:', swapResult);
-
-        // 스왑 결과 저장 (toAmount는 최종 계산값 사용)
-        setSwapResult({
-          success: true,
-          fromAmount,
-          toAmount: finalOut,
-          fromToken,
-          toToken,
-          transactionHash: mockResult.transactionHash,
-          timestamp: new Date().toLocaleString('ko-KR')
-        });
-
-        // 성공 토스트는 표시하지 않음(스왑 완료 카드를 사용)
-        // 애니메이션으로 스왑 결과 카드 등장 (화면 높이 70%)
-        toastY.setValue(120);
-        Animated.sequence([
-          Animated.timing(toastY, { toValue: -screenHeight * 0.4, duration: 220, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-          Animated.delay(10000),
-          Animated.timing(toastY, { toValue: 120, duration: 220, easing: Easing.in(Easing.quad), useNativeDriver: true })
-        ]).start(() => setSwapResult(null));
-      } else {
-        showToast(language==='en'?'Swap failed':'스왑에 실패했습니다.','error');
+      } catch {}
+      if (!signer) {
+        const { getLocalWallet, getProvider } = await import('@/src/wallet/wallet');
+        const local = await getLocalWallet();
+        if (!local) { Alert.alert('지갑 필요','지갑을 먼저 생성/복구해 주세요.'); return; }
+        signer = local.wallet.connect(getProvider());
       }
-    } catch (error) {
-      console.error('Swap error:', error);
-      showToast(language==='en'?'Error occurred':'오류가 발생했습니다.','error');
+      const txHash = await uniswap.executeSwap(signer);
+      const toToken = toTokenSnap;
+      const toAmount = toAmountSnap;
+      // 거래 기록
+      try {
+        recordSwap({
+          fromToken,
+          toToken,
+          fromAmount,
+          toAmount,
+          transactionHash: txHash,
+        });
+      } catch {}
+      // 잔액 즉시 반영(로컬 오버레이)
+      try {
+        const { useMonitorStore } = require('@/lib/monitorStore');
+        await useMonitorStore.getState().applyLocalChange?.({ symbol: fromToken, delta: -fromAmount, type: 'swap', description: `Swap to ${toToken}` });
+        if (toAmount > 0) {
+          await useMonitorStore.getState().applyLocalChange?.({ symbol: toToken, delta: toAmount, type: 'swap', description: `Swap from ${fromToken}` });
+        }
+      } catch {}
+      showToast('스왑이 완료되었습니다.', 'success');
+    } catch (e) {
+      console.error('Swap execute failed:', e);
+      try {
+        useTransactionStore.getState().recordFailure({
+          type: 'swap',
+          description: `Swap 실패: ${fromToken} → ${toTokenSnap}`,
+          symbol: fromToken,
+          amount: fromAmount,
+          source: 'uniswap',
+          memo: String((e as any)?.message || e),
+        });
+      } catch {}
+      Alert.alert('스왑 실패', String((e as any)?.message || e));
     }
   };
 
   // 사용 가능한 토큰 목록
-  const availableTokens = [
-    { symbol: 'YOY', name: 'YooY Land', decimals: 18 },
-    { symbol: 'WETH', name: 'Wrapped Ethereum', decimals: 18 },
-    { symbol: 'USDT', name: 'Tether USD', decimals: 6 },
-    { symbol: 'USDC', name: 'USD Coin', decimals: 6 },
-    { symbol: 'WBTC', name: 'Wrapped Bitcoin', decimals: 8 },
-    { symbol: 'DAI', name: 'Dai Stablecoin', decimals: 18 },
-    { symbol: 'LINK', name: 'Chainlink', decimals: 18 },
-    { symbol: 'UNI', name: 'Uniswap', decimals: 18 },
-    { symbol: 'AAVE', name: 'Aave', decimals: 18 },
-    { symbol: 'CRV', name: 'Curve DAO Token', decimals: 18 },
-    { symbol: 'SUSHI', name: 'SushiSwap', decimals: 18 },
-    { symbol: 'COMP', name: 'Compound', decimals: 18 },
-    { symbol: 'MKR', name: 'Maker', decimals: 18 },
-    { symbol: 'SNX', name: 'Synthetix', decimals: 18 },
-    { symbol: 'YFI', name: 'Yearn Finance', decimals: 18 },
-    { symbol: 'BAL', name: 'Balancer', decimals: 18 },
-    { symbol: 'LRC', name: 'Loopring', decimals: 18 },
-    { symbol: 'ZRX', name: '0x Protocol', decimals: 18 },
-    { symbol: 'BAT', name: 'Basic Attention Token', decimals: 18 },
-    { symbol: 'KNC', name: 'Kyber Network', decimals: 18 }
-  ];
+  const availableTokens = SUPPORTED_SWAP_TOKENS;
 
   return (
     <ThemedView style={styles.container}>
@@ -576,7 +533,14 @@ export default function PaymentsScreen() {
                     {language === 'en' ? 'Network Fee' : '네트워크 수수료'}
                   </ThemedText>
                   <ThemedText style={styles.swapInfoValue}>
-                    ~$12.50
+                    {(() => {
+                      try {
+                        const gasEth = parseFloat(uniswap.swapState.gasFee || '0') || 0;
+                        const price = getCoinPriceByCurrency('ETH', 'USD' as any) || 0;
+                        const usd = gasEth * price;
+                        return `~$${usd.toFixed(2)}`;
+                      } catch { return '~$0.00'; }
+                    })()}
                   </ThemedText>
                 </View>
                 <View style={styles.swapInfoRow}>
@@ -584,7 +548,7 @@ export default function PaymentsScreen() {
                     {language === 'en' ? 'Price Impact' : '가격 영향'}
                   </ThemedText>
                   <ThemedText style={styles.swapInfoValue}>
-                    &lt;0.01%
+                    {`${Math.max(0, uniswap.swapState.priceImpact || 0).toFixed(2)}%`}
                   </ThemedText>
                 </View>
                 <View style={styles.swapInfoRow}>
@@ -592,7 +556,9 @@ export default function PaymentsScreen() {
                     {language === 'en' ? 'Minimum Received' : '최소 수령량'}
                   </ThemedText>
                   <ThemedText style={styles.swapInfoValue}>
-                    {uniswap.swapState.amountOut ? (parseFloat(uniswap.swapState.amountOut) * 0.995).toFixed(6) : '0'} {uniswap.swapState.toToken}
+                    {uniswap.swapState.amountOut
+                      ? (parseFloat(uniswap.swapState.amountOut) * (1 - (DEFAULT_SLIPPAGE/100))).toFixed(6)
+                      : '0'} {uniswap.swapState.toToken}
                   </ThemedText>
                 </View>
               </View>
@@ -1151,6 +1117,56 @@ export default function PaymentsScreen() {
                   </TouchableOpacity>
                 ))}
               </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
+        {/* 거래 상세 모달 */}
+        <Modal
+          visible={!!selectedTx}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setSelectedTx(null)}
+        >
+          <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.6)', justifyContent:'center', alignItems:'center' }}>
+            <View style={{ width:'88%', backgroundColor:'#121212', borderRadius:12, padding:16 }}>
+              <ThemedText style={{ fontSize:18, fontWeight:'700', marginBottom:8 }}>
+                {language==='en' ? 'Transaction Detail' : '거래 상세'}
+              </ThemedText>
+              {selectedTx && (
+                <>
+                  <ThemedText style={{ color:'#bbb', marginBottom:4 }}>
+                    {language==='en' ? 'Time' : '시간'}: {selectedTx.timestamp || selectedTx.time || selectedTx.createdAt}
+                  </ThemedText>
+                  <ThemedText style={{ color:'#bbb', marginBottom:4 }}>
+                    {language==='en' ? 'Status' : '상태'}: {selectedTx.success ? (language==='en'?'Success':'성공') : (selectedTx.success===false ? (language==='en'?'Failed':'실패') : 'Pending')}
+                  </ThemedText>
+                  <ThemedText style={{ color:'#bbb', marginBottom:4 }}>
+                    {language==='en' ? 'Pair' : '코인'}: {(selectedTx.fromToken||'—')}/{(selectedTx.toToken||'—')}
+                  </ThemedText>
+                  <ThemedText style={{ color:'#bbb', marginBottom:4 }}>
+                    {language==='en' ? 'Amount' : '수량'}: {(selectedTx.fromAmount||0)} → {(selectedTx.toAmount||0)}
+                  </ThemedText>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const h = selectedTx.transactionHash || selectedTx.txHash;
+                      if (h) {
+                        try { Linking.openURL(`https://etherscan.io/tx/${h}`); } catch {}
+                      }
+                    }}
+                    disabled={!selectedTx.transactionHash && !selectedTx.txHash}
+                  >
+                    <ThemedText style={{ color:'#4da3ff', marginBottom:8 }} numberOfLines={1}>
+                      Tx: {selectedTx.transactionHash || selectedTx.txHash || '—'}
+                    </ThemedText>
+                  </TouchableOpacity>
+                  <View style={{ flexDirection:'row', justifyContent:'flex-end', marginTop:8 }}>
+                    <TouchableOpacity onPress={() => setSelectedTx(null)} style={{ paddingVertical:10, paddingHorizontal:14, backgroundColor:'#1e1e1e', borderRadius:8 }}>
+                      <ThemedText style={{ color:'#fff' }}>{language==='en' ? 'Close' : '닫기'}</ThemedText>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
             </View>
           </View>
         </Modal>

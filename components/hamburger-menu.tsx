@@ -4,6 +4,9 @@ import { getAdminRoleByEmail, isAdmin } from '@/constants/admins';
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMarket } from '@/contexts/MarketContext';
+import { useWallet } from '@/contexts/WalletContext';
+import { useMonitorStore } from '@/lib/monitorStore';
+import priceManager from '@/lib/priceManager';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { formatCurrency, getExchangeRates } from '@/lib/currency';
 import { getMockBalancesForUser } from '@/lib/userBalances';
@@ -14,6 +17,10 @@ import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { useWalletConnect } from '@/contexts/WalletConnectContext';
 import { useTodoStore } from '@/src/features/todo/todo.store';
+import * as ScreenCapture from 'expo-screen-capture';
+import * as Clipboard from 'expo-clipboard';
+import { loadMnemonic } from '@/src/wallet/secure';
+import * as FileSystem from 'expo-file-system';
 import {
     Alert,
     Animated,
@@ -39,6 +46,7 @@ interface HamburgerMenuProps {
 export default function HamburgerMenu({ visible, onClose, avatarUri }: HamburgerMenuProps) {
   const { currentUser, signOut } = useAuth();
   const { yoyPriceKRW, yoyPriceUSD } = useMarket();
+  const { deleteAllWallets } = useWallet();
   const { language, currency, setLanguage, setCurrency } = usePreferences();
   const wc = (() => { try { return useWalletConnect(); } catch { return null as any; } })();
   const [rates, setRates] = useState<any>(null);
@@ -48,17 +56,22 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
   const [isDirty, setIsDirty] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [quickActionsVisible, setQuickActionsVisible] = useState(false);
+  const [mnemonicVisible, setMnemonicVisible] = useState(false);
+  const [mnemonicText, setMnemonicText] = useState<string>('');
   // 실시간 To-Do 미완료 개수
   const { items: todoItems } = useTodoStore();
   const todoPendingCount = (todoItems || []).filter((i:any) => !i.completed).length;
 
-  // 총자산 계산: 대시보드와 동일한 방식으로 계산
-  const total = (() => {
-    const yoyUSD = yoyPriceUSD ?? 0;
-    const userBalances = getMockBalancesForUser(currentUser?.email);
-    const cryptoOnlyBalances = userBalances.filter(b => !['KRW', 'USD', 'JPY', 'CNY', 'EUR'].includes(b.symbol));
-    const valued = cryptoOnlyBalances.map(b => b.symbol === 'YOY' && yoyUSD ? ({ ...b, valueUSD: b.amount * yoyUSD }) : b);
-    return valued.reduce((s, b) => s + b.valueUSD, 0);
+  // 총자산 계산: Dashboard/Wallet과 동일하게 valueUSD(SSOT) 합계 → 환율 변환(formatCurrency)
+  const balancesArray = useMonitorStore(s => s.balancesArray);
+  const totalUsd = (() => {
+    try {
+      const arr = Array.isArray(balancesArray) ? balancesArray : [];
+      return arr.reduce((sum, b: any) => {
+        const v = Number(b?.valueUSD || 0);
+        return sum + (Number.isFinite(v) ? v : 0);
+      }, 0);
+    } catch { return 0; }
   })();
   const isUserAdmin = currentUser?.email ? isAdmin(currentUser.email) : false;
   const adminRole = currentUser?.email ? getAdminRoleByEmail(currentUser.email) : null;
@@ -141,6 +154,32 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
           { title: wc?.state?.connected ? `외부 지갑: ${String(wc?.state?.address||'').slice(0,6)}…${String(wc?.state?.address||'').slice(-4)}` : '외부 지갑: 미연결', icon: wc?.state?.connected ? '🟢' : '⚪', onPress: () => { onClose(); try { router.push('/settings/walletconnect' as any); } catch {} } },
           { title: wc?.state?.connected ? '외부 지갑 연결 해제' : '외부 지갑 연결', icon: '🔗', onPress: async () => { try { if (wc) { if (wc.state.connected) { await wc.disconnect(); } else { await wc.connect(); } } } catch {} } },
           { title: t('wallet', language) || 'Wallet', icon: '💼', onPress: () => { onClose(); router.push('/(tabs)/wallet'); } },
+          { title: '니모닉(시드) 표시', icon: '🧩', onPress: async () => {
+              try {
+                Alert.alert(
+                  '보안 경고',
+                  '니모닉은 지갑의 모든 권한입니다. 주변에 다른 사람이 없고 화면 캡처가 차단된 상태에서만 확인하세요.',
+                  [
+                    { text: '취소', style: 'cancel' },
+                    { text: '표시', style: 'destructive', onPress: async () => {
+                        try {
+                          await ScreenCapture.preventScreenCaptureAsync();
+                        } catch {}
+                        const m = await loadMnemonic();
+                        if (!m) {
+                          Alert.alert('안내', '로컬에 저장된 니모닉이 없습니다.');
+                          try { await ScreenCapture.allowScreenCaptureAsync(); } catch {}
+                          return;
+                        }
+                        setMnemonicText(m);
+                        setMnemonicVisible(true);
+                      } 
+                    },
+                  ]
+                );
+              } catch {}
+            } 
+          },
         ]},
         { title: t('preferences', language), items: [
           { title: `${t('language', language)}: ${language?.toUpperCase?.() || ''}`, icon: '🌐', onPress: () => { setIsDirty(true); onClose(); try { router.push('/settings/language' as any); } catch {} } },
@@ -155,6 +194,127 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
           { title: (language==='ko'?'버그 신고':language==='ja'?'バグ報告':language==='zh'?'错误反馈':'Bug report'), icon: '🐞', onPress: () => { onClose(); try { router.push('/support/bug' as any); } catch {} } },
           { title: (language==='ko'?'문의하기':language==='ja'?'お問い合わせ':language==='zh'?'咨询':'Inquiry'), icon: '✉️', onPress: () => { onClose(); try { router.push('/support/inquiry' as any); } catch {} } },
           { title: (language==='ko'?'신고하기':language==='ja'?'通報':language==='zh'?'举报':'Report'), icon: '🚨', onPress: () => { onClose(); try { router.push('/support/report' as any); } catch {} } },
+          { title: '앱 캐시 초기화', icon: '🧹', onPress: async () => {
+              try {
+                Alert.alert('확인', '앱 캐시(프로필/잔액 캐시/친구목록 등)를 삭제합니다. 지갑 니모닉/주소는 유지됩니다.', [
+                  { text: '취소', style: 'cancel' },
+                  { text: '삭제', style: 'destructive', onPress: async () => {
+                      try {
+                        const keys: string[] = await AsyncStorage.getAllKeys();
+                        const uid = (currentUser as any)?.uid || '';
+                        const toRemove = keys.filter(k => 
+                          k.startsWith('monitor.') ||
+                          k.startsWith('user_balances_') ||
+                          k.startsWith('yoo-') ||
+                          (uid ? k.startsWith(`u:${uid}:`) : false)
+                        );
+                        if (toRemove.length > 0) {
+                          await AsyncStorage.multiRemove(toRemove);
+                        }
+                        Alert.alert('완료','캐시를 삭제했습니다. 앱을 재시작해 주세요.');
+                      } catch {
+                        Alert.alert('오류','캐시 삭제에 실패했습니다.');
+                      }
+                    } 
+                  }
+                ]);
+              } catch {}
+            } 
+          },
+          { title: '오류 로그 내보내기', icon: '📤', onPress: async () => {
+              try {
+                const base = (FileSystem as any).documentDirectory || (FileSystem as any).cacheDirectory || null;
+                if (!base) {
+                  // 디렉터리를 알 수 없는 환경: 최근 전역 오류 객체를 텍스트로 복사 시도
+                  try {
+                    const last = (globalThis as any).__lastRootError;
+                    const txt = last ? (`${String(last?.message||'')}\n${String(last?.stack||'')}\n${String(last?.info||'')}`) : '';
+                    if (txt) {
+                      await Clipboard.setStringAsync(txt);
+                      Alert.alert('복사됨','최근 오류 내용을 클립보드에 복사했습니다.');
+                      return;
+                    }
+                  } catch {}
+                  Alert.alert('안내','로그 파일 경로를 확인할 수 없습니다.\n먼저 오류를 재현한 뒤 다시 시도하세요.');
+                  return;
+                }
+                const p = base + 'rn-error.txt';
+                const info = await (FileSystem as any).getInfoAsync(p);
+                if (!info.exists || (info.size ?? 0) === 0) { 
+                  // 파일이 없으면, 최근 전역 오류 복사 시도
+                  try {
+                    const last = (globalThis as any).__lastRootError;
+                    const txt = last ? (`${String(last?.message||'')}\n${String(last?.stack||'')}\n${String(last?.info||'')}`) : '';
+                    if (txt) {
+                      await Clipboard.setStringAsync(txt);
+                      Alert.alert('복사됨','최근 오류 내용을 클립보드에 복사했습니다.');
+                      return;
+                    }
+                  } catch {}
+                  Alert.alert('안내','오류 로그가 아직 없습니다. 문제가 발생한 후 다시 시도하세요.'); 
+                  return; 
+                }
+                // 동적 로드: expo-sharing 미설치 환경에서도 빌드 실패 방지
+                let shared = false;
+                try {
+                  // eslint-disable-next-line @typescript-eslint/no-var-requires
+                  const Sharing = require('expo-sharing');
+                  if (await Sharing.isAvailableAsync?.()) {
+                    await Sharing.shareAsync?.(p, { mimeType: 'text/plain', dialogTitle: 'rn-error.txt' } as any);
+                    shared = true;
+                  }
+                } catch {}
+                if (!shared) {
+                  const txt = await (FileSystem as any).readAsStringAsync(p);
+                  await Clipboard.setStringAsync(txt);
+                  Alert.alert('복사됨','오류 로그를 클립보드에 복사했습니다.');
+                }
+              } catch {
+                Alert.alert('오류','로그 내보내기에 실패했습니다.');
+              }
+            } 
+          },
+          { title: '지갑 초기화 (니모닉 삭제)', icon: '🗑️', onPress: async () => {
+              try {
+                Alert.alert('지갑 초기화','로컬 기기의 니모닉과 주소를 삭제합니다. 복구용 니모닉이 없다면 절대 진행하지 마세요.',[
+                  { text:'취소', style:'cancel' },
+                  { text:'삭제', style:'destructive', onPress: async () => {
+                      try {
+                        const { clearWallet } = await import('@/src/wallet/secure');
+                        await clearWallet();
+                        const uid = currentUser?.uid;
+                        if (uid) {
+                          try {
+                            await AsyncStorage.removeItem(`me.balances.${uid}`);
+                            await AsyncStorage.removeItem(`me.txs.${uid}`);
+                            await AsyncStorage.removeItem(`monitor.local.adjustments:${uid}`);
+                            await AsyncStorage.removeItem('monitor.lastKnownUid');
+                          } catch {}
+                        }
+                        useMonitorStore.setState({
+                          uid: null,
+                          addresses: [],
+                          balancesMap: {},
+                          balancesArray: [],
+                          transactions: [],
+                          buyPriceMap: {},
+                          lastSuccessAt: null,
+                          lastError: null,
+                        });
+                        await deleteAllWallets();
+                        Alert.alert('완료','지갑을 초기화했습니다. 지갑 설정 화면으로 이동합니다.');
+                        onClose();
+                        try { router.replace('/(onboarding)/wallet-setup'); } catch {}
+                      } catch {
+                        Alert.alert('오류','지갑 초기화에 실패했습니다.');
+                      }
+                    } 
+                  }
+                ]);
+              } catch {}
+            } 
+          },
+          { title: '지갑 복원 (니모닉 입력)', icon: '♻️', onPress: () => { onClose(); try { router.replace('/(onboarding)/wallet-setup?tab=import' as any); } catch {} } },
         ]},
       ];
     }
@@ -228,6 +388,20 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
     ];
   })();
 
+  // 아바타: 프로필 저장된 사진 로드(동일 계정으로 표시)
+  const [savedAvatar, setSavedAvatar] = useState<string | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const uid = (currentUser as any)?.uid || null;
+        if (!uid) return;
+        const key = `u:${uid}:profile.photoUri`;
+        const raw = await AsyncStorage.getItem(key);
+        if (raw) setSavedAvatar(raw);
+      } catch {}
+    })();
+  }, [currentUser?.email]);
+
   return (
     <Modal
       visible={visible}
@@ -250,18 +424,18 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
             <View style={styles.header}>
               <View style={styles.userInfo}>
                  <View style={styles.avatar}>
-                   {avatarUri ? (
-                    <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
+                   {(avatarUri || savedAvatar) ? (
+                    <Image source={{ uri: (avatarUri || savedAvatar) as string }} style={styles.avatarImage} />
                    ) : (
-                     <ThemedText style={styles.avatarText}>
-                       {currentUser?.email?.charAt(0).toUpperCase() || 'A'}
-                     </ThemedText>
-                   )}
-                 </View>
+                    <ThemedText style={styles.avatarText}>
+                      {currentUser?.email?.charAt(0).toUpperCase() || 'A'}
+                    </ThemedText>
+                  )}
+                </View>
                  <View style={styles.userDetails}>
                    <ThemedText type="defaultSemiBold">{currentUser?.email ?? ''}</ThemedText>
                   <ThemedText style={styles.balance}>
-                    {formatCurrency(total, currency, rates)}
+                    {formatCurrency(totalUsd, currency, rates)}
                   </ThemedText>
                   {/* YOY 텍스트 노출 제거: 가격은 총자산 계산에만 사용 */}
                    {isUserAdmin && (
@@ -338,6 +512,25 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
           </ScrollView>
         </Animated.View>
       </View>
+      {/* Mnemonic Modal */}
+      {mnemonicVisible && (
+        <View style={{ position:'absolute', left:0, right:0, top:0, bottom:0, backgroundColor:'rgba(0,0,0,0.8)', alignItems:'center', justifyContent:'center', padding:16 }}>
+          <View style={{ width:'92%', maxWidth:520, borderWidth:1, borderColor:'#FFD700', borderRadius:12, backgroundColor:'#0F0F0F', padding:16 }}>
+            <ThemedText style={{ color:'#FFD700', fontWeight:'800', fontSize:16, marginBottom:8 }}>니모닉(시드)</ThemedText>
+            <ThemedText style={{ color:'#EDEDED', lineHeight:22, marginBottom:12 }}>
+              {mnemonicText}
+            </ThemedText>
+            <View style={{ flexDirection:'row', justifyContent:'flex-end', gap:8 }}>
+              <TouchableOpacity onPress={async()=>{ try { await Clipboard.setStringAsync(mnemonicText); Alert.alert('복사됨','니모닉을 클립보드에 복사했습니다.'); } catch {} }} style={{ paddingHorizontal:12, paddingVertical:8, borderWidth:1, borderColor:'#FFD700', borderRadius:8 }}>
+                <ThemedText style={{ color:'#FFD700', fontWeight:'700' }}>복사</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={async()=>{ setMnemonicVisible(false); setMnemonicText(''); try { await ScreenCapture.allowScreenCaptureAsync(); } catch {} }} style={{ paddingHorizontal:12, paddingVertical:8, borderWidth:1, borderColor:'#444', borderRadius:8 }}>
+                <ThemedText style={{ color:'#DDD' }}>닫기</ThemedText>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
       <QuickActionsSettings visible={quickActionsVisible} onClose={() => setQuickActionsVisible(false)} />
     </Modal>
   );

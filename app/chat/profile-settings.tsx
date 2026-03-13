@@ -14,11 +14,13 @@ import { firebaseStorage, ensureAppCheckReady } from '@/lib/firebase';
 import React, { useEffect, useMemo, useRef, useState, useCallback, Suspense } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import { useMediaStore, mediaSelectors, mediaIdForUri } from '@/src/features/chat/store/media.store';
-import { Alert, Image, ScrollView, StyleSheet, TextInput, TouchableOpacity, View, Platform } from 'react-native';
+import { Alert, Image, ScrollView, StyleSheet, TextInput, TouchableOpacity, View, Platform, Text } from 'react-native';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { t } from '@/i18n';
 const ChatViewer = React.lazy(() => import('@/src/features/chat/components/ChatViewer'));
 import { detectType as mediaDetectType } from '@/src/features/chat/lib/media';
+// 이미지 편집(회전/반전/자르기)용: 대비 높은 툴바 제공
+const ImageManipulator: any = (()=>{ try { return require('expo-image-manipulator'); } catch { return null; } })();
 
 export default function ChatProfileSettingsScreen() {
   const { language } = usePreferences();
@@ -596,7 +598,7 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
       } catch {}
       if (!(bucket && objectPath)) return '';
       // 보안 규칙 대비: 메타 조회 전 인증 보장
-      try { if (!firebaseAuth.currentUser) { const { signInAnonymously } = await import('firebase/auth'); await signInAnonymously(firebaseAuth).catch(()=>{}); } } catch {}
+      try { if (!firebaseAuth.currentUser && (require('react-native').Platform?.OS === 'web')) { const { signInAnonymously } = await import('firebase/auth'); await signInAnonymously(firebaseAuth).catch(()=>{}); } } catch {}
       const storage = getStorage(firebaseAuth.app as any, `gs://${bucket}`);
       let md: any = null;
       try { md = await getMetadata(storageRef(storage, objectPath)); } catch {}
@@ -975,26 +977,55 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
       if (!raw) { Alert.alert('안내','아이디를 입력해 주세요.'); return; }
       const valid = /^[a-z0-9_.-]{3,20}$/i.test(raw);
       if (!valid) { Alert.alert('안내','아이디는 3~20자 영문/숫자/_.- 만 가능합니다.'); return; }
+      // 변경 없음이면 즉시 반환 (체감 지연 제거)
+      try {
+        const cur = String((currentProfile as any)?.username || '').trim();
+        if (cur && cur.toLowerCase() === raw.toLowerCase()) {
+          // 동일해도 다른 입력칸 변경이 있을 수 있으니 아래 병합 저장만 진행
+        }
+      } catch {}
       setUsernameSaving(true);
       const lower = raw.toLowerCase();
       const usersRef = (await import('firebase/firestore')).collection(firestore, 'users');
       const { getDocs, query, where, limit } = await import('firebase/firestore');
-      const snap = await getDocs(query(usersRef, where('usernameLower','==', lower), limit(1)));
+      // 고속 응답: 3초 타임아웃으로 중복확인
+      const snap = await Promise.race([
+        getDocs(query(usersRef, where('usernameLower','==', lower), limit(1))),
+        new Promise((_, rej) => setTimeout(()=>rej(new Error('timeout')), 3000)),
+      ]).catch((e)=>{ return e?.message==='timeout' ? { empty: true, docs: [] as any[] } as any : Promise.reject(e); });
       if (!snap.empty && snap.docs[0].id !== uid) {
         Alert.alert('안내','이미 사용 중인 아이디입니다.');
         setUsernameSaving(false);
         return;
       }
       const { setDoc, doc, serverTimestamp } = await import('firebase/firestore');
-      await setDoc(doc(firestore, 'users', uid), { username: raw, usernameLower: lower, updatedAt: serverTimestamp() } as any, { merge: true });
-      try { useChatProfileStore.getState().updateProfile?.({ username: raw } as any); } catch {}
-      Alert.alert('완료','아이디가 저장되었습니다.');
+      // 로컬 낙관적 업데이트: 아이디 + 현재 폼의 다른 변경사항도 함께 반영
+      try { useChatProfileStore.getState().updateProfile?.({
+        username: raw,
+        displayName: displayName.trim() || (currentProfile?.displayName || ''),
+        chatName: displayName.trim() || (currentProfile?.chatName || currentProfile?.displayName || ''),
+        useHashInChat: !!useHash,
+        bio: (bio || '').trim(),
+        customStatus: (customStatus || '').trim(),
+      } as any); } catch {}
+      // 서버 병합 저장: 아이디 + 대화명/상태 등 동시 반영
+      await setDoc(doc(firestore, 'users', uid), {
+        username: raw,
+        usernameLower: lower,
+        displayName: displayName.trim() || (currentProfile?.displayName || ''),
+        chatName: displayName.trim() || (currentProfile?.chatName || currentProfile?.displayName || ''),
+        useHashInChat: !!useHash,
+        bio: (bio || '').trim(),
+        customStatus: (customStatus || '').trim(),
+        updatedAt: serverTimestamp()
+      } as any, { merge: true });
+      Alert.alert('완료','아이디와 프로필이 저장되었습니다.');
     } catch {
       Alert.alert('오류','아이디 저장에 실패했습니다.');
     } finally {
       setUsernameSaving(false);
     }
-  }, [username]);
+  }, [username, currentProfile]);
 
   // 갤러리 비공개 메타 로드 제거: 전역 플래그는 사용하지 않음
   useEffect(() => { setGalleryPrivate(false); }, [metaKey]);
@@ -1316,7 +1347,8 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
+        // 시스템 편집 UI(회전/자르기) 비활성화 → 우리 툴바로 일관 표시(화이트 배경/블랙 텍스트)
+        allowsEditing: false,
         aspect: [1, 1],
         quality: 0.8,
       });
@@ -1377,7 +1409,7 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
         try {
           // 업로드 전에 웹에서 인증이 없다면 익명 로그인 보장 (403 방지)
           if (Platform.OS === 'web' && !firebaseAuth.currentUser) {
-            try { await signInAnonymously(firebaseAuth); } catch {}
+            try { if ((require('react-native').Platform?.OS === 'web')) await signInAnonymously(firebaseAuth); } catch {}
           }
           // 로그인 완료를 짧게 대기하여 실제 UID 확보 (anonymous-user 폴더 방지)
           for (let i = 0; i < 20 && !firebaseAuth.currentUser?.uid; i++) {
@@ -1514,7 +1546,7 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
         try {
           // 웹에서 인증이 없다면 익명 로그인 보장 (403 방지)
           if (!firebaseAuth.currentUser) {
-            try { await signInAnonymously(firebaseAuth); } catch {}
+            try { if ((require('react-native').Platform?.OS === 'web')) await signInAnonymously(firebaseAuth); } catch {}
           }
           // UID 확보 대기
           for (let i = 0; i < 30 && !firebaseAuth.currentUser?.uid; i++) {
@@ -1577,13 +1609,31 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
         setAvatar(finalAvatarUri);
         // 갤러리에 확실히 기록되도록 저장을 대기
         try { await addToGallery(finalAvatarUri!, 'image'); } catch {}
-        try { await AsyncStorage.setItem('chat.profile.lastAvatar', finalAvatarUri!); } catch {}
+        try {
+          const uid = (require('@/lib/firebase').firebaseAuth.currentUser?.uid) || 'me';
+          await AsyncStorage.setItem(`u:${uid}:chat.profile.lastAvatar`, finalAvatarUri!);
+        } catch {}
       }
       setPendingAvatar(undefined);
 
-      // 상태 업데이트
+      // 상태 업데이트 (로컬 스토어)
       setStatus(selectedStatus);
       setCustomStatus(customStatus.trim());
+      // 서버(User 문서)에 대화명/상태/아바타 동기 저장 → 친구/상대방에게 반영
+      try {
+        const uid = firebaseAuth.currentUser?.uid;
+        if (uid) {
+          const payload: any = {
+            displayName: displayName.trim(),
+            chatName: displayName.trim(),
+            customStatus: (customStatus || '').trim(),
+            avatar: finalAvatarUri || null,
+            updatedAt: serverTimestamp(),
+          };
+          await setDoc(doc(firestore, 'users', uid), payload, { merge: true } as any);
+        }
+      } catch {}
+
 
       // 마지막 활동 시간 업데이트
       const { setLastActive } = useChatProfileStore.getState();
@@ -1692,6 +1742,63 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
               <ThemedText style={styles.avatarEditText}>{t('edit', language)}</ThemedText>
             </View>
           </TouchableOpacity>
+          {/* 대비 높은 편집 툴바: 화이트 배경/블랙 텍스트 */}
+          {pendingAvatar ? (
+            <View style={{ marginTop: 10, backgroundColor:'#FFFFFF', borderRadius:10, borderWidth:1, borderColor:'#E5E7EB', paddingHorizontal:12, paddingVertical:8 }}>
+              <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', gap:12 }}>
+                <TouchableOpacity
+                  onPress={async ()=>{ try { if (!ImageManipulator?.manipulateAsync || !pendingAvatar) return;
+                    const out = await ImageManipulator.manipulateAsync(pendingAvatar, [{ rotate: 90 }], { compress: 0.95, format: (ImageManipulator as any).SaveFormat?.JPEG || 'jpeg' });
+                    setPendingAvatar(out?.uri || pendingAvatar);
+                  } catch {} }}
+                  style={{ paddingHorizontal:10, paddingVertical:6, borderRadius:8, borderWidth:1, borderColor:'#111' }}
+                ><Text style={{ color:'#111', fontWeight:'800' }}>회전 90°</Text></TouchableOpacity>
+                <TouchableOpacity
+                  onPress={async ()=>{ try { if (!ImageManipulator?.manipulateAsync || !pendingAvatar) return;
+                    const out = await ImageManipulator.manipulateAsync(pendingAvatar, [{ flip: ImageManipulator.FlipType.Horizontal }], { compress: 0.95, format: (ImageManipulator as any).SaveFormat?.JPEG || 'jpeg' });
+                    setPendingAvatar(out?.uri || pendingAvatar);
+                  } catch {} }}
+                  style={{ paddingHorizontal:10, paddingVertical:6, borderRadius:8, borderWidth:1, borderColor:'#111' }}
+                ><Text style={{ color:'#111', fontWeight:'800' }}>좌우반전</Text></TouchableOpacity>
+                <TouchableOpacity
+                  onPress={async ()=>{ try { if (!ImageManipulator?.manipulateAsync || !pendingAvatar) return;
+                    const out = await ImageManipulator.manipulateAsync(pendingAvatar, [{ flip: ImageManipulator.FlipType.Vertical }], { compress: 0.95, format: (ImageManipulator as any).SaveFormat?.JPEG || 'jpeg' });
+                    setPendingAvatar(out?.uri || pendingAvatar);
+                  } catch {} }}
+                  style={{ paddingHorizontal:10, paddingVertical:6, borderRadius:8, borderWidth:1, borderColor:'#111' }}
+                ><Text style={{ color:'#111', fontWeight:'800' }}>상하반전</Text></TouchableOpacity>
+                <TouchableOpacity
+                  onPress={async ()=>{ try {
+                    if (!pendingAvatar) return;
+                    // 중앙 정사각형 자르기: 플랫폼별 안전한 크기 조회
+                    const getImageSize = async (uri: string): Promise<{ w: number; h: number }> => {
+                      return await new Promise((resolve) => {
+                        try {
+                          if (Platform.OS === 'web') {
+                            const img: any = document.createElement('img');
+                            img.onload = () => resolve({ w: img.naturalWidth || img.width, h: img.naturalHeight || img.height });
+                            img.onerror = () => resolve({ w: 1024, h: 1024 });
+                            img.src = uri;
+                          } else {
+                            Image.getSize(uri, (w, h) => resolve({ w, h }), () => resolve({ w: 1024, h: 1024 }));
+                          }
+                        } catch { resolve({ w: 1024, h: 1024 }); }
+                      });
+                    };
+                    const { w, h } = await getImageSize(pendingAvatar);
+                    const side = Math.min(w, h);
+                    const ox = Math.floor((w - side) / 2);
+                    const oy = Math.floor((h - side) / 2);
+                    if (ImageManipulator?.manipulateAsync) {
+                      const out = await ImageManipulator.manipulateAsync(pendingAvatar, [{ crop: { originX: ox, originY: oy, width: side, height: side } }], { compress: 0.95, format: (ImageManipulator as any).SaveFormat?.JPEG || 'jpeg' });
+                      setPendingAvatar(out?.uri || pendingAvatar);
+                    }
+                  } catch {} }}
+                  style={{ paddingHorizontal:10, paddingVertical:6, borderRadius:8, borderWidth:1, borderColor:'#111' }}
+                ><Text style={{ color:'#111', fontWeight:'800' }}>자르기</Text></TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
         </View>
 
         {/* 채팅 대화명 */}

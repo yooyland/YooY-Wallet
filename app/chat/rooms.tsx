@@ -5,13 +5,14 @@ import { useChatProfileStore } from '@/src/features/chat/store/chat-profile.stor
 import { useKakaoRoomsStore } from '@/src/features/chat/store/kakao-rooms.store';
 import { router, Stack } from 'expo-router';
 import { firebaseAuth, firestore, ensureAuthedUid } from '@/lib/firebase';
-import { collection, getDocs, getDoc, limit, orderBy, query, where, doc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, getDocs, getDoc, limit, orderBy, query, where, doc, setDoc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import React from 'react';
 import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View, Alert, TextInput, Platform } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { t } from '@/i18n';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function ChatRoomsScreen() {
   const { currentProfile } = useChatProfileStore();
@@ -21,8 +22,25 @@ export default function ChatRoomsScreen() {
   const insets = useSafeAreaInsets();
   // DM 표시용 프로필 캐시/내 UID
   const [dmProfiles, setDmProfiles] = React.useState<Record<string, { displayName: string; avatar?: string }>>({});
+  const [friendNameOverrides, setFriendNameOverrides] = React.useState<Record<string,string>>({});
+  React.useEffect(() => { (async () => { try { const uid = firebaseAuth.currentUser?.uid || 'me'; const raw = await AsyncStorage.getItem(`u:${uid}:friends.nameOverrides`); setFriendNameOverrides(raw ? JSON.parse(raw) : {}); } catch {} })(); }, []);
   const myUid = React.useMemo(() => firebaseAuth.currentUser?.uid || 'me', []);
   const [remotePublicRooms, setRemotePublicRooms] = React.useState<any[]>([]);
+  // 즐겨찾기(로컬)
+  const [roomFavorites, setRoomFavorites] = React.useState<Record<string, boolean>>({});
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(`u:${myUid}:chat.roomFavorites`);
+        if (raw) setRoomFavorites(JSON.parse(raw));
+      } catch {}
+    })();
+  }, []);
+  const toggleRoomFavorite = React.useCallback(async (roomId: string) => {
+    const next = { ...roomFavorites, [roomId]: !roomFavorites[roomId] };
+    setRoomFavorites(next);
+    try { await AsyncStorage.setItem(`u:${myUid}:chat.roomFavorites`, JSON.stringify(next)); } catch {}
+  }, [roomFavorites]);
   // TTL 만료 방 숨김 + 원격 공개방 병합
   const visibleRooms = React.useMemo(() => {
     const now = Date.now();
@@ -31,11 +49,190 @@ export default function ChatRoomsScreen() {
       const exp = Number(r?.expiresAt || 0);
       return !exp || exp > now;
     });
-    // 정렬: 공지(notice) 최상단, 나머지는 최근 메시지 시간 desc (로컬 lastMessageAt)
+    // 정렬:
+    // 1) 공지(notice) 최상단
+    // 2) 즐겨찾기 방
+    // 3) 최근 대화순 (lastMessageAt desc)
     const notice = local.filter((r:any)=> String(r?.type)==='notice');
     const others = local.filter((r:any)=> String(r?.type)!=='notice');
-    others.sort((a:any,b:any)=> (Number(b?.lastMessageAt||0) - Number(a?.lastMessageAt||0)));
-    return [...notice, ...others];
+    const favs = others.filter((r:any) => !!roomFavorites[String(r.id)]);
+    const nonFavs = others.filter((r:any) => !roomFavorites[String(r.id)]);
+    favs.sort((a:any,b:any)=> (Number(b?.lastMessageAt||0) - Number(a?.lastMessageAt||0)));
+    nonFavs.sort((a:any,b:any)=> (Number(b?.lastMessageAt||0) - Number(a?.lastMessageAt||0)));
+    return [...notice, ...favs, ...nonFavs];
+  }, [rooms, roomFavorites]);
+  // DM 상대 프로필(대화명/아바타) 로드
+  React.useEffect(() => {
+    let live = true;
+    const load = async () => {
+      try {
+        const list = Array.isArray(rooms) ? rooms : [];
+        const dms = list.filter((r:any) => String(r?.type)==='dm');
+        const uid = firebaseAuth.currentUser?.uid || 'me';
+        const others = Array.from(new Set(dms.map((r:any)=> {
+          try { return (Array.isArray(r.members)? r.members.find((u:string)=>u!==uid):'') || ''; } catch { return ''; }
+        }).filter(Boolean)));
+        const out: Record<string, { displayName: string; avatar?: string }> = {};
+        for (const u of others) {
+          try {
+            const snap = await getDoc(doc(firestore, 'users', u));
+            if (snap.exists()) {
+              const d = snap.data() as any;
+              // 채팅 영역에서는 대화명(chatName) 우선, 이메일은 표시하지 않음
+              const base = d.chatName || d.displayName || d.username || u;
+              const alias = friendNameOverrides[u];
+              let avatar: string | undefined = d.avatarUrl || d.photoURL || d.avatar || undefined;
+              // Storage 경로일 경우 다운로드 URL로 보정
+              try {
+                if (avatar && !/^https?:\/\//i.test(String(avatar))) {
+                  const { ref: storageRef, getDownloadURL } = require('firebase/storage');
+                  const { firebaseStorage } = require('@/lib/firebase');
+                  const r = storageRef(firebaseStorage, String(avatar));
+                  avatar = await getDownloadURL(r);
+                }
+              } catch {}
+              out[u] = { displayName: (alias && alias.trim()) ? alias : base, avatar };
+            } else {
+              const alias = friendNameOverrides[u];
+              out[u] = { displayName: (alias && alias.trim()) ? alias : u };
+            }
+          } catch {
+            const alias = friendNameOverrides[u];
+            out[u] = { displayName: (alias && alias.trim()) ? alias : u };
+          }
+        }
+        if (live) setDmProfiles(out);
+      } catch {}
+    };
+    load();
+    const t = setInterval(load, 60000);
+    return () => { live = false; clearInterval(t); };
+  }, [rooms]);
+  // 로그인된 사용자의 joinedRooms를 구독하여 항상 내 방이 복원/유지되도록
+  React.useEffect(() => {
+    const uid = firebaseAuth.currentUser?.uid;
+    if (!uid) return;
+    const ref = collection(firestore, 'users', uid, 'joinedRooms');
+    const unsub = onSnapshot(ref, (snap) => {
+      const rows = snap.docs.map((d) => {
+        const v = (d.data() as any) || {};
+        const joinedAtMs = (() => {
+          try { return typeof v.joinedAt?.toMillis === 'function' ? v.joinedAt.toMillis() : Number(v.joinedAt || 0); } catch { return 0; }
+        })();
+        return {
+          id: d.id,
+          title: v.title || '채팅방',
+          type: v.type || (v.dmWith ? 'dm' : 'group'),
+          members: Array.isArray(v.members) ? v.members : (v.dmWith ? [uid, v.dmWith] : [uid]),
+          unreadCount: Number(v.unread || 0),
+          lastMessage: v.lastMessage || undefined,
+          lastMessageAt: Number(v.lastActiveAt || joinedAtMs || Date.now()),
+          avatarUrl: v.avatarUrl || undefined,
+          isPublic: typeof v.isPublic === 'boolean' ? v.isPublic : undefined,
+          expiresAt: v.expiresAt || undefined,
+          messageTtlMs: v.messageTtlMs || undefined,
+        } as any;
+      });
+      try {
+        (useKakaoRoomsStore as any).setState?.((s:any) => {
+          const by = new Map<string, any>((s.rooms || []).map((r:any)=>[String(r.id), r]));
+          rows.forEach((r:any) => {
+            const prev = by.get(String(r.id));
+            by.set(String(r.id), prev ? { ...prev, ...r, members: (Array.isArray(prev.members) && prev.members.length ? prev.members : r.members) } : r);
+          });
+          return { rooms: Array.from(by.values()) };
+        });
+      } catch {}
+    }, () => {});
+    return () => { try { unsub(); } catch {} };
+  }, []);
+  // 각 참여 방에 대해 rooms/{id} 문서를 구독하여 lastMessage/lastActiveAt을 동기화
+  const watchersRef = React.useRef<Record<string, any>>({});
+  React.useEffect(() => {
+    const ids = new Set((rooms || []).map((r:any)=> String(r.id)));
+    // 제거된 방 구독 해제
+    Object.keys(watchersRef.current).forEach((id) => {
+      if (!ids.has(id)) { try { watchersRef.current[id](); } catch {} delete watchersRef.current[id]; }
+    });
+    // 신규 방 구독
+    (rooms || []).forEach((r:any) => {
+      const id = String(r.id);
+      if (watchersRef.current[id]) return;
+      try {
+        const unsub = onSnapshot(doc(firestore, 'rooms', id), (snap) => {
+          const data = (snap.data() as any) || {};
+          const ts = (() => {
+            try { return typeof data.lastActiveAt?.toMillis === 'function' ? data.lastActiveAt.toMillis() : Number(data.lastActiveAt || 0); } catch { return 0; }
+          })();
+          try {
+            (useKakaoRoomsStore as any).setState?.((s:any) => ({
+              rooms: (s.rooms || []).map((rr:any) => rr.id === id
+                ? { ...rr, lastMessage: data.lastMessage || rr.lastMessage, lastMessageAt: ts || rr.lastMessageAt, avatarUrl: data.avatarUrl || rr.avatarUrl, isPublic: typeof data.isPublic === 'boolean' ? data.isPublic : rr.isPublic }
+                : rr)
+            }));
+          } catch {}
+        }, () => {});
+        watchersRef.current[id] = unsub;
+      } catch {}
+    });
+    return () => {
+      Object.values(watchersRef.current).forEach((u:any)=>{ try { u(); } catch {} });
+      watchersRef.current = {};
+    };
+  }, [rooms]);
+
+  // 내 멤버 문서(unread) 실시간 구독 → 방 리스트의 배지를 실제와 동기화
+  const memberWatchersRef = React.useRef<Record<string, any>>({});
+  React.useEffect(() => {
+    const uid = firebaseAuth.currentUser?.uid || 'me';
+    const ids = new Set((rooms || []).map((r:any)=> String(r.id)));
+    // 제거된 방 구독 해제
+    Object.keys(memberWatchersRef.current).forEach((id) => {
+      if (!ids.has(id)) { try { memberWatchersRef.current[id](); } catch {} delete memberWatchersRef.current[id]; }
+    });
+    // 신규 방 구독
+    (rooms || []).forEach((r:any) => {
+      const id = String(r.id);
+      if (memberWatchersRef.current[id]) return;
+      try {
+        const mref = doc(firestore, 'rooms', id, 'members', uid);
+        const unsub = onSnapshot(mref, (snap) => {
+          try {
+            const unread = snap.exists() ? Number((snap.data() as any)?.unread || 0) : 0;
+            (useKakaoRoomsStore as any).getState().setUnreadCount(id, unread);
+          } catch {}
+        }, () => {});
+        memberWatchersRef.current[id] = unsub;
+      } catch {}
+    });
+    return () => {
+      Object.values(memberWatchersRef.current).forEach((u:any)=>{ try { u(); } catch {} });
+      memberWatchersRef.current = {};
+    };
+  }, [rooms]);
+  // 내 uid 기준 서버 멤버 문서의 unread 값을 주기적으로 동기화하여
+  // "내가 실제로 읽지 않은 메시지"만 배지로 표시
+  React.useEffect(() => {
+    let alive = true;
+    const syncUnread = async () => {
+      try {
+        const uid = firebaseAuth.currentUser?.uid || 'me';
+        const list = Array.isArray(rooms) ? rooms : [];
+        for (const r of list) {
+          try {
+            const mref = doc(firestore, 'rooms', String(r.id), 'members', uid);
+            const snap = await getDoc(mref).catch(() => null as any);
+            const unread = snap && snap.exists() ? Number((snap.data() as any)?.unread || 0) : 0;
+            if (!alive) return;
+            try { (useKakaoRoomsStore as any).setState?.((s:any)=>({ rooms: (s.rooms||[]).map((rr:any)=> rr.id===r.id ? { ...rr, unreadCount: unread } : rr ) })); } catch {}
+          } catch {}
+        }
+      } catch {}
+    };
+    // 최초 동기화 + 주기적 새로고침
+    syncUnread();
+    const t = setInterval(syncUnread, 20000);
+    return () => { alive = false; clearInterval(t); };
   }, [rooms]);
   const leaveRoomAct = useKakaoRoomsStore((s) => s.leaveRoom);
   // 멤버십 확인: 로컬 배열 → Firestore members → users/joinedRooms 순으로 확인
@@ -61,14 +258,14 @@ export default function ChatRoomsScreen() {
 
   const handleConfirmEnter = async () => {
     if (!pwdAsk) return;
-    if (!pwdInput.trim()) { setPwdError('비밀번호를 입력하세요'); return; }
+    if (!String(pwdInput || '').trim()) { setPwdError('비밀번호를 입력하세요'); return; }
     setPwdLoading(true);
     try {
       const roomId = pwdAsk.roomId;
       try { await (useKakaoRoomsStore as any).getState().load?.(roomId); } catch {}
       const settings: any = (useKakaoRoomsStore as any).getState().roomSettings?.[roomId] || {};
       const pwd = String(settings?.security?.passwordLock || '').trim();
-      if (pwd && pwd === pwdInput.trim()) {
+      if (pwd && pwd === String(pwdInput || '').trim()) {
         setPwdAsk(null); setPwdInput(''); setPwdError(''); setPwdVisible(false);
         router.push({ pathname: '/chat/room/[id]', params: { id: roomId, type: (useKakaoRoomsStore as any).getState().getRoomById?.(roomId)?.type } });
       } else {
@@ -95,7 +292,12 @@ export default function ChatRoomsScreen() {
   };
   const clearSelection = () => setSelectedRoomIds(new Set());
   const selectAll = () => {
+    try {
+      // 현재 화면에 보이는 방만 대상으로 모두 선택
+      setSelectedRoomIds(new Set((visibleRooms || []).map((r:any)=>r.id)));
+    } catch {
     setSelectedRoomIds(new Set((rooms || []).map((r:any)=>r.id)));
+    }
   };
   const handleLeaveSelected = async () => {
     let uid = firebaseAuth.currentUser?.uid || '';
@@ -115,7 +317,8 @@ export default function ChatRoomsScreen() {
         try { await leaveRoomAct(id, uid); } catch {}
       }
       clearSelection();
-      setManageMode(false);
+      // 관리모드는 유지(사용자 요청: 계속 선택 모드 상태에서 숫자만 0으로)
+      setManageMode(true);
       try { Alert.alert('완료','선택한 방에서 나갔습니다.'); } catch {}
       return;
     }
@@ -128,7 +331,7 @@ export default function ChatRoomsScreen() {
           try { await leaveRoomAct(id, uid); } catch {}
         }
         clearSelection();
-        setManageMode(false);
+        setManageMode(true);
         try { Alert.alert('완료','선택한 방에서 나갔습니다.'); } catch {}
       } }
     ]);
@@ -207,7 +410,7 @@ export default function ChatRoomsScreen() {
             </TouchableOpacity>
             {currentProfile && (
               <View style={styles.profilePreview}>
-                <ThemedText style={styles.profilePreviewName}>{currentProfile.displayName}</ThemedText>
+                <ThemedText style={styles.profilePreviewName}>{(currentProfile as any)?.chatName || currentProfile.displayName}</ThemedText>
                 <ThemedText style={styles.profilePreviewStatus}>
                   {currentProfile.customStatus || 
                    (currentProfile.status === 'online' && t('online', language)) ||
@@ -289,7 +492,7 @@ export default function ChatRoomsScreen() {
       <ScrollView
         style={styles.list}
         keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{ padding: 12, paddingBottom: Math.max(insets.bottom, 12) + 90 }}
+        contentContainerStyle={{ padding: 12, paddingBottom: Math.max(insets.bottom, 12) + 56 }}
         showsVerticalScrollIndicator
       >
           {visibleRooms.length === 0 ? (
@@ -364,10 +567,15 @@ export default function ChatRoomsScreen() {
                         {(Array.isArray(room.members)?`(${room.members.length})`: '')}
                       </ThemedText>
                     </View>
-                    <View style={[styles.typeBadge, room.type==='ttl'&&styles.typeTtl, room.type==='secret'&&styles.typeSecret, room.type==='group'&&styles.typeGroup, room.type==='dm'&&styles.typeDm]}>
-                      <Text style={styles.typeBadgeText}>
-                        {room.type==='ttl'?t('ttl', language): room.type==='secret'?t('secret', language): room.type==='group'?t('group', language): room.type==='dm'?t('dm', language):t('notice', language)}
-                      </Text>
+                    <View style={{ flexDirection:'row', alignItems:'center', gap: 8 }}>
+                      <TouchableOpacity onPress={() => toggleRoomFavorite(room.id)} hitSlop={{ top:6,bottom:6,left:6,right:6 }}>
+                        <Text style={[styles.starIcon, roomFavorites[String(room.id)] && styles.starIconOn]}>{roomFavorites[String(room.id)] ? '★' : '☆'}</Text>
+                      </TouchableOpacity>
+                      <View style={[styles.typeBadge, room.type==='ttl'&&styles.typeTtl, room.type==='secret'&&styles.typeSecret, room.type==='group'&&styles.typeGroup, room.type==='dm'&&styles.typeDm]}>
+                        <Text style={styles.typeBadgeText}>
+                          {room.type==='ttl'?t('ttl', language): room.type==='secret'?t('secret', language): room.type==='group'?t('group', language): room.type==='dm'?t('dm', language):t('notice', language)}
+                        </Text>
+                      </View>
                     </View>
                   </View>
                   <ThemedText style={styles.lastMessage} numberOfLines={1}>{room.lastMessage || t('noMessages', language)}</ThemedText>
@@ -387,12 +595,12 @@ export default function ChatRoomsScreen() {
 
       {/* 관리 하단 액션바 */}
       {manageMode && (
-        <View style={[styles.manageBar, { zIndex: 4000, elevation: 20, bottom: 60 + Math.max(insets.bottom, 0) }]}>
-          <TouchableOpacity style={[styles.mngBtn,{ borderColor:'#555' }]} onPress={selectAll}><Text style={styles.mngTxt}>{t('selectAll', language)}</Text></TouchableOpacity>
-          <TouchableOpacity style={[styles.mngBtn,{ borderColor:'#666' }]} onPress={clearSelection}><Text style={styles.mngTxt}>{t('clearSelection', language)}</Text></TouchableOpacity>
-          <Text style={[styles.mngTxt,{ marginHorizontal: 8 }]}>{`${t('selectedCount', language)} ${selectedRoomIds.size}`}</Text>
-          <TouchableOpacity style={[styles.mngBtn,{ borderColor:'#7A1F1F' }]} onPress={handleLeaveSelected}><Text style={[styles.mngTxt,{ color:'#FF6B6B' }]}>{t('leave', language)}</Text></TouchableOpacity>
-          <TouchableOpacity style={[styles.mngBtn,{ borderColor:'#FFD700' }]} onPress={toggleManage}><Text style={[styles.mngTxt,{ color:'#FFD700' }]}>{t('done', language)}</Text></TouchableOpacity>
+        <View style={[styles.manageBar, { zIndex: 4000, elevation: 20, bottom: 8 + Math.max(insets.bottom, 0) }]}>
+          <TouchableOpacity style={[styles.mngBtn,{ minWidth: 76, borderColor:'#555' }]} onPress={selectAll}><Text style={styles.mngTxt}>{t('selectAll', language)}</Text></TouchableOpacity>
+          <TouchableOpacity style={[styles.mngBtn,{ minWidth: 86, borderColor:'#666' }]} onPress={clearSelection}><Text style={styles.mngTxt}>{t('clearSelection', language)}</Text></TouchableOpacity>
+          <View style={{ flex:1, alignItems:'center' }}><Text style={[styles.mngTxt]}>{`${t('selectedCount', language)} ${selectedRoomIds.size}`}</Text></View>
+          <TouchableOpacity style={[styles.mngBtn,{ minWidth: 76, borderColor:'#7A1F1F' }]} onPress={handleLeaveSelected}><Text style={[styles.mngTxt,{ color:'#FF6B6B' }]}>{t('leave', language)}</Text></TouchableOpacity>
+          <TouchableOpacity style={[styles.mngBtn,{ minWidth: 68, borderColor:'#FFD700' }]} onPress={toggleManage}><Text style={[styles.mngTxt,{ color:'#FFD700' }]}>{t('done', language)}</Text></TouchableOpacity>
         </View>
       )}
       </ThemedView>
@@ -512,9 +720,11 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#FFD700'
   },
   fabText: { color: '#0C0C0C', fontWeight: '900', fontSize: 28, lineHeight: 28 },
-  manageBar: { position:'absolute', left: 0, right: 0, bottom: 60, flexDirection:'row', alignItems:'center', justifyContent:'space-around', padding: 10, backgroundColor:'#0F0F0F', borderTopWidth:1, borderColor:'#1E1E1E' },
-  mngBtn: { paddingHorizontal: 14, paddingVertical: 8, borderWidth:1, borderRadius: 10 },
+  manageBar: { position:'absolute', left: 0, right: 0, bottom: 8, flexDirection:'row', alignItems:'center', justifyContent:'space-between', paddingHorizontal: 10, paddingVertical: 8, backgroundColor:'#0F0F0F', borderTopWidth:1, borderColor:'#1E1E1E' },
+  mngBtn: { paddingHorizontal: 10, paddingVertical: 8, borderWidth:1, borderRadius: 10 },
   mngTxt: { color:'#CFCFCF', fontWeight:'700' },
+  starIcon: { color:'#FFFFFF', fontSize: 14 },
+  starIconOn: { color:'#FFD700' },
 });
 
 

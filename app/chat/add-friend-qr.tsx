@@ -7,9 +7,12 @@ import React from 'react';
 import { formatPhoneForLocale } from '@/lib/phone';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { t } from '@/i18n';
-import { Alert, Image, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, ScrollView, findNodeHandle } from 'react-native';
+import { Alert, Image, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View, ScrollView, findNodeHandle, Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { captureRef } from 'react-native-view-shot';
+import * as Clipboard from 'expo-clipboard';
+import * as FileSystem from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library';
 import QRCode from 'react-native-qrcode-svg';
 // html2canvas (web-only) 선언
 declare var html2canvas: any;
@@ -167,6 +170,25 @@ export default function AddFriendQRScreen() {
       } catch {}
     })();
   }, []);
+
+  // 딥링크(yooy://card) 처리: AsyncStorage에서 명함 데이터 읽어서 표시
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem('@deeplink_card');
+        if (!raw) return;
+        await AsyncStorage.removeItem('@deeplink_card');
+        const data = JSON.parse(raw);
+        console.log('[AddFriendQR] deeplink card:', data);
+        // 스캔 탭으로 전환하여 명함 정보 표시
+        setTab('scan');
+        if (data?.uid || data?.name) {
+          setScanText(`UID: ${data.uid || ''}\n이름: ${data.name || ''}`);
+        }
+      } catch (e) { console.warn('[AddFriendQR] deeplink error:', e); }
+    })();
+  }, []);
+
   const persistSaved = React.useCallback(async (list: any[]) => {
     try { await AsyncStorage.setItem('qr.scan.saved', JSON.stringify(list)); } catch {}
   }, []);
@@ -320,6 +342,7 @@ export default function AddFriendQRScreen() {
 
   const parseQrContent = (text: string) => {
     try {
+      const rawAll = String(text || '').trim();
       // 1) 카드 포맷(base64)
       if (/yooy:\/\/card\?d=/i.test(text)) {
         const m = text.match(/yooy:\/\/card\?d=([^&]+)/i);
@@ -335,6 +358,16 @@ export default function AddFriendQRScreen() {
           const json = decodeURIComponent(m[1]);
           return { kind: 'card', data: JSON.parse(json) } as any;
         }
+      }
+      // 1-3) 결제/지갑: yooy://pay?addr=0x..&sym=YOY&amt=10
+      if (/^yooy:\/\/pay\?/i.test(rawAll)) {
+        try {
+          const u = new URL(rawAll.replace(/^yooy:\/\//i, 'https://yooy.local/')); // URL parser를 위해 가짜 호스트
+          const addr = u.searchParams.get('addr') || u.searchParams.get('address') || '';
+          const sym = (u.searchParams.get('sym') || u.searchParams.get('symbol') || 'YOY').toUpperCase();
+          const amt = u.searchParams.get('amt') || u.searchParams.get('amount') || '';
+          return { kind: 'pay', addr, sym, amt, raw: rawAll } as any;
+        } catch {}
       }
       // 2) 방 초대
       if (/yooy:\/\/share\?room=/i.test(text)) {
@@ -364,37 +397,49 @@ export default function AddFriendQRScreen() {
         if (decoded) { setScanText(decoded); return; }
         setScanError('이미지 인식 실패: 텍스트에 직접 붙여넣기 해주세요.');
       } else {
-        // 네이티브: 갤러리에서 이미지 선택 후 jsQR로 디코딩
+        // 네이티브: ML Kit + scanQRFromImage 폴백 (채팅방과 동일한 방식)
         try {
           const Picker = require('expo-image-picker');
+          const FS = require('expo-file-system');
           const pick = await Picker.launchImageLibraryAsync({ mediaTypes: ['images'] as any, quality: 0.8, base64: true } as any);
           if (pick.canceled || !pick.assets?.length) { return; }
-          const a = pick.assets[0];
-          const b64 = a.base64 || '';
-          if (!b64) { setScanError('이미지를 선택해주세요.'); return; }
-          // 디코딩 파이프라인
-          let width = 0, height = 0, data: Uint8ClampedArray | null = null;
+          const asset = pick.assets[0];
+          const uri = asset.uri || '';
+          let detected = '';
+          
+          // 1) ML Kit 시도 (가장 안정적)
           try {
-            const P = require('pngjs/browser');
-            const PNG = P.PNG || P;
-            const buf = typeof Buffer !== 'undefined' ? Buffer.from(b64, 'base64') : Uint8Array.from(atob(b64), (c:any)=>c.charCodeAt(0));
-            const parsed = PNG.sync.read(buf as any);
-            width = parsed.width; height = parsed.height;
-            data = new Uint8ClampedArray(parsed.data.buffer, parsed.data.byteOffset, parsed.data.byteLength);
-          } catch {}
-          if (!data) {
-            try {
-              const jpeg = require('jpeg-js');
-              const buf = typeof Buffer !== 'undefined' ? Buffer.from(b64, 'base64') : Uint8Array.from(atob(b64), (c:any)=>c.charCodeAt(0));
-              const decoded = jpeg.decode(buf as any, { useTArray: true });
-              width = decoded.width; height = decoded.height;
-              data = new Uint8ClampedArray(decoded.data.buffer, decoded.data.byteOffset, decoded.data.byteLength);
-            } catch {}
+            const { scanBarcodes, BarcodeFormat } = require('@react-native-ml-kit/barcode-scanning');
+            let scanTarget = uri;
+            if (/^(content|ph):\/\//i.test(uri) && FS?.cacheDirectory) {
+              const dest = `${FS.cacheDirectory}qr_mlkit_${Date.now()}.jpg`;
+              await FS.copyAsync({ from: uri, to: dest });
+              scanTarget = dest;
+            }
+            console.log('[add-friend-qr] ML Kit scanTarget:', scanTarget);
+            const formats = BarcodeFormat?.QR_CODE ? [BarcodeFormat.QR_CODE] : undefined;
+            const out = formats ? await scanBarcodes(scanTarget, formats) : await scanBarcodes(scanTarget);
+            console.log('[add-friend-qr] ML Kit result:', out);
+            const first = Array.isArray(out) && out.length ? out[0] : null;
+            detected = String(first?.displayValue || first?.rawValue || '');
+          } catch (e) {
+            console.warn('[add-friend-qr] ML Kit error:', e);
           }
-          if (data && width && height) {
-            const jsQR = require('jsqr');
-            const r = jsQR(data, width, height, { inversionAttempts: 'attemptBoth' });
-            if (r?.data) { setScanText(String(r.data)); return; }
+          
+          // 2) ML Kit 실패 시 scanQRFromImage 유틸 폴백
+          if (!detected) {
+            try {
+              const { scanQRFromImage } = require('@/lib/qrScanner');
+              detected = await scanQRFromImage(uri) || '';
+              console.log('[add-friend-qr] scanQRFromImage result:', detected);
+            } catch (e) {
+              console.warn('[add-friend-qr] scanQRFromImage error:', e);
+            }
+          }
+          
+          if (detected) {
+            setScanText(detected);
+            return;
           }
           setScanError('이미지 인식 실패');
         } catch {
@@ -410,7 +455,18 @@ export default function AddFriendQRScreen() {
     try {
       try { console.log('[QR] save clicked'); } catch {}
       setSaveToast('저장 중...');
-      if (Platform.OS !== 'web') { Alert.alert('안내', '디바이스 저장은 추후 네이티브 모듈로 연결됩니다.'); return; }
+      if (Platform.OS !== 'web') {
+        // 네이티브: ViewShot → 파일 → 갤러리 저장
+        if (!qrCardRef.current) { setSaveToast(null); Alert.alert('안내','저장할 이미지가 없습니다.'); return; }
+        const b64 = await captureRef(qrCardRef.current, { format: 'png', quality: 1, result: 'base64' });
+        const file = FileSystem.cacheDirectory + `my-card-qr-${Date.now()}.png`;
+        await FileSystem.writeAsStringAsync(file, b64, { encoding: FileSystem.EncodingType.Base64 });
+        const { status } = await MediaLibrary.requestPermissionsAsync();
+        if (status !== 'granted') { setSaveToast(null); Alert.alert('권한','갤러리 접근 권한이 필요합니다.'); return; }
+        await MediaLibrary.saveToLibraryAsync(file);
+        setSaveToast('저장됨'); setTimeout(() => setSaveToast(null), 1500);
+        return;
+      }
       // 0) 먼저 화면 QR 컨테이너 영역을 DOM 캡처하여 저장(파란 테두리/로고 100% 반영)
       try {
         const el = document.getElementById('qr-card');
@@ -433,25 +489,63 @@ export default function AddFriendQRScreen() {
     try {
       let dataUri: string | null = null;
       if (qrCardRef.current) {
-        try { dataUri = await captureRef(qrCardRef.current, { format: 'png', quality: 1, result: 'data-uri' }); } catch {}
+        try { dataUri = await captureRef(qrCardRef.current, { format: 'png', quality: 1, result: Platform.OS==='web' ? 'data-uri' : 'base64' }); } catch {}
       }
       // RN: 추가 폴백 제거
       if (!dataUri) throw new Error('no-data');
-      // 이미지로 복사 시도 (지원 브라우저)
-      const supportImageClipboard = typeof (window as any).ClipboardItem !== 'undefined' && (navigator as any).clipboard?.write;
-      if (supportImageClipboard) {
-        const res = await fetch(dataUri);
-        const blob = await res.blob();
-        const item = new (window as any).ClipboardItem({ 'image/png': blob });
-        await (navigator as any).clipboard.write([item]);
-        Alert.alert('복사됨', '이미지를 클립보드에 복사했습니다. 붙여넣기 해보세요.');
-        return;
+      if (Platform.OS === 'web') {
+        // 이미지로 복사 시도 (지원 브라우저)
+        const supportImageClipboard = typeof (window as any).ClipboardItem !== 'undefined' && (navigator as any).clipboard?.write;
+        if (supportImageClipboard) {
+          const res = await fetch(dataUri);
+          const blob = await res.blob();
+          const item = new (window as any).ClipboardItem({ 'image/png': blob });
+          await (navigator as any).clipboard.write([item]);
+          Alert.alert('복사됨', '이미지를 클립보드에 복사했습니다. 붙여넣기 해보세요.');
+          return;
+        }
+        // 텍스트로 복사 대체
+        try { await (navigator as any).clipboard?.writeText?.(dataUri); Alert.alert('복사됨', '이미지 링크를 복사했습니다.'); } catch { Alert.alert('안내', '이 브라우저는 이미지 복사를 지원하지 않습니다.'); }
+      } else {
+        // 네이티브: Clipboard 이미지 복사(가능하면), 아니면 DataURL 텍스트 복사
+        try {
+          await Clipboard.setImageAsync({ base64: dataUri });
+          Alert.alert('복사됨','이미지를 복사했습니다.');
+        } catch {
+          try { await Clipboard.setStringAsync(`data:image/png;base64,${dataUri}`); Alert.alert('복사됨','이미지 데이터를 텍스트로 복사했습니다.'); } catch { Alert.alert('오류','복사에 실패했습니다.'); }
+        }
       }
-      // 텍스트로 복사 대체
-      try { await (navigator as any).clipboard?.writeText?.(dataUri); Alert.alert('복사됨', '이미지 링크를 복사했습니다.'); } catch { Alert.alert('안내', '이 브라우저는 이미지 복사를 지원하지 않습니다.'); }
     } catch {
       Alert.alert('오류', '복사에 실패했습니다.');
     }
+  };
+
+  const handleSaveToTreasure = async () => {
+    try {
+      if (!qrCardRef.current) { Alert.alert('안내','저장할 이미지가 없습니다.'); return; }
+      const dataUri = await captureRef(qrCardRef.current, { format: 'png', quality: 1, result: Platform.OS==='web' ? 'data-uri' : 'base64' });
+      const uid = firebaseAuth.currentUser?.uid || 'anonymous-user';
+      const key = `u:${uid}:gallery.photos`;
+      const raw = await AsyncStorage.getItem(key);
+      const arr = raw ? JSON.parse(raw) : [];
+      const uri = Platform.OS==='web' ? String(dataUri) : `data:image/png;base64,${dataUri}`;
+      const item = { id: `m_${Date.now()}`, uri, name: '내 명함', createdAt: Date.now(), public: false };
+      arr.unshift(item);
+      await AsyncStorage.setItem(key, JSON.stringify(arr));
+      Alert.alert('보물창고','비공개로 저장되었습니다.');
+    } catch { Alert.alert('오류','보물창고 저장에 실패했습니다.'); }
+  };
+
+  const openExternalUrl = async (url: string) => {
+    try {
+      if (Platform.OS === 'web') {
+        try { window.open(url, '_blank'); } catch { (location as any).href = url; }
+        return;
+      }
+      const ok = await Linking.canOpenURL(url);
+      if (!ok) { Alert.alert('오류', '이 동작을 처리할 앱이 없습니다.'); return; }
+      await Linking.openURL(url);
+    } catch { Alert.alert('오류', '앱 열기에 실패했습니다.'); }
   };
 
   const [copied, setCopied] = React.useState(false);
@@ -513,13 +607,30 @@ export default function AddFriendQRScreen() {
   const startNativeCamera = React.useCallback(async () => {
     try {
       if (Platform.OS === 'web') return;
-      if (VisionCamera) {
-        try { const p = await VisionCamera.requestCameraPermission(); if (p !== 'authorized' && p !== 'granted') { Alert.alert('카메라', '권한이 필요합니다. 설정에서 허용해주세요.'); return; } } catch {}
-      } else {
-        Alert.alert('카메라', '스캐너 모듈이 비활성화된 빌드입니다.');
-        return;
+      // 네이티브 스캔 폴백: 카메라로 촬영 → jsQR로 디코딩
+      const Picker = require('expo-image-picker');
+      const perm = await Picker.requestCameraPermissionsAsync();
+      if (perm.status !== 'granted') { Alert.alert('카메라','권한이 필요합니다.'); return; }
+      const shot = await Picker.launchCameraAsync({ quality: 0.9, base64: true } as any);
+      if (shot.canceled || !shot.assets?.length) return;
+      const a = shot.assets[0];
+      const b64 = a.base64 || '';
+      if (!b64) { Alert.alert('스캔','이미지 캡처 실패'); return; }
+      // 디코딩
+      let width = 0, height = 0, data: Uint8ClampedArray | null = null;
+      try {
+        const jpeg = require('jpeg-js');
+        const buf = typeof Buffer !== 'undefined' ? Buffer.from(b64, 'base64') : Uint8Array.from(atob(b64), (c:any)=>c.charCodeAt(0));
+        const decoded = jpeg.decode(buf as any, { useTArray: true });
+        width = decoded.width; height = decoded.height;
+        data = new Uint8ClampedArray(decoded.data.buffer, decoded.data.byteOffset, decoded.data.byteLength);
+      } catch {}
+      if (data && width && height) {
+        const jsQR = require('jsqr');
+        const r = jsQR(data, width, height, { inversionAttempts: 'attemptBoth' });
+        if (r?.data) { setScanText(String(r.data)); return; }
       }
-      setCameraOpen(true);
+      Alert.alert('스캔','인식 실패');
     } catch { Alert.alert('카메라', '카메라를 열 수 없습니다.'); }
   }, [VisionCamera]);
   const handleCopyUrl = async () => {
@@ -579,23 +690,30 @@ export default function AddFriendQRScreen() {
                 <Text style={{ color: '#CFCFCF', marginLeft: 6 }}>{t('saveInfo', language)}</Text>
               </TouchableOpacity>
               <View style={{ flex: 1, alignItems: 'center' }}>
-                <TouchableOpacity style={styles.generateBtn} onPress={handleGenerateCard}><Text style={styles.generateText}>{t('generateMyCardQr', language)}</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.generateBtn} onPress={async () => { await persistInfo(true); handleGenerateCard(); }}>
+                  <Text style={styles.generateText}>{t('generateMyCardQr', language)}</Text>
+                </TouchableOpacity>
               </View>
             </View>
-            {qrUrl && (
+            {(payload) && (
               <View style={{ alignItems: 'center', marginTop: 16 }}>
                 <View ref={(el) => { qrCardRef.current = el; qrDomRef.current = el; }} collapsable={false} style={styles.qrCardOuter} id="qr-card">
                   <View style={styles.qrCardBorderBlue}>
                     <View style={styles.qrCardBorderBlack}>
-                      {localQrData ? (
-                        <Image source={{ uri: localQrData }} style={{ width: 240, height: 240 }} />
+                      {Platform.OS === 'web' ? (
+                        localQrData ? (
+                          <Image source={{ uri: localQrData }} style={{ width: 240, height: 240 }} />
+                        ) : qrUrl ? (
+                          <Image source={{ uri: qrUrl }} style={{ width: 240, height: 240 }} onError={async () => {
+                            try {
+                              const dataUrl = await QRCodeLib.toDataURL(payload || '');
+                              setLocalQrData(String(dataUrl));
+                            } catch {}
+                          }} />
+                        ) : null
                       ) : (
-                        <Image source={{ uri: qrUrl }} style={{ width: 240, height: 240 }} onError={async () => {
-                          try {
-                            const dataUrl = await QRCodeLib.toDataURL(payload || '');
-                            setLocalQrData(String(dataUrl));
-                          } catch {}
-                        }} />
+                        // 네이티브: 직접 QRCode 컴포넌트 렌더
+                        <QRCode value={payload} size={240} backgroundColor="#FFFFFF" color="#000000" />
                       )}
                       {/* 센터 로고 오버레이 */}
                       <View style={styles.centerLogoBox}>
@@ -608,6 +726,7 @@ export default function AddFriendQRScreen() {
                 </View>
                 <Text style={{ color: '#777', marginTop: 8, fontSize: 12 }}>{t('shareTip', language)}</Text>
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+                  <TouchableOpacity style={styles.generateBtn} onPress={handleSaveToTreasure}><Text style={styles.generateText}>{t('saveToTreasure', language)}</Text></TouchableOpacity>
                   <TouchableOpacity style={styles.generateBtn} onPress={handleSaveGenerated}><Text style={styles.generateText}>{t('save', language)}</Text></TouchableOpacity>
                   <TouchableOpacity style={styles.generateBtn} onPress={handleCopyUrl}><Text style={styles.generateText}>{t('copy', language)}</Text></TouchableOpacity>
                   <TouchableOpacity style={styles.generateBtn} onPress={handleRegenerate}><Text style={styles.generateText}>{t('reset', language)}</Text></TouchableOpacity>
@@ -689,6 +808,11 @@ export default function AddFriendQRScreen() {
                   }
                 }}>
                   <Text style={styles.scanText}>{t('paste', language)}</Text>
+                </TouchableOpacity>
+              )}
+              {Platform.OS !== 'web' && (
+                <TouchableOpacity style={styles.scanBtn} onPress={async () => { try { await detectFromImage(null as any); } catch {} }}>
+                  <Text style={styles.scanText}>{t('imageScan', language)}</Text>
                 </TouchableOpacity>
               )}
               {Platform.OS !== 'web' && (
@@ -830,15 +954,42 @@ export default function AddFriendQRScreen() {
                     <Text style={styles.vBtnText}>{t('copy', language)}</Text>
                       </TouchableOpacity>
                       {!!d.email && (
-                        <TouchableOpacity style={styles.vBtn} onPress={() => { try { window.open(`mailto:${d.email}`,'_blank'); } catch {} }}>
+                        <TouchableOpacity style={styles.vBtn} onPress={() => { try { openExternalUrl(`mailto:${d.email}`); } catch {} }}>
                         <Text style={styles.vBtnText}>{t('email2', language)}</Text>
                         </TouchableOpacity>
                       )}
                       {!!d.phone && (
-                        <TouchableOpacity style={styles.vBtn} onPress={() => { try { window.open(`tel:${d.phone.replace(/\D/g,'')}`,'_self'); } catch {} }}>
+                        <TouchableOpacity style={styles.vBtn} onPress={() => { try { openExternalUrl(`tel:${d.phone.replace(/\D/g,'')}`); } catch {} }}>
                         <Text style={styles.vBtnText}>{t('phone', language)}</Text>
                         </TouchableOpacity>
                       )}
+                    </View>
+                  </View>
+                );
+              }
+              if (res.kind === 'pay') {
+                const sym = String(res.sym || 'YOY').toUpperCase();
+                const to = String(res.addr || '');
+                const amt = String(res.amt || '');
+                return (
+                  <View style={styles.resultCard}>
+                    <Text style={styles.resultTitle}>결제 요청</Text>
+                    <View style={{ marginTop: 8 }}>
+                      <Text style={styles.resultLine}>코인: {sym}</Text>
+                      {!!to && <Text style={styles.resultLine}>주소: {to}</Text>}
+                      {!!amt && <Text style={styles.resultLine}>수량: {amt}</Text>}
+                    </View>
+                    <View style={{ flexDirection:'row', gap: 8, marginTop: 10, flexWrap:'wrap' }}>
+                      <TouchableOpacity style={styles.generateBtn} onPress={() => {
+                        try {
+                          router.push({ pathname: '/(tabs)/wallet', params: { tab: 'send', coin: sym, to: to || undefined, amount: amt || undefined } });
+                        } catch {}
+                      }}>
+                        <Text style={styles.generateText}>보내기 열기</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.generateBtn} onPress={() => { try { openExternalUrl(res.raw || ''); } catch {} }}>
+                        <Text style={styles.generateText}>링크 열기</Text>
+                      </TouchableOpacity>
                     </View>
                   </View>
                 );
@@ -864,6 +1015,18 @@ export default function AddFriendQRScreen() {
               return (
                 <View style={styles.resultCard}>
                   <Text style={styles.resultLine}>{res.text}</Text>
+                  {/* 인앱/외부 링크 열기 버튼 */}
+                  <View style={{ flexDirection:'row', gap:8, marginTop:10, flexWrap:'wrap' }}>
+                    {/^yooy:\/\//i.test(res.text || '') ? (
+                      <TouchableOpacity style={styles.generateBtn} onPress={() => { try { openExternalUrl(res.text); } catch {} }}>
+                        <Text style={styles.generateText}>앱에서 열기</Text>
+                      </TouchableOpacity>
+                    ) : (/^https?:\/\//i.test(res.text || '') ? (
+                      <TouchableOpacity style={styles.generateBtn} onPress={() => { try { openExternalUrl(res.text); } catch {} }}>
+                        <Text style={styles.generateText}>링크 열기</Text>
+                      </TouchableOpacity>
+                    ) : null)}
+                  </View>
                   {canQuickSend && (
                   <TouchableOpacity style={[styles.generateBtn,{ marginTop: 10 }]} onPress={() => {
                       try {

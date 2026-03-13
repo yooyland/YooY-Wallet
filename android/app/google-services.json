@@ -1,0 +1,90 @@
+{
+  "project_info": {
+    "project_number": "100235868327",
+    "project_id": "yooyland-dev",
+    "storage_bucket": "yooyland-dev.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:100235868327:android:c2c27bcdeb03df617d8382",
+        "android_client_info": {
+          "package_name": "YooY.Land"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "100235868327-em0f530hvqfo2vmb9k3gj1g2omvvnt2t.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCdnJaYzhb8VvxyRuCuZriO0q-26v-0fzk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "100235868327-em0f530hvqfo2vmb9k3gj1g2omvvnt2t.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "100235868327-dqtovhduqkc6hs0um16oeh5t0amlanku.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "YooYLand"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:100235868327:android:427419c10089aa7d7d8382",
+        "android_client_info": {
+          "package_name": "com.yooyland.wallet"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "100235868327-brb1td5578ba8iifoprjtpk3cncb55as.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.yooyland.wallet",
+            "certificate_hash": "8b4607adfe88804b54165fc75847508356636aed"
+          }
+        },
+        {
+          "client_id": "100235868327-em0f530hvqfo2vmb9k3gj1g2omvvnt2t.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCdnJaYzhb8VvxyRuCuZriO0q-26v-0fzk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "100235868327-em0f530hvqfo2vmb9k3gj1g2omvvnt2t.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "100235868327-dqtovhduqkc6hs0um16oeh5t0amlanku.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "YooYLand"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

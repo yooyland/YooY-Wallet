@@ -1,6 +1,8 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
-import { firebaseAuth } from '@/lib/firebase';
+import { firebaseAuth, firestore, firebaseStorage } from '@/lib/firebase';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { ref as storageRef, uploadString, getDownloadURL } from 'firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { t } from '@/i18n';
@@ -156,6 +158,32 @@ export default function ProfileSheet({ visible, onClose, onSaved }: Props) {
     try {
       if (photoUri) {
         await AsyncStorage.setItem(basePhotoKey(currentUser?.uid), photoUri);
+        // 업로드 및 Firestore 반영: 친구목록에서도 프사가 보이도록
+        try {
+          const uid = currentUser?.uid || firebaseAuth.currentUser?.uid;
+          if (uid) {
+            let publicUrl = '';
+            if (/^https?:\/\//i.test(photoUri)) {
+              publicUrl = photoUri;
+            } else if (/^data:/i.test(photoUri)) {
+              const key = `avatars/${uid}-${Date.now()}.jpg`;
+              const r = storageRef(firebaseStorage, key);
+              await uploadString(r, photoUri, 'data_url');
+              publicUrl = await getDownloadURL(r);
+            } else {
+              // file:// URI 등은 Pick 시 base64 저장을 기본으로 하므로 드물지만, 그대로 저장 시도
+              publicUrl = photoUri;
+            }
+            if (publicUrl) {
+              await setDoc(doc(firestore, 'users', uid), {
+                avatarUrl: publicUrl,
+                photoURL: publicUrl,
+                updatedAt: serverTimestamp(),
+              } as any, { merge: true });
+              try { updateProfile({ avatar: publicUrl }); } catch {}
+            }
+          }
+        } catch {}
       }
       const info = { firstName, lastName, username };
       await AsyncStorage.setItem(baseInfoKey(currentUser?.uid), JSON.stringify(info));
@@ -184,10 +212,16 @@ export default function ProfileSheet({ visible, onClose, onSaved }: Props) {
           </View>
 
           <View style={[styles.card, { alignItems: 'center' }]}> 
-            <Image source={photoUri ? { uri: photoUri } : require('@/assets/images/default-avatar.png')} style={styles.profilePhoto} contentFit="cover" />
-            <TouchableOpacity style={[styles.photoBtn,{ zIndex: 2 }]} onPress={pickImage} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Text style={styles.photoBtnText}>{t('changePhoto', language)}</Text>
-            </TouchableOpacity>
+            <View style={{ width: 112, alignItems:'center' }}>
+              <View style={{ width: 96, height: 96, borderRadius: 48, overflow: 'hidden', borderWidth: 2, borderColor: GOLD }}>
+                <Image source={photoUri ? { uri: photoUri } : require('@/assets/images/default-avatar.png')} style={{ width:'100%', height:'100%' }} contentFit="cover" />
+                {/* 가독성 오버레이: 하단 그라데이션 + 텍스트 대비 자동 */}
+                <View style={{ position:'absolute', left:0, right:0, bottom:0, height: 28, backgroundColor:'rgba(0,0,0,0.35)' }} />
+              </View>
+              <TouchableOpacity style={[styles.photoBtn,{ zIndex: 2, marginTop: 8 }]} onPress={pickImage} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={styles.photoBtnText}>{t('changePhoto', language)}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           <View style={[styles.card, styles.cardAccount]}>

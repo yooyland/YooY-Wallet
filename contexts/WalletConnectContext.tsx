@@ -7,6 +7,7 @@ type WcState = {
   address?: string;
   peer?: string;
   uri?: string; // pairing URI (when connecting)
+  chainIdHex?: string;
 };
 
 type WcContextValue = {
@@ -14,6 +15,8 @@ type WcContextValue = {
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   sendErc20: (params: { contract: string; to: string; data: string; from?: string; chainIdHex?: string }) => Promise<string>;
+  getChainId: () => Promise<string | null>;
+  switchToMainnet: () => Promise<boolean>;
 };
 
 const Ctx = createContext<WcContextValue | undefined>(undefined);
@@ -29,6 +32,14 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
     try {
       const SignClient = (await import('@walletconnect/sign-client')).default;
       const projectId = (process as any).env?.EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID;
+      if (!projectId || typeof projectId !== 'string' || projectId.length < 4) {
+        try { 
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const { Alert } = require('react-native'); 
+          Alert.alert('WalletConnect', '프로젝트 ID가 설정되지 않았습니다. 관리자 설정이 필요합니다.');
+        } catch {}
+        return null;
+      }
       const client = await SignClient.init({ projectId });
       clientRef.current = client;
       return client;
@@ -61,7 +72,14 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
       const accounts: string[] = session.namespaces.eip155.accounts || [];
       const first = accounts[0]?.split(':')[2];
       accountRef.current = first || null;
-      setState({ connected: true, connecting: false, address: first, peer: session.peer?.metadata?.name });
+      // 초기 체인 조회(가능하면 메인넷 확인)
+      let chainIdHex = '0x1';
+      try {
+        const desired = (process as any).env?.EXPO_PUBLIC_ETH_CHAIN_ID || '0x1';
+        const res = await client.request({ topic: session.topic, chainId: `eip155:${parseInt(desired,16)}`, request: { method: 'eth_chainId', params: [] } });
+        chainIdHex = typeof res === 'string' ? res : chainIdHex;
+      } catch {}
+      setState({ connected: true, connecting: false, address: first, peer: session.peer?.metadata?.name, chainIdHex });
     } catch (e) {
       console.warn('[WalletConnect] connect failed', e);
       setState({ connected: false, connecting: false });
@@ -90,7 +108,38 @@ export function WalletConnectProvider({ children }: { children: React.ReactNode 
     return String(res);
   }, [ensureClient]);
 
-  const value = useMemo(() => ({ state, connect, disconnect, sendErc20 }), [state, connect, disconnect, sendErc20]);
+  const getChainId = useCallback(async (): Promise<string | null> => {
+    try {
+      const client = await ensureClient();
+      const topic = topicRef.current;
+      if (!client || !topic) return null;
+      const desired = state.chainIdHex || (process as any).env?.EXPO_PUBLIC_ETH_CHAIN_ID || '0x1';
+      const res = await client.request({ topic, chainId: `eip155:${parseInt(desired,16)}`, request: { method: 'eth_chainId', params: [] } });
+      const hex = typeof res === 'string' ? res : null;
+      if (hex) setState(s => ({ ...s, chainIdHex: hex }));
+      return hex;
+    } catch { return null; }
+  }, [ensureClient, state.chainIdHex]);
+
+  const switchToMainnet = useCallback(async (): Promise<boolean> => {
+    try {
+      const client = await ensureClient();
+      const topic = topicRef.current;
+      if (!client || !topic) return false;
+      const desired = (process as any).env?.EXPO_PUBLIC_ETH_CHAIN_ID || '0x1';
+      await client.request({
+        topic,
+        chainId: `eip155:${parseInt(desired,16)}`,
+        request: { method: 'wallet_switchEthereumChain', params: [{ chainId: desired }] }
+      });
+      setState(s => ({ ...s, chainIdHex: desired }));
+      return true;
+    } catch {
+      return false;
+    }
+  }, [ensureClient]);
+
+  const value = useMemo(() => ({ state, connect, disconnect, sendErc20, getChainId, switchToMainnet }), [state, connect, disconnect, sendErc20, getChainId, switchToMainnet]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

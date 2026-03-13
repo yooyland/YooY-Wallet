@@ -86,8 +86,38 @@ export default function ChatViewer(props: ChatViewerProps) {
     (async () => {
       try {
         setQrText('');
-        if (Platform.OS !== 'web') return;
         if (kind !== 'image') return;
+        
+        // 네이티브: ML Kit + scanQRFromImage 사용
+        if (Platform.OS !== 'web') {
+          let detected = '';
+          // 1) ML Kit 시도
+          try {
+            const { scanBarcodes, BarcodeFormat } = require('@react-native-ml-kit/barcode-scanning');
+            const FS = require('expo-file-system');
+            let scanTarget = String(url || '');
+            if (/^(content|ph):\/\//i.test(scanTarget) && FS?.cacheDirectory) {
+              const dest = `${FS.cacheDirectory}qr_viewer_${Date.now()}.jpg`;
+              await FS.copyAsync({ from: scanTarget, to: dest });
+              scanTarget = dest;
+            }
+            const formats = BarcodeFormat?.QR_CODE ? [BarcodeFormat.QR_CODE] : undefined;
+            const out = formats ? await scanBarcodes(scanTarget, formats) : await scanBarcodes(scanTarget);
+            const first = Array.isArray(out) && out.length ? out[0] : null;
+            detected = String(first?.displayValue || first?.rawValue || '');
+          } catch {}
+          // 2) ML Kit 실패 시 scanQRFromImage 폴백
+          if (!detected) {
+            try {
+              const { scanQRFromImage } = require('@/lib/qrScanner');
+              detected = await scanQRFromImage(String(url || '')) || '';
+            } catch {}
+          }
+          if (detected) setQrText(detected);
+          return;
+        }
+        
+        // 웹: BarcodeDetector 사용
         const anyWin: any = window as any;
         const Det = anyWin.BarcodeDetector;
         if (!Det) return;
@@ -437,7 +467,7 @@ export default function ChatViewer(props: ChatViewerProps) {
               const pad = hideHeader ? 64 : (64 + 52);
               return (<video src={src} style={{ width: '96%', height: `calc(100vh - ${pad}px)`, maxHeight: `calc(100vh - ${pad}px)`, objectFit: 'contain' }} controls playsInline preload="metadata" autoPlay />);
             }
-            return (<Video source={{ uri: src }} style={{ width:'96%', height:'100%' }} resizeMode={ResizeMode.CONTAIN} useNativeControls />);
+            return (<Video source={{ uri: src }} style={{ width:'96%', height:'100%' }} resizeMode={ResizeMode.CONTAIN} useNativeControls shouldPlay />);
           }
           if (effKind === 'youtube') {
             try {
@@ -607,13 +637,18 @@ export default function ChatViewer(props: ChatViewerProps) {
             return (<EImage source={{ uri: src }} style={{ width:'96%', height:'100%' }} contentFit={'contain'} onError={()=>{ try { setImgFailed(true); } catch {} }} />);
           }
           if (effKind === 'pdf') {
+            // inline canvas 렌더는 웹 전용
             if (pdfSrcIdx === 0) {
-              return (
-                <View style={{ width:'96%', height:'100%', alignItems:'center', justifyContent:'center' }}>
-                  <canvas ref={pdfCanvasRef as any} style={{ maxWidth:'100%', maxHeight:'100%', backgroundColor:'#111' }} />
-                  {!pdfLoaded && (<Text style={{ color:'#EEE', fontSize:12, marginTop:8 }}>PDF 로딩 중...</Text>)}
-                </View>
-              );
+              if (Platform.OS !== 'web') {
+                try { setPdfSrcIdx(1); } catch {}
+              } else {
+                return (
+                  <View style={{ width:'96%', height:'100%', alignItems:'center', justifyContent:'center' }}>
+                    <canvas ref={pdfCanvasRef as any} style={{ maxWidth:'100%', maxHeight:'100%', backgroundColor:'#111' }} />
+                    {!pdfLoaded && (<Text style={{ color:'#EEE', fontSize:12, marginTop:8 }}>PDF 로딩 중...</Text>)}
+                  </View>
+                );
+              }
             }
             const direct = ensureFirebaseDirect(String(src));
             // 1: Mozilla pdf.js viewer (임베드 허용) - 툴바/확대 + 주석 편집 모드 활성화

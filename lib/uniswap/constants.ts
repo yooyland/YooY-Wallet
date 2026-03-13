@@ -73,7 +73,7 @@ export const FEE_TIERS = {
 
 // 기본 설정
 export const DEFAULT_SLIPPAGE = 0.5; // 0.5%
-export const DEFAULT_DEADLINE = 20; // 20분
+export const DEFAULT_DEADLINE = 15; // 15분
 export const CHAIN_ID = 1; // Ethereum Mainnet
 
 // RPC (Infura)

@@ -191,7 +191,7 @@ export default function ChatSettingsScreen() {
             <Text style={{ color:'#FFD700', fontWeight:'800', marginRight: 6 }}>☰</Text>
             <Text style={{ color:'#F6F6F6', fontWeight:'700' }}>{t('chatSettings', language)}</Text>
           </View>
-          <TouchableOpacity onPress={() => { /* 닫기 → 이전 페이지 */ try{ (history as any).back?.(); }catch{} }}>
+          <TouchableOpacity onPress={() => { /* 닫기 → 이전 페이지 */ try { router.back(); } catch { try{ (history as any).back?.(); } catch {} } }}>
             <Text style={{ color:'#FFD700' }}>✕</Text>
           </TouchableOpacity>
         </View>
@@ -265,7 +265,7 @@ export default function ChatSettingsScreen() {
           )}
         </ScrollView>
         <View style={{ paddingHorizontal: 10, paddingVertical: 12 }}>
-          <TouchableOpacity onPress={() => { try { updateProfile({ tags }); alert(t('savedSettings', language)); (history as any).back?.(); } catch {} }} style={{ backgroundColor:'#D4AF37', paddingVertical: 12, borderRadius: 10, alignItems:'center' }}>
+          <TouchableOpacity onPress={() => { try { updateProfile({ tags }); router.back(); } catch { try { (history as any).back?.(); } catch {} } }} style={{ backgroundColor:'#D4AF37', paddingVertical: 12, borderRadius: 10, alignItems:'center' }}>
             <Text style={{ color:'#0C0C0C', fontWeight:'800' }}>{t('save', language)}</Text>
           </TouchableOpacity>
         </View>

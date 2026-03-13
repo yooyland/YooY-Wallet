@@ -176,22 +176,41 @@ export default function AddFriendIdScreen() {
       if (!targetId || targetId.startsWith('admin:')) {
         try {
           const now = Date.now();
-          await addDoc(collection(firestore, 'invites'), { inviterId: me, email: user.email || null, phone: user.phone || null, status: 'pending', createdAt: now });
+          // Firestore에 초대 문서 생성
+          const ref = await addDoc(
+            collection(firestore, 'invites'),
+            { inviterId: me, email: user.email || null, phone: user.phone || null, status: 'pending', createdAt: now }
+          );
           // 로컬 친구 리스트에도 즉시 반영(초대 상태)
           try {
             const key = 'local.friends';
             const raw = await AsyncStorage.getItem(key);
             const list: any[] = raw ? JSON.parse(raw) : [];
-            const pseudoId = `invite:${user.email || user.phone || kw}`;
+            const pseudoId = `invite-${user.email || user.phone || kw}`;
             const next = list.filter((x) => x.id !== pseudoId);
             next.unshift({ id: pseudoId, name: user.displayName || user.email || user.phone || String(kw), status: 'invited', phone: user.phone, email: user.email, addedAt: now });
             await AsyncStorage.setItem(key, JSON.stringify(next));
           } catch {}
-          alert('초대를 보냈습니다.');
+          // 이메일이 있으면 기본 메일/공유 시트로 링크 전송 유도
+          if (user.email) {
+            try {
+              const deepLink = `yooy://invite?inviteId=${encodeURIComponent(ref.id)}`;
+              const subject = encodeURIComponent('YOY Land 초대');
+              const body = encodeURIComponent(`안녕하세요!\n\n${(user.displayName || '')}님께서 YOY Land로 초대하셨습니다.\n아래 링크를 눌러 앱을 설치/열고 가입을 완료해 주세요.\n\n${deepLink}\n\n(앱이 설치되어 있지 않다면 먼저 스토어에서 설치한 뒤 다시 링크를 실행해 주세요.)`);
+              const url = `mailto:${encodeURIComponent(user.email)}?subject=${subject}&body=${body}`;
+              const can = await Linking.canOpenURL(url);
+              if (can) {
+                await Linking.openURL(url);
+              } else {
+                await Share.share({ message: `YOY Land 초대 링크: ${deepLink}` });
+              }
+            } catch {}
+          }
+          alert('초대를 생성했습니다. 이메일/공유로 링크를 전송해 주세요.');
           try { router.push('/chat/friends'); } catch {}
           return;
         } catch {
-          alert('초대에 실패했습니다.');
+          alert('초대 생성에 실패했습니다. 다시 시도해 주세요.');
           return;
         }
       }

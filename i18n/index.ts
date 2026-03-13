@@ -656,7 +656,7 @@ const dict: Record<Lang, Record<string, any>> = {
     followingLabel: 'Following',
     followBack: 'Follow back',
     // Payments / Uniswap
-    uniswapInfoTitle: 'Uniswap v3 Information',
+    uniswapInfoTitle: 'Only YOY-centric swaps are supported in this app',
     uniswapBullet1: 'Real-time token swaps via Uniswap v3',
     uniswapBullet2: 'YOY ↔ WETH pool (0.3% fee)',
     uniswapBullet3: 'Best route via auto-routing',
@@ -1449,7 +1449,7 @@ const dict: Record<Lang, Record<string, any>> = {
     followingLabel: '팔로잉',
     followBack: '맞팔',
     // Payments / Uniswap
-    uniswapInfoTitle: 'Uniswap v3 정보',
+    uniswapInfoTitle: '이 앱에서는 YOY 중심 스왑만 지원됩니다',
     uniswapBullet1: 'Uniswap v3를 통한 실시간 토큰 교환',
     uniswapBullet2: 'YOY ↔ WETH 풀 (0.3% 수수료)',
     uniswapBullet3: '자동 라우팅으로 최적 경로 탐색',

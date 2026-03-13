@@ -40,8 +40,13 @@ export default function TopBar({ title, onMenuPress, onProfilePress, avatarUri, 
     })();
   }, [currentUser?.uid, profileUpdated]); // profileUpdated 의존성 추가
 
-  const displayNameRaw = savedInfo?.username || currentUser?.displayName || currentUser?.email?.split('@')[0] || 'Guest';
-  const displayName = String(displayNameRaw).trim().toLowerCase()==='user' ? 'Guest' : displayNameRaw;
+  // 사용자 정보가 준비되기 전에는 빈 문자열로 유지하여 '게스트'처럼 보이는 깜빡임 방지
+  // 'user', 'guest' 등 의미 없는 기본값이 저장된 경우 Firebase displayName/email 로 대체
+  const candidate1 = String(savedInfo?.username || '').trim();
+  const isGeneric = /^(user|guest|anonymous|익명|사용자)$/i.test(candidate1);
+  const candidate2 = String(currentUser?.displayName || '').trim();
+  const candidate3 = String(currentUser?.email ? currentUser.email.split('@')[0] : '').trim();
+  const displayName = (candidate1 && !isGeneric ? candidate1 : (candidate2 || candidate3 || ''));
 
   // Chat 페이지에서는 전역 TopBar 숨김 (모든 훅 호출 후 안전하게 return)
   if (isChat) return null as any;
@@ -51,10 +56,12 @@ export default function TopBar({ title, onMenuPress, onProfilePress, avatarUri, 
       <TouchableOpacity style={styles.left} onPress={onProfilePress}>
         {(avatarUri || savedAvatar) ? (
           <Image source={{ uri: avatarUri || savedAvatar }} style={styles.avatar} contentFit="cover" />
-        ) : (
+        ) : currentUser?.uid ? (
           <View style={styles.defaultAvatar}>
             <Text style={styles.defaultAvatarText}>{(displayName[0] || 'U').toUpperCase()}</Text>
           </View>
+        ) : (
+          <View style={styles.defaultAvatar} />
         )}
         <Text style={styles.name}>{title ?? displayName}</Text>
       </TouchableOpacity>

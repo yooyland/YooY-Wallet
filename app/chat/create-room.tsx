@@ -33,8 +33,8 @@ export default function CreateRoomScreen() {
   const [expM, setExpM] = useState('0');
   const [expS, setExpS] = useState('0');
   const [ttlH, setTtlH] = useState('0');
-  const [ttlM, setTtlM] = useState('3');
-  const [ttlS, setTtlS] = useState('0');
+  const [ttlM, setTtlM] = useState('0');
+  const [ttlS, setTtlS] = useState('30');
   const [tags, setTags] = useState('');
   // 대표이미지는 방 설정에서 등록하도록 변경됨
   // 대표 이미지 임시 미리보기 URI
@@ -75,9 +75,9 @@ export default function CreateRoomScreen() {
       Alert.alert('안내', `개설 비용: ${fee} YOY`);
     }
 
-    // 메시지 TTL은 시/분/초 입력을 합산. TTL 방에서 미입력 시 기본 3분
+    // 메시지 TTL은 시/분/초 입력을 합산. TTL 방에서 미입력 시 기본 30초
     let ttlSeconds = ((Number(ttlH)||0)*3600 + (Number(ttlM)||0)*60 + (Number(ttlS)||0));
-    if (type === 'ttl' && ttlSeconds <= 0) ttlSeconds = 180;
+    if (type === 'ttl' && ttlSeconds <= 0) ttlSeconds = 30;
     const messageTtlMs = type === 'ttl' && ttlSeconds > 0 ? ttlSeconds * 1000 : undefined as any;
     const tagArr = (tags||'').split(/[\s,]+/).map((t)=>t.trim().toLowerCase()).filter(Boolean);
     let myUid = firebaseAuth.currentUser?.uid || '';
@@ -86,7 +86,7 @@ export default function CreateRoomScreen() {
     const members = (type === 'dm' && dmFriend.trim()) ? [myUid, dmFriend.trim()] : [myUid];
     const lim = parseInt(memberLimit||'') || 0;
     // 방 생성 전에 인증 보장 (웹/네이티브 공통)
-    try { if (!firebaseAuth.currentUser) { await signInAnonymously(firebaseAuth); } } catch {}
+    try { if (!firebaseAuth.currentUser && Platform.OS === 'web') { await signInAnonymously(firebaseAuth); } } catch {}
     const room = rooms.createRoom(
       name,
       members,
@@ -99,6 +99,17 @@ export default function CreateRoomScreen() {
       lim > 0 ? lim : undefined,
     );
     if (expiresAt) { rooms.setRoomTTL(room.id, expiresAt); }
+    if (messageTtlMs) { rooms.setMessageTTL(room.id, messageTtlMs as any); }
+    // TTL 값을 설정 스키마에도 즉시 저장해 입장 직후 모달/헤더에서 프리필/표시되도록 보강
+    try {
+      await rooms.saveRoomSettings(room.id, {
+        ttl: {
+          expiresAtMs: expiresAt || 0,
+          messageTtlMs: messageTtlMs || 0,
+          messageDeleteOnExpiry: true
+        } as any,
+      });
+    } catch {}
     // 대표이미지 선택 시 즉시 로컬 반영(미리보기 URI로) → 업로드 후 실제 URL로 교체됨
     try {
       if (avatarUri) {
@@ -124,7 +135,7 @@ export default function CreateRoomScreen() {
       try {
         if (avatarUri) {
           try { await ensureAppCheckReady(); } catch {}
-          try { if (!firebaseAuth.currentUser) { await signInAnonymously(firebaseAuth); } } catch {}
+          try { if (!firebaseAuth.currentUser && Platform.OS === 'web') { await signInAnonymously(firebaseAuth); } } catch {}
           let uid = firebaseAuth.currentUser?.uid || '';
           try { uid = uid || await ensureAuthedUid(); } catch {}
           uid = uid || 'me';

@@ -78,7 +78,8 @@ export default function RegisterScreen() {
           ) : null}
 
           <TouchableOpacity
-            activeOpacity={0.85}
+            activeOpacity={0.8}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             style={[styles.ctaButton, (!canSubmit) && { opacity: 0.6 }]}
             disabled={!canSubmit}
             onPress={async () => {
@@ -103,21 +104,26 @@ export default function RegisterScreen() {
             <View style={styles.divider} />
           </View>
 
+          <Text style={{ color: '#9BA1A6', fontSize: 12, marginBottom: 8, textAlign: 'center' }}>
+            구글 계정으로 가입·로그인
+          </Text>
           <View style={styles.providersRow}>
-            <TouchableOpacity style={[styles.providerCircle, { backgroundColor: '#fff' }]} onPress={async () => { try { await signInWithGoogle(); } catch (e) {} }}>
+            <TouchableOpacity
+              style={[styles.providerCircle, { backgroundColor: '#fff' }]}
+              onPress={async () => {
+                setError(null);
+                setSubmitting(true);
+                try {
+                  await signInWithGoogle();
+                } catch (e: any) {
+                  setError(e?.message ?? 'Google 로그인에 실패했습니다.');
+                } finally {
+                  setSubmitting(false);
+                }
+              }}
+              disabled={submitting}
+            >
               <AntDesign name="google" size={20} color="#DB4437" />
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.providerCircle, { backgroundColor: '#000' }]} onPress={() => {}}>
-              <Ionicons name="logo-apple" size={22} color="#fff" />
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.providerCircle, { backgroundColor: '#1DA1F2' }]} onPress={() => {}}>
-              <AntDesign name="twitter" size={20} color="#fff" />
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.providerCircle, { backgroundColor: '#FEE500', overflow: 'hidden' }]} onPress={() => {}}>
-              <Image source={{ uri: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQnOACrRJyk-4693gXNbbpXfQ4OVXSWm3sl5g&s' }} style={{ width: '100%', height: '100%', borderRadius: 22 }} />
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.providerCircle, { backgroundColor: '#1877F2', overflow: 'hidden' }]} onPress={() => {}}>
-              <Image source={{ uri: 'https://img.freepik.com/premium-vector/facebook-illustration_1073073-2143.jpg?semt=ais_hybrid&w=740&q=80' }} style={{ width: '100%', height: '100%', borderRadius: 22 }} />
             </TouchableOpacity>
           </View>
 

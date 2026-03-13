@@ -40,7 +40,7 @@ export default function AddFriendRecommendedScreen() {
       const arr: RecommendedUser[] = [];
       snap.forEach(d => {
         const u: any = d.data() || {};
-        arr.push({ uid: d.id, name: u.displayName || u.name || u.email || d.id, avatar: u.avatar || u.photoURL, email: u.email, score: 1000 });
+        arr.push({ uid: d.id, name: u.chatName || u.displayName || u.name || u.email || d.id, avatar: u.avatar || u.photoURL, email: u.email, score: 1000 });
       });
       // 혹시 문서가 없으면 이메일만으로 Fallback 항목 생성
       if (arr.length < ADMIN_EMAILS.length) {
@@ -73,7 +73,7 @@ export default function AddFriendRecommendedScreen() {
         const u: any = d.data() || {};
         const tags: string[] = Array.isArray(u.tags) ? u.tags.map((t: any) => String(t).toLowerCase()) : [];
         const overlap = myTags.filter(t => tags.includes(t)).length;
-        arr.push({ uid: d.id, name: u.displayName || u.name || u.email || d.id, avatar: u.avatar || u.photoURL, email: u.email, score: overlap });
+        arr.push({ uid: d.id, name: u.chatName || u.displayName || u.name || u.email || d.id, avatar: u.avatar || u.photoURL, email: u.email, score: overlap });
       });
       return arr;
     } catch { return []; }

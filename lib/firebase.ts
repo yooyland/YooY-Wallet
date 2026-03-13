@@ -195,16 +195,21 @@ export async function ensureAuthedUid(): Promise<string> {
   // 1) 이미 로그인되어 있으면 즉시 반환
   if (firebaseAuth.currentUser?.uid) return firebaseAuth.currentUser.uid;
 
-  // 2) 익명 로그인 시도 후 최대 8초 대기
-  try { await signInAnonymously(firebaseAuth); } catch {}
-  const uidAfterSignIn = await waitForUid(8000);
-  if (uidAfterSignIn) return uidAfterSignIn;
+  // 2) 플랫폼에 따라 처리: 웹에서만 익명 허용, 네이티브는 사용자 로그인을 요구
+  if (Platform.OS === 'web') {
+    try { await signInAnonymously(firebaseAuth); } catch {}
+    const uidAfterSignIn = await waitForUid(8000);
+    if (uidAfterSignIn) return uidAfterSignIn;
+    try { await signInAnonymously(firebaseAuth); } catch {}
+    const uidFinalWeb = await waitForUid(2000);
+    if (uidFinalWeb) return uidFinalWeb;
+    throw new Error('auth-not-ready');
+  }
 
-  // 3) 최후: 한 번 더 시도 후 실패하면 에러로 처리하여 상위 로직이 업로드를 건너뛰게 함
-  try { await signInAnonymously(firebaseAuth); } catch {}
-  const uidFinal = await waitForUid(2000);
-  if (uidFinal) return uidFinal;
-  throw new Error('auth-not-ready');
+  // 네이티브: 익명 로그인 금지 → 잠시 대기 후 실패 처리
+  const uidAfterWait = await waitForUid(1500);
+  if (uidAfterWait) return uidAfterWait;
+  throw new Error('auth-required');
 }
 
 // App Check 토큰을 강제로 미리 획득하여 이후 Storage 요청의 프리플라이트가 통과되도록 보장

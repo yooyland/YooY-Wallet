@@ -332,7 +332,7 @@ export default function ChatMainScreen() {
           </TouchableOpacity>
           {currentProfile && (
             <View style={styles.profilePreview}>
-              <ThemedText style={styles.profilePreviewName}>{currentProfile.displayName}</ThemedText>
+              <ThemedText style={styles.profilePreviewName}>{(currentProfile as any)?.chatName || currentProfile.displayName}</ThemedText>
               <ThemedText style={styles.profilePreviewStatus}>{currentProfile.customStatus || '서버 채팅'}</ThemedText>
             </View>
           )}

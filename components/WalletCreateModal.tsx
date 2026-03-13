@@ -55,11 +55,11 @@ export default function WalletCreateModal({
       // 주소가 준비되면 QR 단계로 이동
       setStep('qr');
       
-      // 2초 후 성공 화면으로
+      // 짧은 확인 단계만 거치고 빠르게 완료
       setTimeout(() => {
         setStep('success');
         setIsCreating(false);
-      }, 2000);
+      }, 300);
     } catch (error) {
       setIsCreating(false);
       Alert.alert(t('error', language), 'Failed to create wallet');

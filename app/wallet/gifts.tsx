@@ -13,6 +13,8 @@ import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useWallet } from '@/contexts/WalletContext';
 import { useTransaction } from '@/contexts/TransactionContext';
+import { firebaseAuth, ensureAppCheckReady } from '@/lib/firebase';
+import { signInAnonymously } from 'firebase/auth';
 
 let QRCode: any = null;
 try {
@@ -60,6 +62,29 @@ export default function GiftsPage() {
   const [claimInput, setClaimInput] = useState<string>('');
   const [pending, setPending] = useState<ClaimVoucher | null>(null);
   // scanOpen, videoRef, rafRef는 상단에서 선언됨
+
+  // 딥링크(yooy://gift) 처리: AsyncStorage에서 코드 읽어서 자동 입력
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem('@deeplink_gift');
+        if (!raw) return;
+        await AsyncStorage.removeItem('@deeplink_gift');
+        const data = JSON.parse(raw);
+        const code = String(data?.code || '').trim();
+        console.log('[Gifts] deeplink gift code:', code);
+        if (code) {
+          setClaimInput(code);
+          // 자동으로 바우처 정보 로드
+          try {
+            const parsed = parseClaimUri(code) || { id: code };
+            const v = await getVoucher(parsed.id);
+            if (v) setPending(v);
+          } catch {}
+        }
+      } catch (e) { console.warn('[Gifts] deeplink error:', e); }
+    })();
+  }, []);
 
   useEffect(() => {
     const ref = collection(firestore, 'claim_vouchers');
@@ -109,19 +134,48 @@ export default function GiftsPage() {
       Alert.alert(language==='en'?'Enter valid values':'유효한 값을 입력하세요');
       return;
     }
+    // Firestore 보안 규칙에 따라 인증이 필요할 수 있으므로, 미인증 상태면 익명 로그인 시도
+    try {
+      if (!firebaseAuth.currentUser) {
+        if ((require('react-native').Platform?.OS === 'web')) await signInAnonymously(firebaseAuth);
+      }
+      try { await ensureAppCheckReady(); } catch {}
+    } catch {}
     setCreating(true);
     try {
-      const voucher = await createVoucher({
-        createdByEmail: email,
-        symbol,
-        mode,
-        perClaimAmount: mode==='per_claim' ? Number(perClaimAmount) : (totalPolicy==='equal' ? Number(totalAmount)/Math.max(1, Math.floor(Number(totalPeople || 1))) : undefined),
-        claimLimit: mode==='per_claim' ? Math.floor(Number(claimLimit)) : (totalPolicy==='equal' ? Math.floor(Number(totalPeople || 0)) : undefined),
-        totalAmount: mode==='total' ? Number(totalAmount) : undefined,
-        totalPolicy: mode==='total' ? totalPolicy : undefined,
-        maxPerUser,
-        expiresAtISO: expiresISO || null,
-      });
+      let voucher = null as any;
+      try {
+        voucher = await createVoucher({
+          createdByEmail: email,
+          symbol,
+          mode,
+          perClaimAmount: mode==='per_claim' ? Number(perClaimAmount) : (totalPolicy==='equal' ? Number(totalAmount)/Math.max(1, Math.floor(Number(totalPeople || 1))) : undefined),
+          claimLimit: mode==='per_claim' ? Math.floor(Number(claimLimit)) : (totalPolicy==='equal' ? Math.floor(Number(totalPeople || 0)) : undefined),
+          totalAmount: mode==='total' ? Number(totalAmount) : undefined,
+          totalPolicy: mode==='total' ? totalPolicy : undefined,
+          maxPerUser,
+          expiresAtISO: expiresISO || null,
+        });
+      } catch (e:any) {
+        const msg = String(e?.message || e || '');
+        if (/permission|denied|PERMISSION/i.test(msg)) {
+          try { if (!firebaseAuth.currentUser && (require('react-native').Platform?.OS === 'web')) await signInAnonymously(firebaseAuth); } catch {}
+          try { await ensureAppCheckReady(); } catch {}
+          voucher = await createVoucher({
+            createdByEmail: email,
+            symbol,
+            mode,
+            perClaimAmount: mode==='per_claim' ? Number(perClaimAmount) : (totalPolicy==='equal' ? Number(totalAmount)/Math.max(1, Math.floor(Number(totalPeople || 1))) : undefined),
+            claimLimit: mode==='per_claim' ? Math.floor(Number(claimLimit)) : (totalPolicy==='equal' ? Math.floor(Number(totalPeople || 0)) : undefined),
+            totalAmount: mode==='total' ? Number(totalAmount) : undefined,
+            totalPolicy: mode==='total' ? totalPolicy : undefined,
+            maxPerUser,
+            expiresAtISO: expiresISO || null,
+          });
+        } else {
+          throw e;
+        }
+      }
       const url = buildClaimUri(voucher.id);
       setQrUrl(url);
       setQrVisible(true);
@@ -175,9 +229,13 @@ export default function GiftsPage() {
     } catch (e) {
       Alert.alert(
         language==='en'?'Creation failed':'생성 실패',
-        language==='en'
-          ? 'Failed to create an event on the server. Please try again.'
-          : '서버에 이벤트를 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.'
+        (() => {
+          const msg = String(e instanceof Error ? e.message : e || '');
+          if (language==='en') {
+            return `Failed to create an event on the server. Please try again.${msg ? `\n\nReason: ${msg}` : ''}`;
+          }
+          return `서버에 이벤트를 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.${msg ? `\n\n사유: ${msg}` : ''}`;
+        })()
       );
     } finally {
       setCreating(false);
@@ -256,7 +314,47 @@ export default function GiftsPage() {
         };
         img.src = asset.base64 ? `data:${asset.type || 'image/png'};base64,${asset.base64}` : (asset.uri || '');
       } else {
-        Alert.alert(language==='en'?'Tip':'안내', language==='en'?'On native, please paste the link for now.':'네이티브에서는 우선 링크 붙여넣기를 이용해 주세요.');
+        // 네이티브: ML Kit + scanQRFromImage 폴백
+        const uri = asset.uri || '';
+        let detected = '';
+        
+        // 1) ML Kit 시도 (가장 안정적)
+        try {
+          const { scanBarcodes, BarcodeFormat } = require('@react-native-ml-kit/barcode-scanning');
+          const FS = require('expo-file-system');
+          let scanTarget = uri;
+          if (/^(content|ph):\/\//i.test(uri) && FS?.cacheDirectory) {
+            const dest = `${FS.cacheDirectory}qr_mlkit_${Date.now()}.jpg`;
+            await FS.copyAsync({ from: uri, to: dest });
+            scanTarget = dest;
+          }
+          console.log('[gifts] ML Kit scanTarget:', scanTarget);
+          const formats = BarcodeFormat?.QR_CODE ? [BarcodeFormat.QR_CODE] : undefined;
+          const out = formats ? await scanBarcodes(scanTarget, formats) : await scanBarcodes(scanTarget);
+          console.log('[gifts] ML Kit result:', out);
+          const first = Array.isArray(out) && out.length ? out[0] : null;
+          detected = String(first?.displayValue || first?.rawValue || '');
+        } catch (e) {
+          console.warn('[gifts] ML Kit error:', e);
+        }
+        
+        // 2) ML Kit 실패 시 scanQRFromImage 유틸 폴백
+        if (!detected) {
+          try {
+            const { scanQRFromImage } = require('@/lib/qrScanner');
+            detected = await scanQRFromImage(uri) || '';
+            console.log('[gifts] scanQRFromImage result:', detected);
+          } catch (e) {
+            console.warn('[gifts] scanQRFromImage error:', e);
+          }
+        }
+        
+        if (detected) {
+          setClaimInput(detected);
+          await loadVoucherFromData(detected);
+        } else {
+          Alert.alert(language==='en'?'Scan failed':'스캔 실패', language==='en'?'Could not detect a QR code in the image.':'이미지에서 QR을 찾을 수 없습니다.');
+        }
       }
     } catch (e) {
       Alert.alert(language==='en'?'Scan error':'스캔 오류', String(e instanceof Error ? e.message : e));

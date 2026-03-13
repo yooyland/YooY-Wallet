@@ -6,7 +6,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 // ===== 알림 타입 =====
 export interface Notification {
   id: string;
-  type: 'message' | 'mention' | 'system';
+  type: 'message' | 'mention' | 'system' | 'room_invite';
   title: string;
   content: string;
   channelId?: string;
@@ -15,6 +15,8 @@ export interface Notification {
   timestamp: number;
   isRead: boolean;
   serverId?: string;
+  /** 방 초대 알림일 때 입장할 채팅방 ID */
+  roomId?: string;
 }
 
 // ===== 알림 스토어 상태 =====
@@ -40,16 +42,18 @@ export const useNotificationStore = create<NotificationState & NotificationActio
       unreadCount: 0,
 
       addNotification: (notificationData) => set((state) => {
+        const serverId = (notificationData as any).serverId;
+        if (serverId && state.notifications.some((n) => n.serverId === serverId)) {
+          return state;
+        }
         const newNotification: Notification = {
           ...notificationData,
-          id: uuidv4(),
-          timestamp: Date.now(),
+          id: (notificationData as any).id ?? uuidv4(),
+          timestamp: typeof (notificationData as any).timestamp === 'number' ? (notificationData as any).timestamp : Date.now(),
           isRead: false,
         };
-        
         const updatedNotifications = [newNotification, ...state.notifications];
         const unreadCount = updatedNotifications.filter(n => !n.isRead).length;
-        
         return {
           notifications: updatedNotifications,
           unreadCount,

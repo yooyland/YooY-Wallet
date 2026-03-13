@@ -97,7 +97,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         isActive: true,
       };
 
-      // EVM이면 동일 주소를 사용하는 ETH/YOY 엔트리도 함께 정합성 유지
+      // EVM이면 동일 주소를 사용하는 요청 심볼(예: USDT/USDC)과 ETH 엔트리를 정합성 있게 유지
       let updatedWallets = [...wallets];
       if (isEvm(symbol)) {
         const ensure = (sym: string) => {
@@ -115,7 +115,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             updatedWallets = updatedWallets.map(w => w.symbol === sym ? { ...w, address, isActive: true } : w);
           }
         };
+        // 먼저 사용자가 요청한 심볼을 보장 (예: USDT/USDC/YOY 등)
+        ensure(symbol.toUpperCase());
+        // ETH 엔트리도 동일 주소로 유지
         ensure('ETH');
+        // 필요 시 YOY도 함께 유지 (하위 호환)
         ensure('YOY');
       } else {
         updatedWallets.push(newWallet);
@@ -150,7 +154,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         // 다만, 이미 만들어진 경우엔 최근 세션에서 메모리에 남아있다.
       } catch {}
       // fallback: 기존에 저장된 EVM 엔트리 중 하나의 주소 재사용
-      const anyEvm = wallets.find(w => ['ETH','YOY'].includes(w.symbol));
+      const anyEvm = wallets.find(w => isEvm(w.symbol));
       if (anyEvm) addr = anyEvm.address;
       if (addr) {
         return {

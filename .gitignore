@@ -40,4 +40,10 @@ app-example
 
 # generated native folders
 /ios
-/android
+# keep android sources; ignore build artifacts
+!/android/
+!/android/**/*
+android/.gradle/**
+android/**/build/**
+android/local.properties
+android/.cxx/**

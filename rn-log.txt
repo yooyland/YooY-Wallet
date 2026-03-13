@@ -1,0 +1,54 @@
+03-08 13:10:31.754 W/C       (21130): Unmapping is not supported on this platform, because internal Java APIs are not compatible with this Lucene version: java.lang.NoSuchMethodException: invokeCleaner [class java.nio.ByteBuffer]
+03-08 13:11:19.594 W/AsyncOperation( 3147): OperationException[Status{statusCode=Stale snapshot for com.google.android.gms.gmslogger#com.google.android.gms(new configuration available), resolution=null}]
+03-08 13:11:19.661 W/RegisteredServicesCache( 2776): org.xmlpull.v1.XmlPullParserException: No android.nfc.cardemulation.host_apdu_service meta-data
+03-08 13:11:19.685 W/RegisteredServicesCache( 2776): org.xmlpull.v1.XmlPullParserException: No android.nfc.cardemulation.host_apdu_service meta-data
+03-08 13:11:20.015 W/samsung_keystore_utils(  654): ExceptionLoggingCase unstable.c7202ece89390c490b1b94d5b71225e1.A244761609251369502
+03-08 13:11:20.016 W/samsung_keystore_utils(  654): ExceptionLoggingCase unstable.c7202ece89390c490b1b94d5b71225e1.A1581817449943211558
+03-08 13:11:20.073 W/samsung_keystore_utils(  654): ExceptionLoggingCase unstable.c7202ece89390c490b1b94d5b71225e1.B244761609251369502
+03-08 13:11:20.096 W/samsung_keystore_utils(  654): ExceptionLoggingCase unstable.c7202ece89390c490b1b94d5b71225e1.A-6545401051367176569
+03-08 13:11:20.114 W/RegisteredServicesCache( 2776): org.xmlpull.v1.XmlPullParserException: No android.nfc.cardemulation.host_apdu_service meta-data
+03-08 13:11:20.119 W/RegisteredServicesCache( 2776): org.xmlpull.v1.XmlPullParserException: No android.nfc.cardemulation.host_apdu_service meta-data
+03-08 13:11:20.122 W/RegisteredServicesCache( 2776): org.xmlpull.v1.XmlPullParserException: No android.nfc.cardemulation.host_apdu_service meta-data
+03-08 13:11:20.128 W/RegisteredServicesCache( 2776): org.xmlpull.v1.XmlPullParserException: No android.nfc.cardemulation.host_apdu_service meta-data
+03-08 13:11:20.135 W/RegisteredServicesCache( 2776): org.xmlpull.v1.XmlPullParserException: No android.nfc.cardemulation.host_apdu_service meta-data
+03-08 13:11:20.159 W/samsung_keystore_utils(  654): ExceptionLoggingCase unstable.c7202ece89390c490b1b94d5b71225e1.B-6545401051367176569
+03-08 13:11:20.363 W/samsung_keystore_utils(  654): ExceptionLoggingCase unstable.c7202ece89390c490b1b94d5b71225e1.A-5192631319934897536
+03-08 13:11:20.806 W/RegisteredServicesCache( 2776): org.xmlpull.v1.XmlPullParserException: No android.nfc.cardemulation.host_apdu_service meta-data
+03-08 13:11:20.986 I/Pay     ( 3420): Suppressing StorageKeyException as Keystore encryption is enabled. [CONTEXT service_id=198 ]
+03-08 13:11:21.160 E/jgcx    ( 3420): java.lang.RuntimeException: ManagedChannel allocation site
+03-08 13:11:26.095 E/DCU_ContactsLogService( 3420): java.util.concurrent.ExecutionException: fynm: sync policy is not enabled
+03-08 13:11:27.701 D/PickerSyncController( 4981): java.lang.IllegalStateException: Unexpected Latest Media Collection Info: ID/Gen=null/0
+03-08 13:11:30.351 W/FlagUpdateListenerRegis( 3147): Unable to invoke IFlagUpdateListener.onFlagUpdate. App: com.google.android.gms. Process: com.google.android.gms.unstable|53631037. Error: android.os.DeadObjectException. [CONTEXT service_id=51 ]
+03-08 13:11:30.369 W/FlagUpdateListenerRegis( 3147): Unable to invoke IFlagUpdateListener.onFlagUpdate. App: com.google.android.gms. Process: com.google.android.gms.unstable|47114775. Error: android.os.DeadObjectException. [CONTEXT service_id=51 ]
+03-08 13:11:54.903 W/BinderNative( 1637): Uncaught exception from death notification
+03-08 13:11:54.903 W/BinderNative( 1637): java.lang.SecurityException: Specified package "com.google.android.googlequicksearchbox" under uid 1000 but it is not
+03-08 13:14:13.753 W/Bundle  ( 7036): Attempt to cast generated internal exception:
+03-08 13:14:13.753 W/Bundle  ( 7036): java.lang.ClassCastException: android.os.Parcel$LazyValue cannot be cast to java.lang.String
+03-08 13:14:13.754 W/Bundle  ( 7036): Attempt to cast generated internal exception:
+03-08 13:14:13.754 W/Bundle  ( 7036): java.lang.ClassCastException: android.os.Parcel$LazyValue cannot be cast to java.lang.CharSequence
+03-08 13:14:21.008 W/Bundle  ( 7036): Attempt to cast generated internal exception:
+03-08 13:14:21.008 W/Bundle  ( 7036): java.lang.ClassCastException: android.os.Parcel$LazyValue cannot be cast to java.lang.String
+03-08 13:14:21.009 W/Bundle  ( 7036): Attempt to cast generated internal exception:
+03-08 13:14:21.009 W/Bundle  ( 7036): java.lang.ClassCastException: android.os.Parcel$LazyValue cannot be cast to java.lang.CharSequence
+03-08 13:14:26.269 W/Bundle  ( 7036): Attempt to cast generated internal exception:
+03-08 13:14:26.269 W/Bundle  ( 7036): java.lang.ClassCastException: android.os.Parcel$LazyValue cannot be cast to java.lang.String
+03-08 13:14:26.269 W/Bundle  ( 7036): Attempt to cast generated internal exception:
+03-08 13:14:26.269 W/Bundle  ( 7036): java.lang.ClassCastException: android.os.Parcel$LazyValue cannot be cast to java.lang.CharSequence
+03-08 13:14:26.314 E/SQLiteDatabase( 1637): android.database.sqlite.SQLiteConstraintException: UNIQUE constraint failed: NotiHistoryImgProvider.uri_id (code 1555 SQLITE_CONSTRAINT_PRIMARYKEY[1555])
+03-08 13:14:50.199 E/LoadedApk( 3147): Exception : java.lang.NullPointerException: Attempt to invoke virtual method 'boolean android.os.Looper.isPerfLogEnable()' on a null object reference
+03-08 13:14:50.587 W/Conscrypt( 3147): Could not set socket write timeout: java.net.SocketException: Socket closed
+03-08 13:14:50.667 W/Conscrypt( 3147): Could not set socket write timeout: java.net.SocketException: Socket closed
+03-08 13:14:58.993 W/Bundle  ( 7036): Attempt to cast generated internal exception:
+03-08 13:14:58.993 W/Bundle  ( 7036): java.lang.ClassCastException: android.os.Parcel$LazyValue cannot be cast to java.lang.String
+03-08 13:14:58.994 W/Bundle  ( 7036): Attempt to cast generated internal exception:
+03-08 13:14:58.994 W/Bundle  ( 7036): java.lang.ClassCastException: android.os.Parcel$LazyValue cannot be cast to java.lang.CharSequence
+03-08 13:15:48.667 W/Bundle  ( 7036): Attempt to cast generated internal exception:
+03-08 13:15:48.667 W/Bundle  ( 7036): java.lang.ClassCastException: android.os.Parcel$LazyValue cannot be cast to java.lang.String
+03-08 13:15:48.667 W/Bundle  ( 7036): Attempt to cast generated internal exception:
+03-08 13:15:48.667 W/Bundle  ( 7036): java.lang.ClassCastException: android.os.Parcel$LazyValue cannot be cast to java.lang.CharSequence
+03-08 13:15:58.581 W/Bundle  ( 7036): Attempt to cast generated internal exception:
+03-08 13:15:58.581 W/Bundle  ( 7036): java.lang.ClassCastException: android.os.Parcel$LazyValue cannot be cast to java.lang.String
+03-08 13:15:58.581 W/Bundle  ( 7036): Attempt to cast generated internal exception:
+03-08 13:15:58.581 W/Bundle  ( 7036): java.lang.ClassCastException: android.os.Parcel$LazyValue cannot be cast to java.lang.CharSequence
+03-08 13:17:16.425 I/NearbySharing( 3147): java.lang.InterruptedException
+03-08 13:17:32.170 E/vDM (Thread-2) ( 2812): VdmRawConnection#open: SocketTimeoutException: failed to connect to dmc.nate.com/211.188.149.218 (port 7015) from /172.30.1.33 (port 59954) after 30000ms

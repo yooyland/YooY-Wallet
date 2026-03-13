@@ -4,9 +4,11 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { DEFAULT_SLIPPAGE, TOKEN_ADDRESSES, TOKEN_INFO } from '../uniswap/constants';
+import { DEFAULT_SLIPPAGE } from '../uniswap/constants';
 import { calculatePriceImpact, getQuote as fetchQuote, startQuotePolling } from '../uniswap/quote';
+import { getCoinPriceByCurrency } from '@/lib/priceManager';
 import { executeSwap } from '../uniswap/swap';
+import { SUPPORTED_SWAP_TOKENS, isAllowedPair, SwapSymbol } from '@/lib/swapConfig';
 
 // Mock ethers.js types
 interface Signer {
@@ -42,7 +44,7 @@ interface UseUniswapReturn {
   setAmountOut: (amount: string) => void;
   
   // 함수
-  executeSwap: (signer: Signer) => Promise<void>;
+  executeSwap: (signer: Signer) => Promise<string>;
   clearError: () => void;
   resetSwap: () => void;
   
@@ -74,32 +76,44 @@ export function useUniswap(provider?: Provider): UseUniswapReturn {
     priceImpact: 0,
     txHash: null,
   });
+  // 어떤 입력을 마지막으로 수정했는지 추적하여 역방향 계산을 지원
+  const [lastEdited, setLastEdited] = useState<'in'|'out'|null>(null);
 
   // 사용 가능한 토큰 목록
-  const availableTokens = Object.entries(TOKEN_ADDRESSES).map(([symbol, address]) => ({
-    symbol,
-    name: TOKEN_INFO[address]?.name || symbol,
-    address,
+  const availableTokens = SUPPORTED_SWAP_TOKENS.map(t => ({
+    symbol: t.symbol,
+    name: t.name,
+    address: t.symbol, // UI only; address는 실행 시 매핑
   }));
 
   // From 토큰 설정
   const setFromToken = useCallback((token: string) => {
-    setSwapState(prev => ({
-      ...prev,
-      fromToken: token,
-      amountOut: '', // 출력 수량 초기화
-      error: null,
-    }));
+    setSwapState(prev => {
+      const nextFrom = token as SwapSymbol;
+      const nextTo = prev.toToken as SwapSymbol;
+      if (nextFrom === nextTo) {
+        return { ...prev, error: '같은 토큰끼리는 스왑할 수 없습니다.' };
+      }
+      if (!isAllowedPair(nextFrom, nextTo)) {
+        return { ...prev, fromToken: nextFrom, amountOut: '', error: '이 앱에서는 YOY 중심 스왑만 지원됩니다' };
+      }
+      return { ...prev, fromToken: nextFrom, amountOut: '', error: null };
+    });
   }, []);
 
   // To 토큰 설정
   const setToToken = useCallback((token: string) => {
-    setSwapState(prev => ({
-      ...prev,
-      toToken: token,
-      amountOut: '', // 출력 수량 초기화
-      error: null,
-    }));
+    setSwapState(prev => {
+      const nextTo = token as SwapSymbol;
+      const nextFrom = prev.fromToken as SwapSymbol;
+      if (nextFrom === nextTo) {
+        return { ...prev, error: '같은 토큰끼리는 스왑할 수 없습니다.' };
+      }
+      if (!isAllowedPair(nextFrom, nextTo)) {
+        return { ...prev, toToken: nextTo, amountOut: '', error: '이 앱에서는 YOY 중심 스왑만 지원됩니다' };
+      }
+      return { ...prev, toToken: nextTo, amountOut: '', error: null };
+    });
   }, []);
 
   // 천단위 구분자 추가 (소수점 제외)
@@ -130,6 +144,7 @@ export function useUniswap(provider?: Provider): UseUniswapReturn {
       amountOut: '', // 출력 수량 초기화
       error: null,
     }));
+    setLastEdited('in');
   }, []);
 
   // 출력 수량 설정
@@ -142,16 +157,23 @@ export function useUniswap(provider?: Provider): UseUniswapReturn {
       amountOut: cleanAmount,
       error: null,
     }));
+    setLastEdited('out');
   }, []);
 
 
   // 스왑 실행
-  const executeSwapAction = useCallback(async (signer: Signer) => {
+  const executeSwapAction = useCallback(async (signer: Signer): Promise<string> => {
     const { fromToken, toToken, amountIn } = swapState;
 
     if (!amountIn || parseFloat(amountIn) <= 0) {
       setSwapState(prev => ({ ...prev, error: '올바른 수량을 입력해주세요.' }));
-      return;
+      throw new Error('올바른 수량을 입력해주세요.');
+    }
+
+    // 허용 페어 검증
+    if (!isAllowedPair(fromToken as SwapSymbol, toToken as SwapSymbol)) {
+      setSwapState(prev => ({ ...prev, error: '이 앱에서는 YOY 중심 스왑만 지원됩니다' }));
+      throw new Error('이 앱에서는 YOY 중심 스왑만 지원됩니다');
     }
 
     setSwapState(prev => ({ ...prev, isSwapping: true, error: null }));
@@ -166,25 +188,34 @@ export function useUniswap(provider?: Provider): UseUniswapReturn {
         amountIn: '',
         amountOut: '',
       }));
+      return txHash;
     } catch (error) {
       setSwapState(prev => ({
         ...prev,
         isSwapping: false,
         error: error instanceof Error ? error.message : '스왑 실행 실패',
       }));
+      throw error;
     }
   }, [swapState.fromToken, swapState.toToken, swapState.amountIn]);
 
   // 토큰 교체
   const swapTokens = useCallback(() => {
-    setSwapState(prev => ({
-      ...prev,
-      fromToken: prev.toToken,
-      toToken: prev.fromToken,
-      amountIn: prev.amountOut,
-      amountOut: prev.amountIn,
-      error: null,
-    }));
+    setSwapState(prev => {
+      const nextFrom = prev.toToken as SwapSymbol;
+      const nextTo = prev.fromToken as SwapSymbol;
+      if (!isAllowedPair(nextFrom, nextTo)) {
+        return { ...prev, error: '이 앱에서는 YOY 중심 스왑만 지원됩니다' };
+      }
+      return {
+        ...prev,
+        fromToken: nextFrom,
+        toToken: nextTo,
+        amountIn: prev.amountOut,
+        amountOut: prev.amountIn,
+        error: null,
+      };
+    });
   }, []);
 
   // 에러 클리어
@@ -208,37 +239,73 @@ export function useUniswap(provider?: Provider): UseUniswapReturn {
     });
   }, []);
 
-  // 입력 수량 변경 시 자동 환율 조회
+  // 입력 변경 시 자동 환율 조회 (양방향 지원)
   useEffect(() => {
-    if (swapState.amountIn && provider) {
-      const timeoutId = setTimeout(async () => {
-        try {
-          const quote = await fetchQuote(swapState.fromToken, swapState.toToken, swapState.amountIn, provider);
-          
+    const doQuote = async () => {
+      try {
+        // provider가 없으면 가격지수 기반 간단 계산으로 폴백
+        const fallbackRate = () => {
+          try {
+            const pFrom = getCoinPriceByCurrency(swapState.fromToken, 'USD' as any) || 0;
+            const pTo = getCoinPriceByCurrency(swapState.toToken, 'USD' as any) || 0;
+            if (!pFrom || !pTo) return 0;
+            return pFrom / pTo;
+          } catch { return 0; }
+        };
+        // amountIn을 기준으로 amountOut 계산
+        if (lastEdited === 'in' && swapState.amountIn) {
+          let quote = '';
+          if (provider) {
+            quote = await fetchQuote(swapState.fromToken, swapState.toToken, swapState.amountIn, provider);
+          } else {
+            const rate = fallbackRate();
+            quote = rate ? (parseFloat(swapState.amountIn) * rate).toString() : '';
+          }
           setSwapState(prev => ({
             ...prev,
             amountOut: quote,
             isLoading: false,
             priceImpact: calculatePriceImpact(swapState.amountIn, quote, swapState.fromToken, swapState.toToken),
           }));
-        } catch (error) {
-          console.error('환율 조회 오류:', error);
+          return;
+        }
+        // amountOut을 기준으로 amountIn 계산(역방향): 토큰을 뒤집어 입력값을 인풋으로 사용
+        if (lastEdited === 'out' && swapState.amountOut) {
+          let reverse = '';
+          if (provider) {
+            reverse = await fetchQuote(swapState.toToken, swapState.fromToken, swapState.amountOut, provider);
+          } else {
+            const rate = fallbackRate();
+            reverse = rate ? (parseFloat(swapState.amountOut) / rate).toString() : '';
+          }
           setSwapState(prev => ({
             ...prev,
+            amountIn: reverse,
             isLoading: false,
-            error: error instanceof Error ? error.message : '환율 조회 실패',
+            // 역방향일 때도 priceImpact는 정방향 기준으로 산출
+            priceImpact: calculatePriceImpact(reverse, swapState.amountOut, swapState.fromToken, swapState.toToken),
           }));
         }
-      }, 500); // 500ms 디바운스
-
-      return () => clearTimeout(timeoutId);
-    }
-  }, [swapState.amountIn, swapState.fromToken, swapState.toToken, provider]);
+      } catch (error) {
+        console.error('환율 조회 오류:', error);
+        setSwapState(prev => ({
+          ...prev,
+          isLoading: false,
+          error: error instanceof Error ? error.message : '환율 조회 실패',
+        }));
+      }
+    };
+    // 디바운스
+    const timeoutId = setTimeout(() => { void doQuote(); }, 400);
+    return () => clearTimeout(timeoutId);
+  }, [lastEdited, swapState.amountIn, swapState.amountOut, swapState.fromToken, swapState.toToken, provider]);
 
   // 가스비 추정
   useEffect(() => {
     if (swapState.amountIn && swapState.fromToken && swapState.toToken) {
-      // 실제로는 signer가 필요하지만 여기서는 시뮬레이션
+      // 실제 추정이 어려운 환경에서는 보수적으로 상수값을 사용하고,
+      // 추후 provider 기반으로 동적 추정 로직을 끼울 수 있도록 훅을 둡니다.
+      // 0.005 ETH 상당 가스로 가정
       setSwapState(prev => ({ ...prev, gasFee: '0.005' }));
     }
   }, [swapState.amountIn, swapState.fromToken, swapState.toToken]);
@@ -249,6 +316,7 @@ export function useUniswap(provider?: Provider): UseUniswapReturn {
     parseFloat(swapState.amountIn) > 0 &&
     swapState.amountOut &&
     parseFloat(swapState.amountOut) > 0 &&
+    isAllowedPair(swapState.fromToken as SwapSymbol, swapState.toToken as SwapSymbol) &&
     !swapState.isLoading &&
     !swapState.isSwapping &&
     !swapState.error

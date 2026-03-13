@@ -133,6 +133,17 @@ interface TransactionActions {
   // 로딩 상태 관리
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
+  
+  // 실패 거래 기록(잔액 변화 없음)
+  recordFailure: (data: {
+    type: TransactionType;
+    description: string;
+    symbol?: string;
+    amount?: number;
+    transactionHash?: string;
+    source?: string;
+    memo?: string;
+  }) => Transaction;
 }
 
 // ===== 거래 스토어 =====
@@ -337,6 +348,20 @@ export const useTransactionStore = create<TransactionState & TransactionActions>
           description: data.description,
           memo: data.reason,
           source: 'admin',
+        });
+      },
+      
+      recordFailure: (data) => {
+        return get().addTransaction({
+          type: data.type,
+          success: false,
+          status: 'failed',
+          symbol: data.symbol,
+          amount: data.amount,
+          description: data.description,
+          transactionHash: data.transactionHash,
+          source: data.source || 'system',
+          memo: data.memo,
         });
       },
 
