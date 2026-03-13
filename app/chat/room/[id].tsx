@@ -1876,6 +1876,29 @@ function RoomInner() {
         }}
         ListEmptyComponent={<View style={{ padding: 24, alignItems:'center' }}><Text style={{ color:'#777' }}>메시지가 없습니다</Text></View>}
       />
+        {/* 맨 아래로 이동 버튼 - 키보드 닫힌 상태에서만 표시 */}
+        {!keyboardOpen && (
+          <TouchableOpacity
+            onPress={() => { try { listRef.current?.scrollToEnd?.({ animated: true }); } catch {} }}
+            style={{
+              position: 'absolute',
+              right: 16,
+              bottom: 70 + Math.max(insets.bottom, 6),
+              width: 40,
+              height: 40,
+              borderRadius: 20,
+              backgroundColor: 'rgba(42, 42, 42, 0.9)',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderWidth: 1,
+              borderColor: '#444',
+              zIndex: 10,
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={{ color: '#FFD700', fontSize: 18, fontWeight: '700' }}>↓</Text>
+          </TouchableOpacity>
+        )}
         <View style={[styles.inputContainer, { paddingBottom: keyboardOpen ? 4 : Math.max(insets.bottom, 6) }]}>
           <TouchableOpacity
             onPress={()=>{ try { onAttach(); } catch {} }}
