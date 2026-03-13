@@ -44,6 +44,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [autoLoginEnabled, setAutoLoginEnabled] = useState<boolean>(false);
   // Manual-login gate: only allow sessions initiated by user action
   const allowSessionRef = useRef(false);
+  // Performance: track auth initialization
+  const authInitRef = useRef(Date.now());
 
   WebBrowser.maybeCompleteAuthSession();
   const googleDiscovery = {
@@ -90,6 +92,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       } finally {
         setIsLoading(false);
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.log(`[PERF] auth-init: ${Date.now() - authInitRef.current}ms`);
+        }
       }
     })();
   }, []);

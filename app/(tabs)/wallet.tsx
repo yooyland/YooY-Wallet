@@ -1051,6 +1051,14 @@ async function scanImageWithAll(uri: string): Promise<string | null> {
  type TabKey = 'assets' | 'send' | 'receive' | 'gift' | 'history' | 'orders';
 
 export default function WalletScreen() {
+  // Performance: track wallet screen mount time
+  const walletMountRef = React.useRef(Date.now());
+  React.useEffect(() => {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      console.log(`[PERF] wallet-mount: ${Date.now() - walletMountRef.current}ms`);
+    }
+  }, []);
+  
   const { currentUser, accessToken } = useAuth();
   const { tab, coin, create } = useLocalSearchParams<{ tab?: string; coin?: string; create?: string }>();
   const { currency, language } = usePreferences();
