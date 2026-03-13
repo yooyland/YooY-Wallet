@@ -4513,6 +4513,7 @@ export default function WalletScreen() {
   const [qrModalTab, setQrModalTab] = useState<TabKey>('receive');
   const [qrModalType, setQrModalType] = useState<'wallet' | 'pngsave'>('wallet');
   const qrModalContentRef = useRef<View|null>(null);
+  const qrPopupOverlayRef = useRef<View|null>(null);
   // 커스텀 페이로드 QR (바우처 등)
   const [customQrPayload, setCustomQrPayload] = useState<string | null>(null);
   const [customQrVisible, setCustomQrVisible] = useState(false);
@@ -8231,7 +8232,11 @@ export default function WalletScreen() {
 
       {/* QR 코드 팝업 - Modal 대신 absolute View 사용하여 captureScreen 가능하게 함 */}
       {qrCoin && qrModalVisible && (
-          <View style={[styles.qrModalOverlay, { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999 }]}>
+          <View 
+            ref={qrPopupOverlayRef as any}
+            style={[styles.qrModalOverlay, { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999 }]}
+            collapsable={false}
+          >
             <View
               style={styles.qrModalContent}
               ref={qrModalContentRef as any}
@@ -8533,7 +8538,7 @@ export default function WalletScreen() {
               {/* 경고 섹션 제거 요청 */}
             </View>
             
-            {/* 저장 버튼 - 전체 화면 캡처 (시스템 스크린샷과 동일) */}
+            {/* 저장 버튼 - 실제 보이는 팝업 화면 캡처 */}
             {qrModalType === 'pngsave' && (
               <View style={styles.qrModalDownloadButtonContainer}>
                 <TouchableOpacity 
@@ -8544,12 +8549,16 @@ export default function WalletScreen() {
                         Alert.alert('Web not supported');
                         return;
                       }
-                      if (!captureScreen) {
+                      if (!captureRef) {
                         Alert.alert(language === 'en' ? 'Capture not available' : '캡처 기능 없음');
                         return;
                       }
+                      if (!qrPopupOverlayRef.current) {
+                        Alert.alert(language === 'en' ? 'Popup not ready' : '팝업 준비 안됨');
+                        return;
+                      }
                       
-                      const tmpPng = await captureScreen({
+                      const tmpPng = await captureRef(qrPopupOverlayRef.current, {
                         format: 'png',
                         quality: 1,
                         result: 'tmpfile',
