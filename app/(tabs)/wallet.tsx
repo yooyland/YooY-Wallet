@@ -8523,18 +8523,19 @@ export default function WalletScreen() {
                   style={[styles.qrSaveButton, { backgroundColor:'#D4AF37', borderColor:'#D4AF37' }]} 
                   onPress={async () => {
                     try {
-                      // FIXED: 전체 카드(제목+프레임+QR)를 캡처하여 QR 인식률 향상
-                      // qrModalContentRef를 사용해서 모달 전체를 캡처 (2번 이미지처럼)
-                      if (Platform.OS !== 'web' && captureRef && qrModalContentRef?.current) {
-                        const minPixelRatio = Math.max(PixelRatio.get(), 2.5);
-                        console.log('[QR Save] Capturing full modal card with pixelRatio:', minPixelRatio);
-                        const tmpPng = await captureRef(qrModalContentRef.current, { 
+                      // QR 코드만 고해상도로 캡처 (흰색 배경 = QR 인식에 최적)
+                      // 스크린샷 방식이 더 안정적이므로 사용자에게 안내
+                      if (Platform.OS !== 'web' && captureRef && qrShotBoxRef?.current) {
+                        // 고해상도 캡처 (최소 1200px)
+                        const minPixelRatio = Math.max(PixelRatio.get(), 3.5);
+                        console.log('[QR Save] Capturing QR only with high pixelRatio:', minPixelRatio);
+                        const tmpPng = await captureRef(qrShotBoxRef.current, { 
                           format: 'png', 
                           quality: 1, 
                           result: 'tmpfile',
                           pixelRatio: minPixelRatio
                         });
-                        console.log('[QR Save] Captured full card PNG:', tmpPng);
+                        console.log('[QR Save] Captured QR PNG:', tmpPng);
                         
                         // 갤러리에 저장
                         const perm = await MediaLibrary.requestPermissionsAsync();
@@ -8546,7 +8547,12 @@ export default function WalletScreen() {
                           } else {
                             await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
                           }
-                          Alert.alert(language === 'en' ? 'Saved' : '저장 완료', language === 'en' ? 'QR image saved to YooY album' : 'QR 이미지가 YooY 앨범에 저장되었습니다');
+                          Alert.alert(
+                            language === 'en' ? 'Saved' : '저장 완료', 
+                            language === 'en' 
+                              ? 'QR image saved. For better recognition, use system screenshot instead.' 
+                              : 'QR 이미지가 저장되었습니다.\n\n💡 인식이 안 되면 시스템 스크린샷을 사용해주세요.'
+                          );
                           setQrModalVisible(false);
                           return;
                         }
@@ -8561,7 +8567,12 @@ export default function WalletScreen() {
                       const title = `[${qrCoin?.symbol}] / ${recvInput || '0'} ${qrCoin?.symbol}`;
                       const ok = await handleSaveQrImage(payload, title);
                       if (ok) {
-                        Alert.alert(language === 'en' ? 'Saved' : '저장 완료', language === 'en' ? 'QR image saved' : 'QR 이미지가 저장되었습니다');
+                        Alert.alert(
+                          language === 'en' ? 'Saved' : '저장 완료', 
+                          language === 'en' 
+                            ? 'QR image saved. For better recognition, use system screenshot instead.' 
+                            : 'QR 이미지가 저장되었습니다.\n\n💡 인식이 안 되면 시스템 스크린샷을 사용해주세요.'
+                        );
                       }
                       setQrModalVisible(false);
                     } catch (e) {

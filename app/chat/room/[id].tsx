@@ -679,6 +679,7 @@ function RoomInner() {
   const listRef = useRef<any>(null);
   const didAutoScrollRef = useRef<boolean>(false);
   const nearBottomRef = useRef<boolean>(true);
+  const [isNearBottom, setIsNearBottom] = useState<boolean>(true); // 상태로도 추적 (버튼 표시용)
   const lastEndIdRef = useRef<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'general'|'members'|'ttl'|'rule'|'alarm'>('general');
@@ -1856,7 +1857,10 @@ function RoomInner() {
             const h = Number(nativeEvent?.contentSize?.height || 0);
             const vh = Number(nativeEvent?.layoutMeasurement?.height || 0);
             const dist = Math.max(0, h - (y + vh));
-            nearBottomRef.current = dist < 240; // 240px 이내면 바닥 근처로 간주(가변 높이 보정)
+            const isNear = dist < 240; // 240px 이내면 바닥 근처로 간주(가변 높이 보정)
+            nearBottomRef.current = isNear;
+            // 상태 업데이트 (버튼 표시용) - 변경될 때만 업데이트
+            setIsNearBottom(prev => prev !== isNear ? isNear : prev);
           } catch {}
         }}
         scrollEventThrottle={16}
@@ -1903,10 +1907,15 @@ function RoomInner() {
         }}
         ListEmptyComponent={<View style={{ padding: 24, alignItems:'center' }}><Text style={{ color:'#777' }}>메시지가 없습니다</Text></View>}
       />
-        {/* 맨 아래로 이동 버튼 - 키보드 닫힌 상태에서만 표시 */}
-        {!keyboardOpen && (
+        {/* 맨 아래로 이동 버튼 - 키보드 닫힌 상태 + 맨 아래가 아닐 때만 표시 */}
+        {!keyboardOpen && !isNearBottom && (
           <TouchableOpacity
-            onPress={() => { try { listRef.current?.scrollToEnd?.({ animated: true }); } catch {} }}
+            onPress={() => { 
+              try { 
+                listRef.current?.scrollToEnd?.({ animated: true }); 
+                setIsNearBottom(true); // 클릭 시 즉시 버튼 숨김
+              } catch {} 
+            }}
             style={{
               position: 'absolute',
               right: 16,
