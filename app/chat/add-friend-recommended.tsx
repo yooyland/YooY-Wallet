@@ -4,7 +4,7 @@ import { ThemedView } from '@/components/themed-view';
 import { router } from 'expo-router';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { t } from '@/i18n';
-import React from 'react';
+import React, { useCallback } from 'react';
 import { FlatList, StyleSheet, Text, TouchableOpacity, View, Image, Alert } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { firebaseAuth, firestore } from '@/lib/firebase';
@@ -99,7 +99,7 @@ export default function AddFriendRecommendedScreen() {
 
   React.useEffect(() => { void load(); }, [load]);
 
-  const onAddFriend = async (u: RecommendedUser) => {
+  const onAddFriend = useCallback(async (u: RecommendedUser) => {
     try {
       if (!me || !u?.uid) return;
       //친구 양방향 등록
@@ -110,7 +110,29 @@ export default function AddFriendRecommendedScreen() {
       Alert.alert(t('addFriend', language), `${u.name} ${t('addedAsFriend', language)}`);
       setFriendsSet((s) => ({ ...s, [u.uid]: true }));
     } catch { Alert.alert(t('error', language), t('addFriendFailed', language)); }
-  };
+  }, [me, language]);
+
+  // FlatList renderItem 최적화: useCallback으로 추출
+  const renderRecommendedItem = useCallback(({ item }: { item: RecommendedUser }) => (
+    <View style={styles.item}>
+      {item.avatar ? (
+        <Image source={{ uri: item.avatar }} style={styles.avatarImage} />
+      ) : (
+        <View style={styles.avatar}><Text style={styles.avatarText}>{(item.name||item.email||'U').charAt(0)}</Text></View>
+      )}
+      <View style={{ flex: 1 }}>
+        <ThemedText style={styles.name}>{item.name}</ThemedText>
+        {!!item.email && (<Text style={{ color:'#888', fontSize: 11 }}>{item.email}</Text>)}
+      </View>
+      <TouchableOpacity
+        style={[styles.addBtn, friendsSet[item.uid] && { opacity: 0.5 }]}
+        disabled={!!friendsSet[item.uid]}
+        onPress={() => onAddFriend(item)}
+      >
+        <Text style={styles.addText}>{friendsSet[item.uid] ? t('friendAdded', language) : t('addFriend', language)}</Text>
+      </TouchableOpacity>
+    </View>
+  ), [friendsSet, onAddFriend, language]);
 
   return (
     <>
@@ -128,26 +150,7 @@ export default function AddFriendRecommendedScreen() {
           contentContainerStyle={{ padding: 12 }}
           refreshing={loading}
           onRefresh={load}
-          renderItem={({ item }) => (
-            <View style={styles.item}>
-              {item.avatar ? (
-                <Image source={{ uri: item.avatar }} style={styles.avatarImage} />
-              ) : (
-                <View style={styles.avatar}><Text style={styles.avatarText}>{(item.name||item.email||'U').charAt(0)}</Text></View>
-              )}
-              <View style={{ flex: 1 }}>
-                <ThemedText style={styles.name}>{item.name}</ThemedText>
-                {!!item.email && (<Text style={{ color:'#888', fontSize: 11 }}>{item.email}</Text>)}
-              </View>
-              <TouchableOpacity
-                style={[styles.addBtn, friendsSet[item.uid] && { opacity: 0.5 }]}
-                disabled={!!friendsSet[item.uid]}
-                onPress={() => onAddFriend(item)}
-              >
-                <Text style={styles.addText}>{friendsSet[item.uid] ? t('friendAdded', language) : t('addFriend', language)}</Text>
-              </TouchableOpacity>
-            </View>
-          )}
+          renderItem={renderRecommendedItem}
           ListEmptyComponent={!loading ? (
             <View style={{ paddingVertical: 40, alignItems:'center' }}>
               <Text style={{ color:'#888' }}>{t('noRecommendedFriends', language)}</Text>

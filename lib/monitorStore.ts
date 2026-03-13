@@ -15,6 +15,7 @@ import {
 import { fetchPricesUsd } from '@/lib/prices';
 import priceManager from '@/lib/priceManager';
 import { fetchHistoricalUsd, getDecimalsForSymbol } from '@/lib/prices';
+import { perfStart, perfEnd } from '@/lib/perfTimer';
 
 type MonitorState = {
   uid: string | null;
@@ -66,6 +67,7 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
   syncMe: async (tag?: string) => {
     if (inflight) return inflight;
     inflight = (async () => {
+      perfStart('syncMe');
       const log = (...args: any[]) => console.log(tag || '[SYNC]', ...args);
       try {
         set({ syncing: true });
@@ -437,6 +439,7 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
       } finally {
         set({ syncing: false });
         inflight = null;
+        perfEnd('syncMe');
       }
     })();
     return inflight;

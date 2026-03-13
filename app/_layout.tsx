@@ -13,6 +13,10 @@ import '../app/global.css';
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import { KeyboardAvoidingView, Platform, Keyboard } from 'react-native';
 import * as ReactNative from 'react-native';
+import { setAppStartTime, logAppStartupTime } from '@/lib/perfTimer';
+
+// Mark app start time immediately
+setAppStartTime();
 
 import { LoadingOverlay } from '@/components/loading-overlay';
 import { REMOTE_EXPLORERS_URL } from '@/config/app';
@@ -103,6 +107,9 @@ export default function RootLayout() {
     })();
     // 성능 문제 완화: 초기 구동 시 대량 권한 요청을 수행하지 않음(각 기능 진입 시 개별 요청)
     // (기존 코드 비활성화; 필요 시 기능 화면에서 onPress 시점에 요청)
+    
+    // Performance timing: initial layout effect complete
+    logAppStartupTime('_layout useEffect complete');
   }, []);
 
   // 딥링크 처리: yooy://pay, yooy://gift, yooy://card, yooy://invite

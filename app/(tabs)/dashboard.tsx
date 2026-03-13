@@ -44,11 +44,17 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useWalletConnect } from '@/contexts/WalletConnectContext';
 import { useMonitorStore } from '@/lib/monitorStore';
+import { perfStart, perfEnd, logAppStartupTime } from '@/lib/perfTimer';
 
 // Per-user scoped keys
 const photoKeyFor = (uid?: string|null) => (uid ? `u:${uid}:profile.photoUri` : 'profile.photoUri');
 
 export default function DashboardScreen() {
+  // Performance: log dashboard mount time
+  useEffect(() => {
+    logAppStartupTime('Dashboard mounted');
+  }, []);
+  
   const insets = useSafeAreaInsets();
   const { signOut, isAuthenticated, currentUser } = useAuth();
   const { currency, language } = usePreferences();
@@ -73,11 +79,13 @@ export default function DashboardScreen() {
     } catch {}
   }
   const onRefreshDash = useCallback(async () => {
+    perfStart('dashboard-refresh');
     setRefreshingDash(true);
     try {
       await refreshBalancesBase();
     } finally {
       setRefreshingDash(false);
+      perfEnd('dashboard-refresh');
     }
   }, [currentUserEmail, calculateFinalBalances]);
   const [realTimeBalances, setRealTimeBalances] = useState(balances);

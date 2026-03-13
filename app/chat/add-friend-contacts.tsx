@@ -574,6 +574,29 @@ export default function AddFriendContactsScreen() {
     }
   }, [contacts, excluded, normalizePhone]);
 
+  // FlatList renderItem 최적화: useCallback으로 추출
+  const renderContactListItem = useCallback(({ item }: { item: PhoneContact }) => (
+    <View style={styles.itemRow}>
+      <View style={styles.itemCol}>
+        <ThemedText style={styles.name}>{item.name}</ThemedText>
+        <Text style={styles.phone}>{item.phone ?? '번호없음'}</Text>
+      </View>
+      <TouchableOpacity onPress={async () => {
+        const id = item.id;
+        const next = { ...excluded, [id]: !excluded[id] };
+        setExcluded(next);
+        try { await AsyncStorage.setItem('contacts.excluded', JSON.stringify(next)); } catch {}
+      }} style={[styles.excludeBtn, excluded[item.id] && { backgroundColor: '#444', borderColor: '#666' }]}>
+        <Text style={{ color: '#FFD700', fontWeight: '900', fontSize: 16 }}>-</Text>
+      </TouchableOpacity>
+      {(() => { const d = normalizePhone(item.phone); const done = !!addedPhones[d] || isAlreadyFriend(d); return (
+        <TouchableOpacity style={[styles.addBtn, done && styles.addBtnDone]} disabled={done} onPress={() => onInvite(item)}>
+          <Text style={[styles.addBtnText, done && styles.addBtnTextDone]}>{done ? t('done', language) : t('addFriend', language)}</Text>
+        </TouchableOpacity>
+      ); })()}
+    </View>
+  ), [excluded, addedPhones, isAlreadyFriend, onInvite, normalizePhone, language]);
+
   return (
     <>
       <ThemedView style={styles.container}>
@@ -708,27 +731,7 @@ export default function AddFriendContactsScreen() {
                 </View>
               );
             }}
-            renderItem={({ item }) => (
-              <View style={styles.itemRow}>
-                <View style={styles.itemCol}>
-                  <ThemedText style={styles.name}>{item.name}</ThemedText>
-                  <Text style={styles.phone}>{item.phone ?? '번호없음'}</Text>
-                </View>
-                <TouchableOpacity onPress={async () => {
-                  const id = item.id;
-                  const next = { ...excluded, [id]: !excluded[id] };
-                  setExcluded(next);
-                  try { await AsyncStorage.setItem('contacts.excluded', JSON.stringify(next)); } catch {}
-                }} style={[styles.excludeBtn, excluded[item.id] && { backgroundColor: '#444', borderColor: '#666' }]}>
-                  <Text style={{ color: '#FFD700', fontWeight: '900', fontSize: 16 }}>-</Text>
-                </TouchableOpacity>
-                {(() => { const d = normalizePhone(item.phone); const done = !!addedPhones[d] || isAlreadyFriend(d); return (
-                  <TouchableOpacity style={[styles.addBtn, done && styles.addBtnDone]} disabled={done} onPress={() => onInvite(item)}>
-                    <Text style={[styles.addBtnText, done && styles.addBtnTextDone]}>{done ? t('done', language) : t('addFriend', language)}</Text>
-                  </TouchableOpacity>
-                ); })()}
-              </View>
-            )}
+            renderItem={renderContactListItem}
             ListEmptyComponent={
               <View style={{ padding: 20, alignItems: 'center' }}>
                 <ThemedText style={{ color: '#B8B8B8' }}>{t('noContactsToShow', language)}</ThemedText>

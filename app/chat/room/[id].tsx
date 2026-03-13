@@ -24,6 +24,7 @@ import { playNotificationSound, type NotificationMode } from '@/lib/notification
 import { t } from '@/i18n';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { Ionicons } from '@expo/vector-icons';
+import { perfStart, perfEnd } from '@/lib/perfTimer';
 // 안정 참조: 빈 배열 상수 (zustand selector에서 새 배열 생성으로 인한 무한 업데이트 방지)
 const EMPTY_LIST: any[] = [];
 class RoomErrorBoundary extends React.Component<any, { hasError: boolean; err?: any }> {
@@ -63,6 +64,12 @@ class RoomErrorBoundary extends React.Component<any, { hasError: boolean; err?: 
 }
 
 function RoomInner() {
+  // Performance: track chat room enter time
+  useEffect(() => {
+    perfStart('chat-room-enter');
+    return () => { perfEnd('chat-room-enter'); };
+  }, []);
+  
   // SafeAreaInsetsContext로 직접 조회하여 Provider 미주입 시에도 0 폴백
   const insetsFromCtx = React.useContext(SafeAreaInsetsContext as any) as { top: number; bottom: number; left: number; right: number } | null;
   const insets = insetsFromCtx || { top: 0, bottom: 0, left: 0, right: 0 };

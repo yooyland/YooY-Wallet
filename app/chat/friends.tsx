@@ -12,7 +12,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, Stack, usePathname } from 'expo-router';
 import * as SMS from 'expo-sms';
 import { Linking, Platform } from 'react-native';
-import React from 'react';
+import React, { useCallback } from 'react';
 import { ActivityIndicator, FlatList, Image, Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View, TextInput, Alert, Keyboard, Share } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { useChatSettingsStore } from '@/src/features/chat/store/chat-settings.store';
@@ -371,6 +371,45 @@ export default function ChatFriendsScreen() {
       Alert.alert('오류', '연락처 동기화에 실패했습니다.');
     }
   }, [contactsSelected, contactsFiltered, closeContactsModal]);
+
+  // FlatList renderItem 최적화: useCallback으로 추출
+  const renderContactItem = useCallback(({ item }: { item: { id: string; name: string; phones?: string[]; emails?: string[] } }) => {
+    const sel = contactsSelected.has(item.id);
+    const phone = item.phones?.[0] ? `+${item.phones[0]}` : '';
+    const email = item.emails?.[0] ? item.emails[0] : '';
+    const alreadyFriend = isRegisteredUser({ id: item.id, name: item.name, phone, email });
+    return (
+      <TouchableOpacity
+        onPress={() => toggleContactSelect(item.id)}
+        activeOpacity={0.75}
+        style={{ flexDirection:'row', alignItems:'center', paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#141414' }}
+      >
+        <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 1, borderColor: sel ? '#FFD700' : '#555', alignItems:'center', justifyContent:'center', marginRight: 10, backgroundColor: sel ? 'rgba(255,215,0,0.12)' : 'transparent' }}>
+          <Text style={{ color: sel ? '#FFD700' : '#666', fontWeight:'800' }}>{sel ? '✓' : ''}</Text>
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text numberOfLines={1} style={{ color:'#EDEDED', fontWeight:'700' }}>{item.name}</Text>
+          <Text numberOfLines={1} style={{ color:'#9E9E9E', fontSize: 12 }}>{[phone, email].filter(Boolean).join('  ·  ')}</Text>
+        </View>
+        <TouchableOpacity
+          disabled={alreadyFriend}
+          onPress={() => {
+            if (alreadyFriend) return;
+            setContactsSelected(new Set([item.id]));
+            setTimeout(()=>addSelectedContactsToAppFriends(), 0);
+          }}
+          style={[
+            styles.actBtn,
+            { paddingHorizontal: 10, borderColor: alreadyFriend ? '#444' : styles.actBtn.borderColor },
+          ]}
+        >
+          <Text style={[styles.actText, alreadyFriend && { color: '#777' }]}>
+            {alreadyFriend ? '추가됨' : '추가'}
+          </Text>
+        </TouchableOpacity>
+      </TouchableOpacity>
+    );
+  }, [contactsSelected, isRegisteredUser, toggleContactSelect, addSelectedContactsToAppFriends]);
 
   const addManualToAppFriends = React.useCallback(async () => {
     try {
@@ -1601,44 +1640,7 @@ export default function ChatFriendsScreen() {
                     removeClippedSubviews
                     onEndReachedThreshold={0.4}
                     onEndReached={() => setContactsShowCount((c) => c + 300)}
-                    renderItem={({ item }) => {
-                      const sel = contactsSelected.has(item.id);
-                      const phone = item.phones?.[0] ? `+${item.phones[0]}` : '';
-                      const email = item.emails?.[0] ? item.emails[0] : '';
-                      // 이미 앱 친구로 추가된 연락처 여부
-                      const alreadyFriend = isRegisteredUser({ id: item.id, name: item.name, phone, email });
-                      return (
-                        <TouchableOpacity
-                          onPress={() => toggleContactSelect(item.id)}
-                          activeOpacity={0.75}
-                          style={{ flexDirection:'row', alignItems:'center', paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#141414' }}
-                        >
-                          <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 1, borderColor: sel ? '#FFD700' : '#555', alignItems:'center', justifyContent:'center', marginRight: 10, backgroundColor: sel ? 'rgba(255,215,0,0.12)' : 'transparent' }}>
-                            <Text style={{ color: sel ? '#FFD700' : '#666', fontWeight:'800' }}>{sel ? '✓' : ''}</Text>
-                          </View>
-                          <View style={{ flex: 1, minWidth: 0 }}>
-                            <Text numberOfLines={1} style={{ color:'#EDEDED', fontWeight:'700' }}>{item.name}</Text>
-                            <Text numberOfLines={1} style={{ color:'#9E9E9E', fontSize: 12 }}>{[phone, email].filter(Boolean).join('  ·  ')}</Text>
-                          </View>
-                          <TouchableOpacity
-                            disabled={alreadyFriend}
-                            onPress={() => {
-                              if (alreadyFriend) return;
-                              setContactsSelected(new Set([item.id]));
-                              setTimeout(()=>addSelectedContactsToAppFriends(), 0);
-                            }}
-                            style={[
-                              styles.actBtn,
-                              { paddingHorizontal: 10, borderColor: alreadyFriend ? '#444' : styles.actBtn.borderColor },
-                            ]}
-                          >
-                            <Text style={[styles.actText, alreadyFriend && { color: '#777' }]}>
-                              {alreadyFriend ? '추가됨' : '추가'}
-                            </Text>
-                          </TouchableOpacity>
-                        </TouchableOpacity>
-                      );
-                    }}
+                    renderItem={renderContactItem}
                   />
                 )}
               </View>
