@@ -65,10 +65,14 @@ class RoomErrorBoundary extends React.Component<any, { hasError: boolean; err?: 
 
 function RoomInner() {
   // Performance: track chat room enter time
+  const roomMountTimeRef = useRef(Date.now());
   useEffect(() => {
     perfStart('chat-room-enter');
     return () => { perfEnd('chat-room-enter'); };
   }, []);
+  
+  // Performance: log when first messages render completes
+  const didLogFirstRenderRef = useRef(false);
   
   // SafeAreaInsetsContext로 직접 조회하여 Provider 미주입 시에도 0 폴백
   const insetsFromCtx = React.useContext(SafeAreaInsetsContext as any) as { top: number; bottom: number; left: number; right: number } | null;
@@ -1852,7 +1856,16 @@ function RoomInner() {
         }}
         renderItem={renderItem}
         contentContainerStyle={styles.messagesContent}
-        onLayout={() => { try { listRef.current?.scrollToEnd?.({ animated: false }); } catch {} }}
+        onLayout={() => { 
+          try { 
+            listRef.current?.scrollToEnd?.({ animated: false }); 
+            // Performance: log first render time
+            if (!didLogFirstRenderRef.current && typeof __DEV__ !== 'undefined' && __DEV__) {
+              didLogFirstRenderRef.current = true;
+              console.log(`[PERF] chat-room-first-render: ${Date.now() - roomMountTimeRef.current}ms`);
+            }
+          } catch {} 
+        }}
         onContentSizeChange={() => {
           try {
             if (!didAutoScrollRef.current) {
@@ -1875,7 +1888,13 @@ function RoomInner() {
             <TextInput
               value={text}
               onChangeText={setText}
-              onFocus={()=> setKeyboardOpen(true)}
+              onFocus={()=> {
+                setKeyboardOpen(true);
+                // Performance: log input focus time
+                if (typeof __DEV__ !== 'undefined' && __DEV__) {
+                  console.log(`[PERF] chat-input-focus at: ${Date.now() - roomMountTimeRef.current}ms from room mount`);
+                }
+              }}
               onBlur={()=> setKeyboardOpen(false)}
               onContentSizeChange={(e)=>{ try { const h=Math.min(120, Math.max(36, Math.ceil(e.nativeEvent?.contentSize?.height||36))); setInputHeight(h); } catch {} }}
               placeholder="메시지를 입력하세요..."
