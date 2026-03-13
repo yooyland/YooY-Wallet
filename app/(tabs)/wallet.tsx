@@ -8295,13 +8295,10 @@ export default function WalletScreen() {
                 {/* PNG 저장 미리보기 - 스크린샷 방식으로 변경 */}
                 {qrModalType === 'pngsave' ? (
                   <View style={{ alignItems:'center', justifyContent:'center' }}>
-                    {/* 스크린샷 안내 */}
+                    {/* 저장 안내 */}
                     <View style={{ alignItems:'center', marginBottom: 12, paddingHorizontal: 16 }}>
-                      <ThemedText style={{ color:'#FFD700', fontSize:14, fontWeight:'700', textAlign:'center' }}>
-                        {language==='en' ? '📸 Take a screenshot to auto-save QR' : '📸 스크린샷을 찍으면 고화질 QR이 자동 저장됩니다'}
-                      </ThemedText>
-                      <ThemedText style={{ color:'#888', fontSize:11, marginTop:4, textAlign:'center' }}>
-                        {language==='en' ? 'Power + Volume Down (Android) / Power + Volume Up (iOS)' : '전원 + 볼륨하단(안드로이드) / 전원 + 볼륨상단(아이폰)'}
+                      <ThemedText style={{ color:'#AAAAAA', fontSize:13, textAlign:'center' }}>
+                        {language==='en' ? 'Press Save to download QR image' : '아래 저장 버튼을 눌러 QR 이미지를 저장하세요'}
                       </ThemedText>
                     </View>
                     {/* 상단 타이틀 */}
@@ -8566,14 +8563,49 @@ export default function WalletScreen() {
               {/* 경고 섹션 제거 요청 */}
             </View>
             
-            {/* 닫기 버튼 - 팝업 컨테이너 밖 */}
+            {/* 저장 버튼 - QR만 캡처 후 팝업 닫힘 */}
             {qrModalType === 'pngsave' && (
               <View style={styles.qrModalDownloadButtonContainer}>
                 <TouchableOpacity 
-                  style={[styles.qrSaveButton, { backgroundColor:'#333', borderColor:'#555' }]} 
-                  onPress={() => setQrModalVisible(false)}
+                  style={[styles.qrSaveButton, { backgroundColor:'#D4AF37', borderColor:'#D4AF37' }]} 
+                  onPress={async () => {
+                    try {
+                      if (Platform.OS !== 'web' && captureRef && qrShotBoxRef?.current) {
+                        const minPixelRatio = Math.max(PixelRatio.get(), 3);
+                        console.log('[QR Save] Capturing QR with pixelRatio:', minPixelRatio);
+                        
+                        const tmpPng = await captureRef(qrShotBoxRef.current, { 
+                          format: 'png', 
+                          quality: 1, 
+                          result: 'tmpfile',
+                          pixelRatio: minPixelRatio
+                        });
+                        
+                        const perm = await MediaLibrary.requestPermissionsAsync();
+                        if (perm.status === 'granted') {
+                          const asset = await MediaLibrary.createAssetAsync(tmpPng);
+                          let album = await MediaLibrary.getAlbumAsync('YooY');
+                          if (!album) {
+                            album = await MediaLibrary.createAlbumAsync('YooY', asset, false);
+                          } else {
+                            await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+                          }
+                          Alert.alert(
+                            language === 'en' ? 'Saved!' : '저장 완료!', 
+                            language === 'en' 
+                              ? 'QR image saved to YooY album' 
+                              : 'QR 이미지가 YooY 앨범에 저장되었습니다'
+                          );
+                        }
+                      }
+                    } catch (e) {
+                      console.error('[QR Save] Error:', e);
+                      Alert.alert(language === 'en' ? 'Error' : '오류', language === 'en' ? 'Failed to save' : '저장 실패');
+                    }
+                    setQrModalVisible(false);
+                  }}
                 >
-                  <ThemedText style={{ color:'#FFF', fontWeight:'700' }}>{language==='en'?'Close':'닫기'}</ThemedText>
+                  <ThemedText style={{ color:'#000', fontWeight:'700' }}>{language==='en'?'Save':'저장'}</ThemedText>
                 </TouchableOpacity>
               </View>
             )}
