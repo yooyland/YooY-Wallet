@@ -692,22 +692,31 @@ function RoomInner() {
     }
   }, [ttlModalOpen]);
   // 캡처 차단: TTL 방에서 허용되지 않으면 모두 차단(권한 무시)
+  // 캡처 방지 상태를 ref로 추적하여 cleanup 시 올바르게 복원
+  const screenCaptureBlockedRef = useRef(false);
   useEffect(() => {
-    let reverted = false;
     (async () => {
       try {
         if (isTTLRoom && ttlSecurity && ttlSecurity.allowCapture === false) {
           await ScreenCapture.preventScreenCaptureAsync();
-          reverted = true;
+          screenCaptureBlockedRef.current = true;
         } else {
-          await ScreenCapture.allowScreenCaptureAsync();
+          // 이 방에서는 캡처 허용
+          if (screenCaptureBlockedRef.current) {
+            await ScreenCapture.allowScreenCaptureAsync();
+            screenCaptureBlockedRef.current = false;
+          }
         }
       } catch {}
     })();
+    // cleanup: 방을 떠날 때 항상 캡처 허용으로 복원
     return () => {
       (async () => {
         try {
-          if (reverted) await ScreenCapture.allowScreenCaptureAsync();
+          if (screenCaptureBlockedRef.current) {
+            await ScreenCapture.allowScreenCaptureAsync();
+            screenCaptureBlockedRef.current = false;
+          }
         } catch {}
       })();
     };

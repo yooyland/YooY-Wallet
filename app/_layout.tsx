@@ -31,6 +31,7 @@ import { useNotificationStore } from '@/src/features/chat/store/notification.sto
 import * as SecureStore from 'expo-secure-store';
 import * as ExpoLinking from 'expo-linking';
 import * as FileSystem from 'expo-file-system';
+import * as ScreenCapture from 'expo-screen-capture';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -44,6 +45,16 @@ export default function RootLayout() {
   const insets = insetsFromCtx || { top: 0, bottom: 0, left: 0, right: 0 };
   const pathname = usePathname();
   const needSafePadding = !/\/\(tabs\)\/dashboard(?:\/|$)/i.test(String(pathname || ''));
+  
+  // 앱 시작 시 스크린 캡처 허용 (이전에 막힌 상태가 남아있을 수 있음)
+  useEffect(() => {
+    (async () => {
+      try {
+        await ScreenCapture.allowScreenCaptureAsync();
+      } catch {}
+    })();
+  }, []);
+  
   useEffect(() => {
     // 전역 예외 핸들러: 릴리즈에서 앱이 즉시 종료되는 것을 방지
     try {
