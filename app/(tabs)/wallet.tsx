@@ -8536,40 +8536,38 @@ export default function WalletScreen() {
               {/* 경고 섹션 제거 요청 */}
             </View>
             
-            {/* 저장 버튼 - 전체 스크린샷 캡처 후 팝업 닫힘 */}
+            {/* 저장 버튼 - 팝업 내용 캡처 후 닫힘 */}
             {qrModalType === 'pngsave' && (
               <View style={styles.qrModalDownloadButtonContainer}>
                 <TouchableOpacity 
                   style={[styles.qrSaveButton, { backgroundColor:'#D4AF37', borderColor:'#D4AF37' }]} 
                   onPress={async () => {
                     try {
-                      if (Platform.OS !== 'web') {
-                        // 전체 스크린샷 캡처 (react-native-view-shot의 captureScreen 사용)
-                        const ViewShot = require('react-native-view-shot');
-                        if (ViewShot?.captureScreen) {
-                          console.log('[QR Save] Capturing full screen');
-                          const tmpPng = await ViewShot.captureScreen({ 
-                            format: 'png', 
-                            quality: 1, 
-                            result: 'tmpfile'
-                          });
-                          
-                          const perm = await MediaLibrary.requestPermissionsAsync();
-                          if (perm.status === 'granted') {
-                            const asset = await MediaLibrary.createAssetAsync(tmpPng);
-                            let album = await MediaLibrary.getAlbumAsync('YooY');
-                            if (!album) {
-                              album = await MediaLibrary.createAlbumAsync('YooY', asset, false);
-                            } else {
-                              await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
-                            }
-                            Alert.alert(
-                              language === 'en' ? 'Saved!' : '저장 완료!', 
-                              language === 'en' 
-                                ? 'Screenshot saved to YooY album' 
-                                : '스크린샷이 YooY 앨범에 저장되었습니다'
-                            );
+                      if (Platform.OS !== 'web' && captureRef && qrModalContentRef?.current) {
+                        // 팝업 내용만 캡처
+                        console.log('[QR Save] Capturing modal content');
+                        const tmpPng = await captureRef(qrModalContentRef.current, { 
+                          format: 'png', 
+                          quality: 1, 
+                          result: 'tmpfile',
+                          pixelRatio: Math.max(PixelRatio.get(), 2)
+                        });
+                        
+                        const perm = await MediaLibrary.requestPermissionsAsync();
+                        if (perm.status === 'granted') {
+                          const asset = await MediaLibrary.createAssetAsync(tmpPng);
+                          let album = await MediaLibrary.getAlbumAsync('YooY');
+                          if (!album) {
+                            album = await MediaLibrary.createAlbumAsync('YooY', asset, false);
+                          } else {
+                            await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
                           }
+                          Alert.alert(
+                            language === 'en' ? 'Saved!' : '저장 완료!', 
+                            language === 'en' 
+                              ? 'QR image saved to YooY album' 
+                              : 'QR 이미지가 YooY 앨범에 저장되었습니다'
+                          );
                         }
                       }
                     } catch (e) {
