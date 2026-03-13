@@ -49,9 +49,12 @@ const QR_CENTER_LOGO = true;
 
 // View capture (native 우선)
 let captureRef: any = null;
+let captureScreen: any = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  captureRef = require('react-native-view-shot').captureRef;
+  const viewShot = require('react-native-view-shot');
+  captureRef = viewShot.captureRef;
+  captureScreen = viewShot.captureScreen;
 } catch {}
 
 // VisionCamera 동적 로딩 (가능 시 고성능 스캔 사용)
@@ -8226,17 +8229,9 @@ export default function WalletScreen() {
         />
       )}
 
-      {/* QR 코드 팝업 모달 */}
-      {qrCoin && (
-        <Modal
-          visible={qrModalVisible}
-          transparent
-          animationType="fade"
-          statusBarTranslucent
-          hardwareAccelerated
-          onRequestClose={() => setQrModalVisible(false)}
-        >
-          <View style={styles.qrModalOverlay}>
+      {/* QR 코드 팝업 - Modal 대신 absolute View 사용하여 captureScreen 가능하게 함 */}
+      {qrCoin && qrModalVisible && (
+          <View style={[styles.qrModalOverlay, { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999 }]}>
             <View
               style={styles.qrModalContent}
               ref={qrModalContentRef as any}
@@ -8267,13 +8262,13 @@ export default function WalletScreen() {
                     <ThemedText style={{ color:'#FFD700', fontWeight:'800', fontSize:16 }}>QR코드</ThemedText>
                   </View>
                 )}
-                {/* PNG 저장 미리보기 - 스크린샷 방식으로 변경 */}
+                {/* PNG 저장 미리보기 - 전체 화면 캡처 방식 */}
                 {qrModalType === 'pngsave' ? (
                   <View style={{ alignItems:'center', justifyContent:'center' }}>
                     {/* 저장 안내 */}
                     <View style={{ alignItems:'center', marginBottom: 12, paddingHorizontal: 16 }}>
                       <ThemedText style={{ color:'#AAAAAA', fontSize:13, textAlign:'center' }}>
-                        {language==='en' ? 'Take a screenshot to save this QR' : '스크린샷을 찍어서 QR코드를 저장하세요'}
+                        {language==='en' ? 'Tap Save to capture this screen' : '저장 버튼을 눌러 화면을 캡처하세요'}
                       </ThemedText>
                     </View>
                     {/* 상단 타이틀 */}
@@ -8538,20 +8533,46 @@ export default function WalletScreen() {
               {/* 경고 섹션 제거 요청 */}
             </View>
             
-            {/* 저장 버튼 - 스크린샷 안내 표시 */}
+            {/* 저장 버튼 - 전체 화면 캡처 (시스템 스크린샷과 동일) */}
             {qrModalType === 'pngsave' && (
               <View style={styles.qrModalDownloadButtonContainer}>
                 <TouchableOpacity 
                   style={[styles.qrSaveButton, { backgroundColor:'#D4AF37', borderColor:'#D4AF37' }]} 
-                  onPress={() => {
-                    // 스크린샷 찍으라는 안내 표시
-                    Alert.alert(
-                      language === 'en' ? '📸 Take Screenshot Now' : '📸 지금 스크린샷을 찍어주세요',
-                      language === 'en' 
-                        ? 'Press Power + Volume Down (Android)\nPress Power + Volume Up (iOS)\n\nThe popup will close after screenshot is detected.'
-                        : '전원 + 볼륨하단 (안드로이드)\n전원 + 볼륨상단 (아이폰)\n\n스크린샷이 감지되면 팝업이 자동으로 닫힙니다.',
-                      [{ text: 'OK', style: 'default' }]
-                    );
+                  onPress={async () => {
+                    try {
+                      if (Platform.OS === 'web') {
+                        Alert.alert('Web not supported');
+                        return;
+                      }
+                      if (!captureScreen) {
+                        Alert.alert(language === 'en' ? 'Capture not available' : '캡처 기능 없음');
+                        return;
+                      }
+                      
+                      const tmpPng = await captureScreen({
+                        format: 'png',
+                        quality: 1,
+                        result: 'tmpfile',
+                      });
+                      
+                      const { status } = await MediaLibrary.requestPermissionsAsync();
+                      if (status !== 'granted') {
+                        Alert.alert(language === 'en' ? 'Storage permission needed' : '저장 권한 필요');
+                        return;
+                      }
+                      
+                      const asset = await MediaLibrary.createAssetAsync(tmpPng);
+                      if (asset) {
+                        Alert.alert(
+                          language === 'en' ? '✅ Saved!' : '✅ 저장 완료!',
+                          language === 'en' ? 'QR image saved to gallery' : 'QR 이미지가 갤러리에 저장되었습니다'
+                        );
+                        setQrModalVisible(false);
+                      }
+                    } catch (err: any) {
+                      console.error('[QR Save Error]', err);
+                      Alert.alert(language === 'en' ? 'Save failed' : '저장 실패', String(err?.message || err));
+                    }
                   }}
                 >
                   <ThemedText style={{ color:'#000', fontWeight:'700' }}>{language==='en'?'Save':'저장'}</ThemedText>
@@ -8559,7 +8580,7 @@ export default function WalletScreen() {
               </View>
             )}
           </View>
-        </Modal>
+        </View>
       )}
 
       {/* 오프스크린 QR 저장 전용 뷰(제목 + 프레임 + QR) */}
