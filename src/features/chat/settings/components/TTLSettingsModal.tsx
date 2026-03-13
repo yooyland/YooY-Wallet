@@ -1,6 +1,117 @@
-import React from 'react';
-import { Modal, View, Text, TouchableOpacity, TextInput, Switch, Alert, ScrollView, KeyboardAvoidingView, Platform, Keyboard } from 'react-native';
+import React, { forwardRef, memo, useCallback, useEffect, useRef, useState } from 'react';
+import { Modal, View, Text, TouchableOpacity, TextInput, Switch, Alert, ScrollView, KeyboardAvoidingView, Platform, Keyboard, StyleSheet } from 'react-native';
 import type { RoomType } from '../types';
+
+// IMPORTANT: InputBox must be defined OUTSIDE the main component to prevent remounting on parent re-render
+// This was causing keyboard dismissal on every keystroke
+interface InputBoxProps {
+  value: string;
+  onChangeText: (v: string) => void;
+  placeholder?: string;
+  autoFocus?: boolean;
+  maxLen?: number;
+  nextRef?: React.RefObject<TextInput>;
+  prevRef?: React.RefObject<TextInput>;
+  returnKeyType?: 'next' | 'done';
+  onEditStart?: () => void;
+}
+
+const InputBox = memo(forwardRef<TextInput, InputBoxProps>((props, ref) => {
+  const { value, onChangeText, placeholder, autoFocus, maxLen = 2, nextRef, prevRef, returnKeyType = 'next', onEditStart } = props;
+  
+  // Use local state to prevent parent re-renders during typing
+  const [localValue, setLocalValue] = useState(value);
+  const isLocalEditRef = useRef(false);
+  
+  // Sync from parent only when not actively editing
+  useEffect(() => {
+    if (!isLocalEditRef.current) {
+      setLocalValue(value);
+    }
+  }, [value]);
+  
+  const handleChangeText = useCallback((v: string) => {
+    const digits = String(v).replace(/[^0-9]/g, '');
+    isLocalEditRef.current = true;
+    setLocalValue(digits);
+    onChangeText(digits);
+    onEditStart?.();
+    
+    // Auto-advance to next field when max length reached
+    if (digits.length >= maxLen && nextRef?.current) {
+      nextRef.current.focus();
+    }
+  }, [onChangeText, onEditStart, maxLen, nextRef]);
+  
+  const handleFocus = useCallback(() => {
+    isLocalEditRef.current = true;
+    onEditStart?.();
+    // Clear '0' on focus for easier input
+    if (localValue === '0') {
+      setLocalValue('');
+      onChangeText('');
+    }
+  }, [localValue, onChangeText, onEditStart]);
+  
+  const handleBlur = useCallback(() => {
+    isLocalEditRef.current = false;
+    // Commit final value on blur
+    onChangeText(localValue);
+  }, [localValue, onChangeText]);
+  
+  const handleKeyPress = useCallback((e: any) => {
+    if (e?.nativeEvent?.key === 'Backspace' && localValue.length === 0 && prevRef?.current) {
+      prevRef.current.focus();
+    }
+  }, [localValue, prevRef]);
+  
+  const handleSubmitEditing = useCallback(() => {
+    if (returnKeyType === 'next' && nextRef?.current) {
+      nextRef.current.focus();
+    }
+  }, [returnKeyType, nextRef]);
+  
+  return (
+    <TextInput
+      ref={ref}
+      value={localValue}
+      onChangeText={handleChangeText}
+      onFocus={handleFocus}
+      onBlur={handleBlur}
+      onKeyPress={handleKeyPress}
+      onSubmitEditing={handleSubmitEditing}
+      placeholder={placeholder}
+      placeholderTextColor="#666"
+      keyboardType="number-pad"
+      showSoftInputOnFocus={true}
+      blurOnSubmit={false}
+      autoFocus={autoFocus}
+      maxLength={maxLen}
+      editable
+      autoCorrect={false}
+      autoCapitalize="none"
+      selectTextOnFocus
+      importantForAutofill="no"
+      returnKeyType={returnKeyType}
+      style={inputBoxStyles.input}
+    />
+  );
+}));
+InputBox.displayName = 'InputBox';
+
+const inputBoxStyles = StyleSheet.create({
+  input: {
+    width: 60,
+    height: 54,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+    borderRadius: 12,
+    backgroundColor: '#111',
+    color: '#F6F6F6',
+    textAlign: 'center',
+    fontSize: 18,
+  },
+});
 
 export interface TTLSettingsModalProps {
   visible: boolean;
@@ -32,18 +143,20 @@ function toMs(d: string, h: string, m: string, s: string) {
 
 function TTLSettingsModal(props: TTLSettingsModalProps) {
   const { visible, onClose, roomType, expiresAtMs, messageTtlMs, canEditSecurity } = props;
-  const [d, setD] = React.useState('0');
-  const [h, setH] = React.useState('0');
-  const [m, setM] = React.useState('0');
-  const [s, setS] = React.useState('0');
-  const [mh, setMH] = React.useState('0');
-  const [mm, setMM] = React.useState('0');
-  const [ms, setMS] = React.useState('10');
-  const [sec, setSec] = React.useState(props.security);
-  const [isEditing, setIsEditing] = React.useState(false);
+  const [d, setD] = useState('0');
+  const [h, setH] = useState('0');
+  const [m, setM] = useState('0');
+  const [s, setS] = useState('0');
+  const [mh, setMH] = useState('0');
+  const [mm, setMM] = useState('0');
+  const [ms, setMS] = useState('10');
+  const [sec, setSec] = useState(props.security);
+  // CHANGED: Use ref instead of state to avoid re-renders during typing
+  const isEditingRef = useRef(false);
+  const markEditing = useCallback(() => { isEditingRef.current = true; }, []);
   // 키보드 높이 추적(저장 버튼이 가려지지 않게 padding 확보)
-  const [keyboardHeight, setKeyboardHeight] = React.useState(0);
-  React.useEffect(() => {
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  useEffect(() => {
     const onShow = Keyboard.addListener('keyboardDidShow', (e: any) => {
       try { setKeyboardHeight(Number(e?.endCoordinates?.height || 0)); } catch { setKeyboardHeight(0); }
     });
@@ -51,24 +164,24 @@ function TTLSettingsModal(props: TTLSettingsModalProps) {
     return () => { try { onShow.remove(); onHide.remove(); } catch {} };
   }, []);
   // 입력 포커스 유지용 ref (Android에서 키보드 내려감 방지)
-  const msgHourRef = React.useRef<TextInput>(null);
-  const msgMinRef = React.useRef<TextInput>(null);
-  const msgSecRef = React.useRef<TextInput>(null);
-  const dayRef = React.useRef<TextInput>(null);
-  const hourRef = React.useRef<TextInput>(null);
-  const minRef = React.useRef<TextInput>(null);
-  const secRef = React.useRef<TextInput>(null);
+  const msgHourRef = useRef<TextInput>(null);
+  const msgMinRef = useRef<TextInput>(null);
+  const msgSecRef = useRef<TextInput>(null);
+  const dayRef = useRef<TextInput>(null);
+  const hourRef = useRef<TextInput>(null);
+  const minRef = useRef<TextInput>(null);
+  const secRef = useRef<TextInput>(null);
   // 자동 포커스는 "처음 열릴 때 1회"만 적용하여 키보드가 다시 올라오는 문제 방지
-  const [autoFocusArmed, setAutoFocusArmed] = React.useState(false);
+  const [autoFocusArmed, setAutoFocusArmed] = useState(false);
 
-  React.useEffect(() => {
+  useEffect(() => {
     // 편집 중에는 외부 보안 토글 변경이 입력칸 포커스를 건드리지 않도록 무시
-    if (isEditing) return;
+    if (isEditingRef.current) return;
     setSec(props.security);
-  }, [props.security, isEditing]);
+  }, [props.security]);
 
   // 모달을 열 때 현재 남은 TTL/메시지 TTL을 입력 칸에 1회 채워 넣는다 (열려있는 동안에는 사용자가 입력한 값 유지)
-  React.useEffect(() => {
+  useEffect(() => {
     if (!visible) return;
     const nowLocal = Date.now();
     const remain = Math.max(0, (expiresAtMs || 0) - nowLocal);
@@ -85,7 +198,7 @@ function TTLSettingsModal(props: TTLSettingsModalProps) {
     const mmm = Math.floor((msgSec % 3600) / 60);
     const mss = msgSec % 60;
     setMH(String(mmh)); setMM(String(mmm)); setMS(String(mss));
-    setIsEditing(false);
+    isEditingRef.current = false;
     // 자동 포커스는 모달이 열릴 때만 활성화
     setAutoFocusArmed(true);
   // 의도적으로 deps를 visible에만 둔다: 타이핑 중 외부 상태 변화로 값이 초기화되지 않도록
@@ -93,7 +206,7 @@ function TTLSettingsModal(props: TTLSettingsModalProps) {
   }, [visible]);
 
   // 모달이 열릴 때 자동 포커스로 키보드 유지
-  React.useEffect(() => {
+  useEffect(() => {
     if (!visible || !autoFocusArmed) return;
     const t = setTimeout(() => {
       try {
@@ -107,12 +220,13 @@ function TTLSettingsModal(props: TTLSettingsModalProps) {
   }, [visible, autoFocusArmed]);
 
   // 모달 내부용 잔여시간 카운트다운 (입력과 무관)
-  const [nowTs, setNowTs] = React.useState(Date.now());
-  React.useEffect(() => {
-    if (!visible || isEditing) return;
+  // CHANGED: Don't pause countdown during editing - use separate state
+  const [nowTs, setNowTs] = useState(Date.now());
+  useEffect(() => {
+    if (!visible) return;
     const t = setInterval(() => { try { setNowTs(Date.now()); } catch {} }, 1000);
     return () => { try { clearInterval(t); } catch {} };
-  }, [visible, isEditing]);
+  }, [visible]);
   const remainMs = Math.max(0, (expiresAtMs || 0) - nowTs);
   const days30Ms = 30 * 24 * 60 * 60 * 1000;
   const canExtend = remainMs <= days30Ms;
@@ -159,70 +273,19 @@ function TTLSettingsModal(props: TTLSettingsModalProps) {
       onClose();
     } catch {}
   };
-  // 보안 설정은 토글 시 500ms 디바운스로 자동 저장
-  React.useEffect(() => {
-    if (!visible || !canEditSecurity || isEditing) return;
-    const id = setTimeout(() => { try { void props.onSaveSecurity(sec); } catch {} }, 700);
-    return () => { try { clearTimeout(id); } catch {} };
-  }, [sec, visible, canEditSecurity, isEditing]);
-
-  const InputBox = React.forwardRef<TextInput, {
-    value: string;
-    onChangeText: (v: string) => void;
-    placeholder?: string;
-    autoFocus?: boolean;
-    maxLen?: number;
-    nextRef?: React.RefObject<TextInput>;
-    prevRef?: React.RefObject<TextInput>;
-    returnKeyType?: 'next' | 'done';
-  }>((props, ref) => {
-    const { value, onChangeText, placeholder, autoFocus, maxLen=2, nextRef, prevRef, returnKeyType='next' } = props;
-    return (
-      <TextInput
-        ref={ref}
-        value={value}
-        onChangeText={(v)=> {
-          const digits = String(v).replace(/[^0-9]/g,'');
-          onChangeText(digits);
-          setIsEditing(true);
-          if (digits.length >= maxLen) {
-            try { nextRef?.current?.focus?.(); } catch {}
-          }
-        }}
-        placeholder={placeholder}
-        placeholderTextColor="#666"
-        keyboardType="number-pad"
-        showSoftInputOnFocus={true}
-        blurOnSubmit={false}
-        autoFocus={autoFocus}
-        maxLength={maxLen}
-        editable
-        autoCorrect={false}
-        autoCapitalize="none"
-        selectTextOnFocus
-        importantForAutofill="no"
-        returnKeyType={returnKeyType}
-        onSubmitEditing={()=>{ try { if (returnKeyType==='next') nextRef?.current?.focus?.(); } catch {} }}
-        onFocus={() => {
-          // 포커스 시 자동포커스 루프 방지 및 편집 모드 진입
-          if (autoFocusArmed) setAutoFocusArmed(false);
-          setIsEditing(true);
-          // 초기값 '0'이면 비워서 자연스럽게 입력 시작
-          try { if (String(value) === '0') onChangeText(''); } catch {}
-        }}
-        onKeyPress={(e:any)=>{
-          try {
-            if (e?.nativeEvent?.key === 'Backspace' && String(value||'').length === 0) {
-              prevRef?.current?.focus?.();
-            }
-          } catch {}
-        }}
-        // 4개 입력칸이 작은 화면에서도 모두 보이도록 너비 축소
-        style={{ width:60, height:54, borderWidth:1, borderColor:'#2A2A2A', borderRadius:12, backgroundColor:'#111', color:'#F6F6F6', textAlign:'center', fontSize:18 }}
-      />
-    );
-  });
-  InputBox.displayName = 'InputBox';
+  // 보안 설정은 토글 시 700ms 디바운스로 자동 저장
+  // CHANGED: Don't check isEditing state to avoid re-render dependency
+  const securitySaveTimeoutRef = useRef<any>(null);
+  useEffect(() => {
+    if (!visible || !canEditSecurity) return;
+    if (securitySaveTimeoutRef.current) clearTimeout(securitySaveTimeoutRef.current);
+    securitySaveTimeoutRef.current = setTimeout(() => {
+      if (!isEditingRef.current) {
+        try { void props.onSaveSecurity(sec); } catch {}
+      }
+    }, 700);
+    return () => { if (securitySaveTimeoutRef.current) clearTimeout(securitySaveTimeoutRef.current); };
+  }, [sec, visible, canEditSecurity, props]);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -241,22 +304,22 @@ function TTLSettingsModal(props: TTLSettingsModalProps) {
             >
             <Text style={{ color:'#CFCFCF', fontWeight:'800' }}>TTL (일 : 시 : 분 : 초)</Text>
             <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
-              <InputBox value={d} onChangeText={setD} ref={dayRef} maxLen={3} nextRef={hourRef} returnKeyType="next" />
+              <InputBox value={d} onChangeText={setD} ref={dayRef} maxLen={3} nextRef={hourRef} returnKeyType="next" onEditStart={markEditing} />
               <Text style={{ color:'#555' }}>:</Text>
-              <InputBox value={h} onChangeText={setH} ref={hourRef} maxLen={2} nextRef={minRef} prevRef={dayRef} returnKeyType="next" />
+              <InputBox value={h} onChangeText={setH} ref={hourRef} maxLen={2} nextRef={minRef} prevRef={dayRef} returnKeyType="next" onEditStart={markEditing} />
               <Text style={{ color:'#555' }}>:</Text>
-              <InputBox value={m} onChangeText={setM} ref={minRef} maxLen={2} nextRef={secRef} prevRef={hourRef} returnKeyType="next" />
+              <InputBox value={m} onChangeText={setM} ref={minRef} maxLen={2} nextRef={secRef} prevRef={hourRef} returnKeyType="next" onEditStart={markEditing} />
               <Text style={{ color:'#555' }}>:</Text>
-              <InputBox value={s} onChangeText={setS} ref={secRef} maxLen={2} prevRef={minRef} returnKeyType="done" />
+              <InputBox value={s} onChangeText={setS} ref={secRef} maxLen={2} prevRef={minRef} returnKeyType="done" onEditStart={markEditing} />
             </View>
 
             <Text style={{ color:'#CFCFCF', fontWeight:'800', marginTop:6 }}>Message TTL (시 : 분 : 초)</Text>
             <View style={{ flexDirection:'row', alignItems:'center', gap:10 }}>
-              <InputBox value={mh} onChangeText={setMH} ref={msgHourRef} autoFocus={autoFocusArmed} maxLen={2} nextRef={msgMinRef} returnKeyType="next" />
+              <InputBox value={mh} onChangeText={setMH} ref={msgHourRef} autoFocus={autoFocusArmed} maxLen={2} nextRef={msgMinRef} returnKeyType="next" onEditStart={markEditing} />
               <Text style={{ color:'#555' }}>:</Text>
-              <InputBox value={mm} onChangeText={setMM} ref={msgMinRef} maxLen={2} nextRef={msgSecRef} prevRef={msgHourRef} returnKeyType="next" />
+              <InputBox value={mm} onChangeText={setMM} ref={msgMinRef} maxLen={2} nextRef={msgSecRef} prevRef={msgHourRef} returnKeyType="next" onEditStart={markEditing} />
               <Text style={{ color:'#555' }}>:</Text>
-              <InputBox value={ms} onChangeText={setMS} ref={msgSecRef} maxLen={2} prevRef={msgMinRef} returnKeyType="done" />
+              <InputBox value={ms} onChangeText={setMS} ref={msgSecRef} maxLen={2} prevRef={msgMinRef} returnKeyType="done" onEditStart={markEditing} />
               <TouchableOpacity onPress={onSaveMsgTTL} style={{ marginLeft:6, paddingHorizontal:12, paddingVertical:8, borderWidth:1, borderColor:'#FFD700', borderRadius:10 }}>
                 <Text style={{ color:'#FFD700', fontWeight:'800' }}>저장</Text>
               </TouchableOpacity>
@@ -326,4 +389,4 @@ function TTLSettingsModal(props: TTLSettingsModalProps) {
   );
 }
 
-export default React.memo(TTLSettingsModal);
+export default memo(TTLSettingsModal);
