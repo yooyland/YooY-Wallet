@@ -8523,21 +8523,20 @@ export default function WalletScreen() {
                   style={[styles.qrSaveButton, { backgroundColor:'#D4AF37', borderColor:'#D4AF37' }]} 
                   onPress={async () => {
                     try {
-                      // captureRef로 QR 영역 고해상도 캡처 (최소 1024px 보장)
-                      if (Platform.OS !== 'web' && captureRef && qrShotBoxRef?.current) {
-                        // 340px View를 최소 1024px 이미지로 캡처하려면 pixelRatio >= 3 필요
-                        const minPixelRatio = Math.max(PixelRatio.get(), 3);
-                        console.log('[QR Save] Using captureRef with high pixelRatio:', minPixelRatio);
-                        const tmpPng = await captureRef(qrShotBoxRef.current, { 
+                      // FIXED: 전체 카드(제목+프레임+QR)를 캡처하여 QR 인식률 향상
+                      // qrModalContentRef를 사용해서 모달 전체를 캡처 (2번 이미지처럼)
+                      if (Platform.OS !== 'web' && captureRef && qrModalContentRef?.current) {
+                        const minPixelRatio = Math.max(PixelRatio.get(), 2.5);
+                        console.log('[QR Save] Capturing full modal card with pixelRatio:', minPixelRatio);
+                        const tmpPng = await captureRef(qrModalContentRef.current, { 
                           format: 'png', 
                           quality: 1, 
                           result: 'tmpfile',
-                          // 고해상도 캡처: 340 * 3 = 1020px (최소 1024px급)
                           pixelRatio: minPixelRatio
                         });
-                        console.log('[QR Save] Captured high-res PNG:', tmpPng, 'estimated size:', 340 * minPixelRatio);
+                        console.log('[QR Save] Captured full card PNG:', tmpPng);
                         
-                        // 갤러리에 저장 (PNG 그대로, JPEG 변환 없음)
+                        // 갤러리에 저장
                         const perm = await MediaLibrary.requestPermissionsAsync();
                         if (perm.status === 'granted') {
                           const asset = await MediaLibrary.createAssetAsync(tmpPng);
