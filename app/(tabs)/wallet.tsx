@@ -4515,18 +4515,20 @@ export default function WalletScreen() {
   const [customQrVisible, setCustomQrVisible] = useState(false);
   const customQrBoxRef = useRef<View|null>(null);
   
-  // QR 모달이 열려있을 때 스크린샷 감지 (시스템 스크린샷은 이미 저장되므로 추가 알림만)
+  // QR 모달이 열려있을 때 스크린샷 감지하여 팝업 자동 닫기
   useEffect(() => {
     if (!qrModalVisible || qrModalType !== 'pngsave' || Platform.OS === 'web') return;
     
     const subscription = ScreenCapture.addScreenshotListener(() => {
-      // 시스템 스크린샷이 이미 저장되었으므로 알림만 표시
+      // 스크린샷 감지됨 - 알림 표시 후 팝업 닫기
       Alert.alert(
-        language === 'en' ? 'Screenshot Saved!' : '스크린샷 저장됨!', 
+        language === 'en' ? '✅ Saved!' : '✅ 저장 완료!', 
         language === 'en' 
           ? 'Screenshot has been saved to your gallery' 
           : '스크린샷이 갤러리에 저장되었습니다'
       );
+      // 팝업 닫기
+      setQrModalVisible(false);
     });
     
     return () => {
@@ -8271,7 +8273,7 @@ export default function WalletScreen() {
                     {/* 저장 안내 */}
                     <View style={{ alignItems:'center', marginBottom: 12, paddingHorizontal: 16 }}>
                       <ThemedText style={{ color:'#AAAAAA', fontSize:13, textAlign:'center' }}>
-                        {language==='en' ? 'Press Save to capture this screen' : '아래 저장 버튼을 눌러 화면을 저장하세요'}
+                        {language==='en' ? 'Take a screenshot to save this QR' : '스크린샷을 찍어서 QR코드를 저장하세요'}
                       </ThemedText>
                     </View>
                     {/* 상단 타이틀 */}
@@ -8536,45 +8538,20 @@ export default function WalletScreen() {
               {/* 경고 섹션 제거 요청 */}
             </View>
             
-            {/* 저장 버튼 - 팝업 내용 캡처 후 닫힘 */}
+            {/* 저장 버튼 - 스크린샷 안내 표시 */}
             {qrModalType === 'pngsave' && (
               <View style={styles.qrModalDownloadButtonContainer}>
                 <TouchableOpacity 
                   style={[styles.qrSaveButton, { backgroundColor:'#D4AF37', borderColor:'#D4AF37' }]} 
-                  onPress={async () => {
-                    try {
-                      if (Platform.OS !== 'web' && captureRef && qrModalContentRef?.current) {
-                        // 팝업 내용만 캡처
-                        console.log('[QR Save] Capturing modal content');
-                        const tmpPng = await captureRef(qrModalContentRef.current, { 
-                          format: 'png', 
-                          quality: 1, 
-                          result: 'tmpfile',
-                          pixelRatio: Math.max(PixelRatio.get(), 2)
-                        });
-                        
-                        const perm = await MediaLibrary.requestPermissionsAsync();
-                        if (perm.status === 'granted') {
-                          const asset = await MediaLibrary.createAssetAsync(tmpPng);
-                          let album = await MediaLibrary.getAlbumAsync('YooY');
-                          if (!album) {
-                            album = await MediaLibrary.createAlbumAsync('YooY', asset, false);
-                          } else {
-                            await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
-                          }
-                          Alert.alert(
-                            language === 'en' ? 'Saved!' : '저장 완료!', 
-                            language === 'en' 
-                              ? 'QR image saved to YooY album' 
-                              : 'QR 이미지가 YooY 앨범에 저장되었습니다'
-                          );
-                        }
-                      }
-                    } catch (e) {
-                      console.error('[QR Save] Error:', e);
-                      Alert.alert(language === 'en' ? 'Error' : '오류', language === 'en' ? 'Failed to save' : '저장 실패');
-                    }
-                    setQrModalVisible(false);
+                  onPress={() => {
+                    // 스크린샷 찍으라는 안내 표시
+                    Alert.alert(
+                      language === 'en' ? '📸 Take Screenshot Now' : '📸 지금 스크린샷을 찍어주세요',
+                      language === 'en' 
+                        ? 'Press Power + Volume Down (Android)\nPress Power + Volume Up (iOS)\n\nThe popup will close after screenshot is detected.'
+                        : '전원 + 볼륨하단 (안드로이드)\n전원 + 볼륨상단 (아이폰)\n\n스크린샷이 감지되면 팝업이 자동으로 닫힙니다.',
+                      [{ text: 'OK', style: 'default' }]
+                    );
                   }}
                 >
                   <ThemedText style={{ color:'#000', fontWeight:'700' }}>{language==='en'?'Save':'저장'}</ThemedText>
