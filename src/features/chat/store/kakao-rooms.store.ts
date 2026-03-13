@@ -407,13 +407,14 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
               let unsubMsgs: undefined | (() => void);
               let unsubMembers: undefined | (() => void);
               // 메시지 onSnapshot 배치/디바운스: 잦은 이벤트를 100ms 단위로 합쳐 상태 갱신(채팅 페이지 부하 완화)
+              // OPTIMIZED: Reduced initial load from 500 to 100 for faster room entry
               let latestMsgs: any[] | null = null;
               let flushTimer: any = null;
               try {
                 const q = query(
                   collection(firestore, 'rooms', roomId, 'messages'),
-                  orderBy('createdAt', 'asc'),
-                  qlimit(500)
+                  orderBy('createdAt', 'desc'),
+                  qlimit(100)
                 );
                 unsubMsgs = onSnapshot(q, (snap) => {
                   try {
