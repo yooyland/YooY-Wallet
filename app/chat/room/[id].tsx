@@ -182,10 +182,28 @@ function RoomInner() {
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
   // 키보드/모달 열림 시에는 1초 갱신을 잠시 중단하여 리렌더링 간섭을 줄임(안드로이드 키보드 깜빡임 방지)
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const keyboardHideTimerRef = useRef<any>(null);
   useEffect(() => {
-    const sh = Keyboard.addListener('keyboardDidShow', () => setKeyboardOpen(true));
-    const hd = Keyboard.addListener('keyboardDidHide', () => setKeyboardOpen(false));
-    return () => { try { sh.remove(); hd.remove(); } catch {} };
+    const sh = Keyboard.addListener('keyboardDidShow', () => {
+      // 키보드 열릴 때는 즉시 반영
+      if (keyboardHideTimerRef.current) {
+        clearTimeout(keyboardHideTimerRef.current);
+        keyboardHideTimerRef.current = null;
+      }
+      setKeyboardOpen(true);
+    });
+    const hd = Keyboard.addListener('keyboardDidHide', () => {
+      // 키보드 닫힐 때는 애니메이션 완료 후 반영 (빈 공간 방지)
+      if (keyboardHideTimerRef.current) clearTimeout(keyboardHideTimerRef.current);
+      keyboardHideTimerRef.current = setTimeout(() => {
+        setKeyboardOpen(false);
+        keyboardHideTimerRef.current = null;
+      }, Platform.OS === 'android' ? 100 : 50);
+    });
+    return () => { 
+      try { sh.remove(); hd.remove(); } catch {} 
+      if (keyboardHideTimerRef.current) clearTimeout(keyboardHideTimerRef.current);
+    };
   }, []);
 
   // 새 메시지 알림 소리/진동 처리
