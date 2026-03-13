@@ -4515,45 +4515,18 @@ export default function WalletScreen() {
   const [customQrVisible, setCustomQrVisible] = useState(false);
   const customQrBoxRef = useRef<View|null>(null);
   
-  // QR 모달이 열려있을 때 스크린샷 감지하여 QR만 저장
+  // QR 모달이 열려있을 때 스크린샷 감지 (시스템 스크린샷은 이미 저장되므로 추가 알림만)
   useEffect(() => {
     if (!qrModalVisible || qrModalType !== 'pngsave' || Platform.OS === 'web') return;
     
-    const subscription = ScreenCapture.addScreenshotListener(async () => {
-      try {
-        // QR 영역만 고해상도로 캡처
-        if (captureRef && qrShotBoxRef?.current) {
-          const minPixelRatio = Math.max(PixelRatio.get(), 3);
-          console.log('[QR Screenshot] Capturing QR with pixelRatio:', minPixelRatio);
-          
-          const tmpPng = await captureRef(qrShotBoxRef.current, { 
-            format: 'png', 
-            quality: 1, 
-            result: 'tmpfile',
-            pixelRatio: minPixelRatio
-          });
-          
-          // 갤러리에 저장
-          const perm = await MediaLibrary.requestPermissionsAsync();
-          if (perm.status === 'granted') {
-            const asset = await MediaLibrary.createAssetAsync(tmpPng);
-            let album = await MediaLibrary.getAlbumAsync('YooY');
-            if (!album) {
-              album = await MediaLibrary.createAlbumAsync('YooY', asset, false);
-            } else {
-              await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
-            }
-            Alert.alert(
-              language === 'en' ? 'QR Saved!' : 'QR 저장 완료!', 
-              language === 'en' 
-                ? 'High-quality QR image saved to YooY album' 
-                : '고화질 QR 이미지가 YooY 앨범에 저장되었습니다'
-            );
-          }
-        }
-      } catch (e) {
-        console.warn('[QR Screenshot] Error:', e);
-      }
+    const subscription = ScreenCapture.addScreenshotListener(() => {
+      // 시스템 스크린샷이 이미 저장되었으므로 알림만 표시
+      Alert.alert(
+        language === 'en' ? 'Screenshot Saved!' : '스크린샷 저장됨!', 
+        language === 'en' 
+          ? 'Screenshot has been saved to your gallery' 
+          : '스크린샷이 갤러리에 저장되었습니다'
+      );
     });
     
     return () => {
@@ -8298,7 +8271,7 @@ export default function WalletScreen() {
                     {/* 저장 안내 */}
                     <View style={{ alignItems:'center', marginBottom: 12, paddingHorizontal: 16 }}>
                       <ThemedText style={{ color:'#AAAAAA', fontSize:13, textAlign:'center' }}>
-                        {language==='en' ? 'Press Save to download QR image' : '아래 저장 버튼을 눌러 QR 이미지를 저장하세요'}
+                        {language==='en' ? 'Press Save to capture this screen' : '아래 저장 버튼을 눌러 화면을 저장하세요'}
                       </ThemedText>
                     </View>
                     {/* 상단 타이틀 */}
@@ -8563,39 +8536,40 @@ export default function WalletScreen() {
               {/* 경고 섹션 제거 요청 */}
             </View>
             
-            {/* 저장 버튼 - QR만 캡처 후 팝업 닫힘 */}
+            {/* 저장 버튼 - 전체 스크린샷 캡처 후 팝업 닫힘 */}
             {qrModalType === 'pngsave' && (
               <View style={styles.qrModalDownloadButtonContainer}>
                 <TouchableOpacity 
                   style={[styles.qrSaveButton, { backgroundColor:'#D4AF37', borderColor:'#D4AF37' }]} 
                   onPress={async () => {
                     try {
-                      if (Platform.OS !== 'web' && captureRef && qrShotBoxRef?.current) {
-                        const minPixelRatio = Math.max(PixelRatio.get(), 3);
-                        console.log('[QR Save] Capturing QR with pixelRatio:', minPixelRatio);
-                        
-                        const tmpPng = await captureRef(qrShotBoxRef.current, { 
-                          format: 'png', 
-                          quality: 1, 
-                          result: 'tmpfile',
-                          pixelRatio: minPixelRatio
-                        });
-                        
-                        const perm = await MediaLibrary.requestPermissionsAsync();
-                        if (perm.status === 'granted') {
-                          const asset = await MediaLibrary.createAssetAsync(tmpPng);
-                          let album = await MediaLibrary.getAlbumAsync('YooY');
-                          if (!album) {
-                            album = await MediaLibrary.createAlbumAsync('YooY', asset, false);
-                          } else {
-                            await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+                      if (Platform.OS !== 'web') {
+                        // 전체 스크린샷 캡처 (react-native-view-shot의 captureScreen 사용)
+                        const ViewShot = require('react-native-view-shot');
+                        if (ViewShot?.captureScreen) {
+                          console.log('[QR Save] Capturing full screen');
+                          const tmpPng = await ViewShot.captureScreen({ 
+                            format: 'png', 
+                            quality: 1, 
+                            result: 'tmpfile'
+                          });
+                          
+                          const perm = await MediaLibrary.requestPermissionsAsync();
+                          if (perm.status === 'granted') {
+                            const asset = await MediaLibrary.createAssetAsync(tmpPng);
+                            let album = await MediaLibrary.getAlbumAsync('YooY');
+                            if (!album) {
+                              album = await MediaLibrary.createAlbumAsync('YooY', asset, false);
+                            } else {
+                              await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+                            }
+                            Alert.alert(
+                              language === 'en' ? 'Saved!' : '저장 완료!', 
+                              language === 'en' 
+                                ? 'Screenshot saved to YooY album' 
+                                : '스크린샷이 YooY 앨범에 저장되었습니다'
+                            );
                           }
-                          Alert.alert(
-                            language === 'en' ? 'Saved!' : '저장 완료!', 
-                            language === 'en' 
-                              ? 'QR image saved to YooY album' 
-                              : 'QR 이미지가 YooY 앨범에 저장되었습니다'
-                          );
                         }
                       }
                     } catch (e) {
