@@ -31,6 +31,7 @@ import * as FileSystem from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as MediaLibrary from 'expo-media-library';
+import * as ScreenCapture from 'expo-screen-capture';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useWalletConnect } from '@/contexts/WalletConnectContext';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -4514,6 +4515,52 @@ export default function WalletScreen() {
   const [customQrVisible, setCustomQrVisible] = useState(false);
   const customQrBoxRef = useRef<View|null>(null);
   
+  // QR 모달이 열려있을 때 스크린샷 감지하여 QR만 저장
+  useEffect(() => {
+    if (!qrModalVisible || qrModalType !== 'pngsave' || Platform.OS === 'web') return;
+    
+    const subscription = ScreenCapture.addScreenshotListener(async () => {
+      try {
+        // QR 영역만 고해상도로 캡처
+        if (captureRef && qrShotBoxRef?.current) {
+          const minPixelRatio = Math.max(PixelRatio.get(), 3);
+          console.log('[QR Screenshot] Capturing QR with pixelRatio:', minPixelRatio);
+          
+          const tmpPng = await captureRef(qrShotBoxRef.current, { 
+            format: 'png', 
+            quality: 1, 
+            result: 'tmpfile',
+            pixelRatio: minPixelRatio
+          });
+          
+          // 갤러리에 저장
+          const perm = await MediaLibrary.requestPermissionsAsync();
+          if (perm.status === 'granted') {
+            const asset = await MediaLibrary.createAssetAsync(tmpPng);
+            let album = await MediaLibrary.getAlbumAsync('YooY');
+            if (!album) {
+              album = await MediaLibrary.createAlbumAsync('YooY', asset, false);
+            } else {
+              await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
+            }
+            Alert.alert(
+              language === 'en' ? 'QR Saved!' : 'QR 저장 완료!', 
+              language === 'en' 
+                ? 'High-quality QR image saved to YooY album' 
+                : '고화질 QR 이미지가 YooY 앨범에 저장되었습니다'
+            );
+          }
+        }
+      } catch (e) {
+        console.warn('[QR Screenshot] Error:', e);
+      }
+    });
+    
+    return () => {
+      subscription.remove();
+    };
+  }, [qrModalVisible, qrModalType, language]);
+  
   // 복사 상태 관리
   const [copySuccess, setCopySuccess] = useState(false);
   const [qrModalCopySuccess, setQrModalCopySuccess] = useState(false);
@@ -8251,7 +8298,7 @@ export default function WalletScreen() {
                     {/* 스크린샷 안내 */}
                     <View style={{ alignItems:'center', marginBottom: 12, paddingHorizontal: 16 }}>
                       <ThemedText style={{ color:'#FFD700', fontSize:14, fontWeight:'700', textAlign:'center' }}>
-                        {language==='en' ? '📸 Take a screenshot to save this QR' : '📸 스크린샷으로 QR코드를 저장해주세요'}
+                        {language==='en' ? '📸 Take a screenshot to auto-save QR' : '📸 스크린샷을 찍으면 고화질 QR이 자동 저장됩니다'}
                       </ThemedText>
                       <ThemedText style={{ color:'#888', fontSize:11, marginTop:4, textAlign:'center' }}>
                         {language==='en' ? 'Power + Volume Down (Android) / Power + Volume Up (iOS)' : '전원 + 볼륨하단(안드로이드) / 전원 + 볼륨상단(아이폰)'}
