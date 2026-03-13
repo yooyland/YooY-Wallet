@@ -8245,25 +8245,28 @@ export default function WalletScreen() {
                     <ThemedText style={{ color:'#FFD700', fontWeight:'800', fontSize:16 }}>QR코드</ThemedText>
                   </View>
                 )}
-                {/* PNG 저장 미리보기는 오프스크린 저장 레이아웃과 동일한 구조로 렌더 */}
+                {/* PNG 저장 미리보기 - 스크린샷 방식으로 변경 */}
                 {qrModalType === 'pngsave' ? (
                   <View style={{ alignItems:'center', justifyContent:'center' }}>
-                    {/* 저장 안내 */}
-                    <View style={{ alignItems:'center', marginBottom: 8 }}>
-                      <ThemedText style={{ color:'#AAAAAA', fontSize:13 }}>
-                        {language==='en' ? 'Press Save to download QR image' : '아래 저장 버튼을 눌러 QR 이미지를 저장하세요'}
+                    {/* 스크린샷 안내 */}
+                    <View style={{ alignItems:'center', marginBottom: 12, paddingHorizontal: 16 }}>
+                      <ThemedText style={{ color:'#FFD700', fontSize:14, fontWeight:'700', textAlign:'center' }}>
+                        {language==='en' ? '📸 Take a screenshot to save this QR' : '📸 스크린샷으로 QR코드를 저장해주세요'}
+                      </ThemedText>
+                      <ThemedText style={{ color:'#888', fontSize:11, marginTop:4, textAlign:'center' }}>
+                        {language==='en' ? 'Power + Volume Down (Android) / Power + Volume Up (iOS)' : '전원 + 볼륨하단(안드로이드) / 전원 + 볼륨상단(아이폰)'}
                       </ThemedText>
                     </View>
                     {/* 상단 타이틀 */}
                     <View style={{ alignItems:'center', marginBottom: 12 }}>
-                      <ThemedText style={{ color:'#FFD700', fontWeight:'800', fontSize:20 }}>
+                      <ThemedText style={{ color:'#FFD700', fontWeight:'800', fontSize:18 }}>
                         {`[${qrCoin.symbol}] / ${recvInput || '0'} ${qrCoin.symbol}`}
                       </ThemedText>
                     </View>
-                    {/* 프레임 + 내부 화이트 패널 */}
-                    <View style={{ padding:0, borderRadius:18, borderWidth:8, borderColor:'#D4AF37', backgroundColor:'#000' }}>
-                      <View style={{ margin:8, backgroundColor:'#fff', borderRadius:12, padding:0, borderWidth:1, borderColor:'#000' }}>
-                        <View style={{ width:340, height:340, alignItems:'center', justifyContent:'center', backgroundColor:'#fff', borderRadius:8 }} ref={qrShotBoxRef as any} collapsable={false}>
+                    {/* 프레임 + 내부 화이트 패널 - 안정적인 크기 */}
+                    <View style={{ padding:0, borderRadius:16, borderWidth:6, borderColor:'#D4AF37', backgroundColor:'#000' }}>
+                      <View style={{ margin:6, backgroundColor:'#fff', borderRadius:10, padding:0, borderWidth:1, borderColor:'#000' }}>
+                        <View style={{ width:280, height:280, alignItems:'center', justifyContent:'center', backgroundColor:'#fff', borderRadius:8 }} ref={qrShotBoxRef as any} collapsable={false}>
                           {(() => {
                             const addr = qrCoin.address;
                             const amtForUrl = recvAmountType === 'amount'
@@ -8276,7 +8279,7 @@ export default function WalletScreen() {
                                 <View style={{ position: 'relative' }}>
                                   <Comp
                                     value={payload}
-                                    size={300}
+                                    size={240}
                                     backgroundColor="#FFFFFF"
                                     color="#000000"
                                     quietZone={20}
@@ -8516,72 +8519,14 @@ export default function WalletScreen() {
               {/* 경고 섹션 제거 요청 */}
             </View>
             
-            {/* 다운로드 버튼 - 팝업 컨테이너 밖 */}
+            {/* 닫기 버튼 - 팝업 컨테이너 밖 */}
             {qrModalType === 'pngsave' && (
               <View style={styles.qrModalDownloadButtonContainer}>
                 <TouchableOpacity 
-                  style={[styles.qrSaveButton, { backgroundColor:'#D4AF37', borderColor:'#D4AF37' }]} 
-                  onPress={async () => {
-                    try {
-                      // QR 코드만 고해상도로 캡처 (흰색 배경 = QR 인식에 최적)
-                      // 스크린샷 방식이 더 안정적이므로 사용자에게 안내
-                      if (Platform.OS !== 'web' && captureRef && qrShotBoxRef?.current) {
-                        // 고해상도 캡처 (최소 1200px)
-                        const minPixelRatio = Math.max(PixelRatio.get(), 3.5);
-                        console.log('[QR Save] Capturing QR only with high pixelRatio:', minPixelRatio);
-                        const tmpPng = await captureRef(qrShotBoxRef.current, { 
-                          format: 'png', 
-                          quality: 1, 
-                          result: 'tmpfile',
-                          pixelRatio: minPixelRatio
-                        });
-                        console.log('[QR Save] Captured QR PNG:', tmpPng);
-                        
-                        // 갤러리에 저장
-                        const perm = await MediaLibrary.requestPermissionsAsync();
-                        if (perm.status === 'granted') {
-                          const asset = await MediaLibrary.createAssetAsync(tmpPng);
-                          let album = await MediaLibrary.getAlbumAsync('YooY');
-                          if (!album) {
-                            album = await MediaLibrary.createAlbumAsync('YooY', asset, false);
-                          } else {
-                            await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
-                          }
-                          Alert.alert(
-                            language === 'en' ? 'Saved' : '저장 완료', 
-                            language === 'en' 
-                              ? 'QR image saved. For better recognition, use system screenshot instead.' 
-                              : 'QR 이미지가 저장되었습니다.\n\n💡 인식이 안 되면 시스템 스크린샷을 사용해주세요.'
-                          );
-                          setQrModalVisible(false);
-                          return;
-                        }
-                      }
-                      
-                      // 폴백: 기존 handleSaveQrImage 사용
-                      const addr = qrCoin?.address || '';
-                      const amtForUrl = recvAmountType === 'amount'
-                        ? convertAmountToQuantity(parseFloat(recvInput) || 0, qrCoin?.symbol || '').toString()
-                        : (recvInput || '');
-                      const payload = buildPayUri(addr, qrCoin?.symbol || '', amtForUrl);
-                      const title = `[${qrCoin?.symbol}] / ${recvInput || '0'} ${qrCoin?.symbol}`;
-                      const ok = await handleSaveQrImage(payload, title);
-                      if (ok) {
-                        Alert.alert(
-                          language === 'en' ? 'Saved' : '저장 완료', 
-                          language === 'en' 
-                            ? 'QR image saved. For better recognition, use system screenshot instead.' 
-                            : 'QR 이미지가 저장되었습니다.\n\n💡 인식이 안 되면 시스템 스크린샷을 사용해주세요.'
-                        );
-                      }
-                      setQrModalVisible(false);
-                    } catch (e) {
-                      console.error('QR save error:', e);
-                      Alert.alert(language === 'en' ? 'Error' : '오류', language === 'en' ? 'Failed to save QR image' : 'QR 이미지 저장에 실패했습니다');
-                    }
-                  }}
+                  style={[styles.qrSaveButton, { backgroundColor:'#333', borderColor:'#555' }]} 
+                  onPress={() => setQrModalVisible(false)}
                 >
-                  <ThemedText style={{ color:'#000', fontWeight:'700' }}>{language==='en'?'Save':'저장'}</ThemedText>
+                  <ThemedText style={{ color:'#FFF', fontWeight:'700' }}>{language==='en'?'Close':'닫기'}</ThemedText>
                 </TouchableOpacity>
               </View>
             )}
