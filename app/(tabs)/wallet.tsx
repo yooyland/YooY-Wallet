@@ -8305,10 +8305,7 @@ export default function WalletScreen() {
                                     ecl="H"
                                     getRef={(c:any)=>{ (qrRef as any).current = c; }}
                                   />
-                                  {/* 로고 크기 (인식률 보장 - 300px QR에서 50px = 16.7%, ECL H 30% 한계 내) */}
-                                  <View style={{ position:'absolute', top:'50%', left:'50%', transform:[{translateX:-25},{translateY:-25}], width:50, height:50, backgroundColor:'#000', borderRadius:8, alignItems:'center', justifyContent:'center' }}>
-                                    <Image source={require('@/assets/images/side_logo.png')} style={{ width:40, height:40 }} resizeMode="contain" />
-                                  </View>
+                                  {/* 저장용 QR: 로고 제거하여 인식률 최대화 (로고가 중앙 패턴 가려서 인식 실패 가능) */}
                                 </View>
                               );
                             }
