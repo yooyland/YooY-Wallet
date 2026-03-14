@@ -1227,7 +1227,11 @@ function RoomInner() {
             // imageUrl이 있으면 이미지 표시, 없으면 업로드 중 로딩 표시
             if (item?.imageUrl) {
               return (
-                <TouchableOpacity activeOpacity={0.9} onPress={() => { try { setViewerList([]); setViewerMsgId(String(item?.id||'')); setViewerUrl(String(item.imageUrl)); setViewerKind('image'); setViewerOpen(true); } catch {} }}>
+                <TouchableOpacity 
+                  activeOpacity={0.9} 
+                  onPress={() => { try { setViewerList([]); setViewerMsgId(String(item?.id||'')); setViewerUrl(String(item.imageUrl)); setViewerKind('image'); setViewerOpen(true); } catch {} }}
+                  onLongPress={() => { try { openMsgMenu(item, isMe); } catch {} }}
+                >
                   <Image source={{ uri: String(item.imageUrl) }} style={{ width: 220, height: 220, borderRadius: 10 }} />
                 </TouchableOpacity>
               );
@@ -1316,6 +1320,7 @@ function RoomInner() {
                     setViewerList([]); setViewerMsgId(String(item?.id||'')); setViewerUrl(String(item.imageUrl)); setViewerKind('video'); setViewerOpen(true);
                   } catch {}
                 }}
+                onLongPress={() => { try { openMsgMenu(item, isMe); } catch {} }}
               >
                 {hasUrl
                   ? <VideoThumb uri={thumbUri} />
@@ -1406,6 +1411,7 @@ function RoomInner() {
                     else { setViewerList([]); setViewerMsgId(String(item?.id||'')); setViewerUrl(String(item.imageUrl)); setViewerKind('web'); setViewerOpen(true); }
                   } catch {}
                 }}
+                onLongPress={() => { try { openMsgMenu(item, isMe); } catch {} }}
               >
                 <View style={{ width: 220, borderRadius: 10, overflow:'hidden', backgroundColor:'#FFF' }}>
                   <Image source={{ uri: icon }} style={{ width: 220, height: 120 }} />
