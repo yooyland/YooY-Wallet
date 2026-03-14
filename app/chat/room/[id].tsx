@@ -290,7 +290,14 @@ function RoomInner() {
       const visible = hiddenMsgIds && hiddenMsgIds.size
         ? base.filter((m:any) => !hiddenMsgIds.has(String(m?.id || '')))
         : base;
-      if (!(isTTL && ttlMs > 0)) return visible;
+      
+      // 이전 발신자 정보를 각 메시지에 추가 (renderItem 최적화)
+      const withPrev = visible.map((m: any, i: number) => ({
+        ...m,
+        _prevSenderId: i > 0 ? String(visible[i - 1]?.senderId || '') : '',
+      }));
+      
+      if (!(isTTL && ttlMs > 0)) return withPrev;
       const toMs = (v: any): number => {
         try {
           if (typeof v === 'number') return Number(v);
@@ -455,100 +462,88 @@ function RoomInner() {
     } catch {}
   }, []);
 
-  // 프로필 실시간 구독: 방 멤버 + 최근 메시지 발신자 → users/{uid} onSnapshot (최대 20명으로 제한해 채팅 속도 유지)
+  // 프로필 실시간 구독: 방 멤버만 구독 (메시지 발신자는 캐시 우선)
   const profileSubsRef = React.useRef<Record<string, () => void>>({});
-  const MAX_PROFILE_SUBS = 20;
+  const MAX_PROFILE_SUBS = 15;
+  const subscribedIdsRef = React.useRef<Set<string>>(new Set());
+  
   useEffect(() => {
-    (async () => {
+    const subscribeProfile = async (uidX: string) => {
+      if (subscribedIdsRef.current.has(uidX) || profileSubsRef.current[uidX]) return;
+      if (subscribedIdsRef.current.size >= MAX_PROFILE_SUBS) return;
+      
       try {
+        subscribedIdsRef.current.add(uidX);
         const { firestore } = require('@/lib/firebase');
         const { doc, onSnapshot } = require('firebase/firestore');
-        const memberSet = new Set<string>(memberIds.map((u)=>String(u)));
-        (messages || []).forEach((m:any)=> { if (m?.senderId) memberSet.add(String(m.senderId)); });
-        const want = Array.from(memberSet).filter(Boolean).slice(0, MAX_PROFILE_SUBS);
-        // 구독 추가
-        for (const uidX of want) {
-          if (profileSubsRef.current[uidX]) continue;
+        const unsub = onSnapshot(doc(firestore, 'users', uidX), (snap: any) => {
           try {
-            const unsub = onSnapshot(doc(firestore, 'users', uidX), (snap:any) => {
-              try {
-                const data:any = snap.exists() ? snap.data() : {};
-                const displayName: string = data?.chatName || data?.displayName || data?.username || data?.name || uidX;
-                let avatar: string | undefined = data?.avatarUrl || data?.photoURL || data?.avatar || undefined;
-                const now = Date.now();
-                const chatProfile = { id:`chat_profile_${uidX}`, userId: uidX, displayName, chatName: displayName, useHashInChat:false, avatar, status:'online', createdAt: now, lastActive: now };
-                // eslint-disable-next-line @typescript-eslint/no-var-requires
-                const store = require('@/src/features/chat/store/chat-profile.store');
-                store.useChatProfileStore.setState((s:any)=>({ profiles: { ...(s?.profiles||{}), [uidX]: { ...(s?.profiles?.[uidX]||{}), ...chatProfile } } }));
-                // 아바타가 http(s)가 아니면 Storage URL로 해석 시도
-                (async () => {
-                  try {
-                    if (!avatar || /^https?:\/\//i.test(String(avatar))) return;
-                    const { ref: storageRef, getDownloadURL } = require('firebase/storage');
-                    const { firebaseStorage } = require('@/lib/firebase');
-                    const r = storageRef(firebaseStorage, String(avatar));
-                    const url = await getDownloadURL(r);
-                    store.useChatProfileStore.setState((s:any)=>({ profiles: { ...(s?.profiles||{}), [uidX]: { ...(s?.profiles?.[uidX]||{}), avatar: url } } }));
-                  } catch {}
-                })();
-              } catch {}
-            }, () => {});
-            profileSubsRef.current[uidX] = unsub;
+            const data: any = snap.exists() ? snap.data() : {};
+            const displayName: string = data?.chatName || data?.displayName || data?.username || data?.name || uidX;
+            const avatar: string | undefined = data?.avatarUrl || data?.photoURL || data?.avatar || undefined;
+            const store = require('@/src/features/chat/store/chat-profile.store');
+            store.useChatProfileStore.setState((s: any) => ({
+              profiles: { ...(s?.profiles || {}), [uidX]: { id: `chat_profile_${uidX}`, userId: uidX, displayName, chatName: displayName, avatar, status: 'online' } }
+            }));
           } catch {}
-        }
-        // 구독 제거(더 이상 필요 없는 사용자)
-        Object.keys(profileSubsRef.current).forEach((uidX) => {
-          if (!want.includes(uidX)) {
-            try { profileSubsRef.current[uidX](); } catch {}
-            delete profileSubsRef.current[uidX];
-          }
-        });
-      } catch {}
-    })();
-    return () => {
-      try {
-        Object.values(profileSubsRef.current).forEach((fn)=>{ try { fn(); } catch {} });
-        profileSubsRef.current = {};
+        }, () => {});
+        profileSubsRef.current[uidX] = unsub;
       } catch {}
     };
-  }, [JSON.stringify(memberIds||[]), messages.length]);
-
-  // 대화 내 등장하는 모든 사용자 프로필을 미리 채워서 이름/아바타가 정확히 보이도록
+    
+    // 멤버만 구독 (messages 제외로 리렌더링 감소)
+    (memberIds || []).slice(0, MAX_PROFILE_SUBS).forEach((u) => subscribeProfile(String(u)));
+    
+    return () => {};
+  }, [memberIds.length]); // memberIds.length만 의존
+  
+  // 컴포넌트 언마운트 시 구독 해제
   useEffect(() => {
-    (async () => {
+    return () => {
+      Object.values(profileSubsRef.current).forEach((unsub) => { try { unsub(); } catch {} });
+      profileSubsRef.current = {};
+      subscribedIdsRef.current.clear();
+    };
+  }, []);
+  
+
+  // 대화 내 등장하는 새 발신자 프로필만 가져오기 (디바운스 처리)
+  const fetchedProfilesRef = React.useRef<Set<string>>(new Set());
+  const profileFetchTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  useEffect(() => {
+    // 디바운스: 300ms 내 연속 호출 방지
+    if (profileFetchTimerRef.current) clearTimeout(profileFetchTimerRef.current);
+    profileFetchTimerRef.current = setTimeout(async () => {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const store = require('@/src/features/chat/store/chat-profile.store');
         const { firestore } = require('@/lib/firebase');
         const { doc, getDoc } = require('firebase/firestore');
-        const ids = Array.from(new Set((messages || []).map((m:any)=> String(m?.senderId||'')).filter(Boolean)));
-        const need = ids.filter((u)=> !store.useChatProfileStore.getState().getProfile(u));
-        for (const u of need) {
+        
+        const ids = Array.from(new Set((messages || []).map((m: any) => String(m?.senderId || '')).filter(Boolean)));
+        const need = ids.filter((u) => !fetchedProfilesRef.current.has(u) && !store.useChatProfileStore.getState().getProfile(u));
+        
+        if (need.length === 0) return;
+        
+        // 병렬로 최대 5개씩 가져오기
+        const batch = need.slice(0, 5);
+        await Promise.all(batch.map(async (u) => {
           try {
+            fetchedProfilesRef.current.add(u);
             const snap = await getDoc(doc(firestore, 'users', u));
-            const data: any = snap.exists() ? (snap.data() as any) : {};
-            const displayName: string = data?.chatName || data?.displayName || data?.username || data?.name || u;
-            const avatar: string | undefined = data?.avatarUrl || data?.photoURL || data?.avatar || undefined;
-            const now = Date.now();
-            const chatProfile = {
-              id: `chat_profile_${u}`,
-              userId: u,
-              displayName,
-              chatName: displayName,
-              useHashInChat: false,
-              avatar,
-              status: 'online',
-              createdAt: now,
-              lastActive: now,
-            };
+            const data: any = snap.exists() ? snap.data() : {};
+            const displayName = data?.chatName || data?.displayName || data?.username || data?.name || u;
+            const avatar = data?.avatarUrl || data?.photoURL || data?.avatar;
             store.useChatProfileStore.setState((s: any) => ({
-              profiles: { ...(s?.profiles || {}), [u]: { ...(s?.profiles?.[u]||{}), ...chatProfile } },
+              profiles: { ...(s?.profiles || {}), [u]: { userId: u, displayName, chatName: displayName, avatar, status: 'online' } },
             }));
           } catch {}
-        }
+        }));
       } catch {}
-    })();
-  }, [messages]);
+    }, 300);
+    
+    return () => { if (profileFetchTimerRef.current) clearTimeout(profileFetchTimerRef.current); };
+  }, [messages.length]);
 
   // 멤버 문서 구독: rooms/{roomId}/members → (chatName/displayName/avatar) 힌트를 프로필 스토어에 반영
   useEffect(() => {
@@ -1530,19 +1525,17 @@ function RoomInner() {
     );
   }), [uid, room, ttlSecurity, bubbleColorTheme, bodyFont, timeFont, ttlMs, serverOffsetMs]);
 
-  const renderItem = React.useCallback(({ item, index }: any) => {
+  const renderItem = React.useCallback(({ item }: any) => {
     try {
       const isMe = String(item?.senderId || '') === String(uid);
-      const prev = index > 0 ? filteredMessages[index - 1] : null;
-      const prevSender = prev ? String(prev?.senderId || '') : '';
-      const curSender = String(item?.senderId || '');
-      const showHeader = !isMe && prevSender !== curSender;
-      const isVisible = visibleIdsRef.current.has(String(item?.id || ''));
-      return <MessageBubble item={item} showHeader={showHeader} isVisible={isVisible} />;
+      const prevSenderId = String(item?._prevSenderId || '');
+      const curSenderId = String(item?.senderId || '');
+      const showHeader = !isMe && prevSenderId !== curSenderId;
+      return <MessageBubble item={item} showHeader={showHeader} isVisible={true} />;
     } catch {
       return <MessageBubble item={item} showHeader={true} isVisible={true} />;
     }
-  }, [MessageBubble, filteredMessages, uid]);
+  }, [MessageBubble, uid]);
 
   // ---- RoomSettingsModal local state (must be declared unconditionally to keep hook order) ----
   const modalRoomType = React.useMemo(() => {
@@ -1878,9 +1871,6 @@ function RoomInner() {
             const setNew = new Set<string>();
             (viewableItems || []).forEach((vi:any) => { const id = String(vi?.item?.id || ''); if (id) setNew.add(id); });
             visibleIdsRef.current = setNew;
-            if ((viewableItems || []).length > 0) {
-              try { if (roomId && uid) markRead?.(roomId, uid); } catch {}
-            }
           } catch {}
         }}
         viewabilityConfig={{ itemVisiblePercentThreshold: 25, minimumViewTime: 60 }}
@@ -1892,7 +1882,7 @@ function RoomInner() {
           return `idx-${index}`;
         }}
         renderItem={renderItem}
-        contentContainerStyle={[styles.messagesContent, { paddingBottom: keyboardOpen ? 8 : 8 }]}
+        contentContainerStyle={styles.messagesContent}
         onLayout={() => { 
           try { 
             listRef.current?.scrollToEnd?.({ animated: false }); 
