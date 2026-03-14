@@ -1921,7 +1921,7 @@ function RoomInner() {
             <Text style={{ color: '#FFD700', fontSize: 18, fontWeight: '700' }}>↓</Text>
           </TouchableOpacity>
         )}
-        <View style={[styles.inputContainer, { marginBottom: keyboardOpen ? keyboardHeight : 0, paddingBottom: keyboardOpen ? 4 : Math.max(insets.bottom, 6) }]}>
+        <View style={[styles.inputContainer, { paddingBottom: keyboardOpen ? 4 : Math.max(insets.bottom, 6) }]}>
           <TouchableOpacity
             onPress={()=>{ try { onAttach(); } catch {} }}
             style={[styles.attachBtn, { width:36, height:36, borderRadius:18, backgroundColor:'#D4AF37', alignItems:'center', justifyContent:'center' }]}
