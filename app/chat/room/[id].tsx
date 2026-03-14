@@ -180,29 +180,23 @@ function RoomInner() {
   const isPrivileged = (myRole === 'admin' || myRole === 'moderator');
   const [nowTick, setNowTick] = useState<number>(Date.now());
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
-  // 키보드/모달 열림 시에는 1초 갱신을 잠시 중단하여 리렌더링 간섭을 줄임(안드로이드 키보드 깜빡임 방지)
+  // 키보드 상태 및 높이 관리 - 빈 공간 없이 즉시 반영
   const [keyboardOpen, setKeyboardOpen] = useState(false);
-  const keyboardHideTimerRef = useRef<any>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   useEffect(() => {
-    const sh = Keyboard.addListener('keyboardDidShow', () => {
-      // 키보드 열릴 때는 즉시 반영
-      if (keyboardHideTimerRef.current) {
-        clearTimeout(keyboardHideTimerRef.current);
-        keyboardHideTimerRef.current = null;
-      }
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    
+    const sh = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates.height);
       setKeyboardOpen(true);
     });
-    const hd = Keyboard.addListener('keyboardDidHide', () => {
-      // 키보드 닫힐 때는 애니메이션 완료 후 반영 (빈 공간 방지)
-      if (keyboardHideTimerRef.current) clearTimeout(keyboardHideTimerRef.current);
-      keyboardHideTimerRef.current = setTimeout(() => {
-        setKeyboardOpen(false);
-        keyboardHideTimerRef.current = null;
-      }, Platform.OS === 'android' ? 100 : 50);
+    const hd = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+      setKeyboardOpen(false);
     });
     return () => { 
       try { sh.remove(); hd.remove(); } catch {} 
-      if (keyboardHideTimerRef.current) clearTimeout(keyboardHideTimerRef.current);
     };
   }, []);
 
@@ -1836,11 +1830,7 @@ function RoomInner() {
         />
       )}
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={0}
-      >
+      <View style={{ flex: 1 }}>
       <FlatList
         ref={listRef}
         data={filteredMessages}
@@ -1857,27 +1847,23 @@ function RoomInner() {
             const h = Number(nativeEvent?.contentSize?.height || 0);
             const vh = Number(nativeEvent?.layoutMeasurement?.height || 0);
             const dist = Math.max(0, h - (y + vh));
-            const isNear = dist < 240; // 240px 이내면 바닥 근처로 간주(가변 높이 보정)
+            const isNear = dist < 240;
             nearBottomRef.current = isNear;
-            // 상태 업데이트 (버튼 표시용) - 변경될 때만 업데이트
             setIsNearBottom(prev => prev !== isNear ? isNear : prev);
           } catch {}
         }}
         scrollEventThrottle={16}
-        // 가시성 추적 → 미리보기/이미지 지연 로딩
         onViewableItemsChanged={({ viewableItems }) => {
           try {
             const setNew = new Set<string>();
             (viewableItems || []).forEach((vi:any) => { const id = String(vi?.item?.id || ''); if (id) setNew.add(id); });
             visibleIdsRef.current = setNew;
-            // 화면에 메시지가 보이면 즉시 읽음 처리
             if ((viewableItems || []).length > 0) {
               try { if (roomId && uid) markRead?.(roomId, uid); } catch {}
             }
           } catch {}
         }}
         viewabilityConfig={{ itemVisiblePercentThreshold: 25, minimumViewTime: 60 }}
-        // 가변 높이 콘텐츠(링크/이미지/썸네일)로 인해 점프가 발생하여 근사 getItemLayout을 제거
         keyExtractor={(it:any, index:number)=> {
           try {
             if (it?.id) return String(it.id);
@@ -1886,7 +1872,7 @@ function RoomInner() {
           return `idx-${index}`;
         }}
         renderItem={renderItem}
-        contentContainerStyle={styles.messagesContent}
+        contentContainerStyle={[styles.messagesContent, { paddingBottom: keyboardOpen ? 8 : 8 }]}
         onLayout={() => { 
           try { 
             listRef.current?.scrollToEnd?.({ animated: false }); 
@@ -1935,7 +1921,7 @@ function RoomInner() {
             <Text style={{ color: '#FFD700', fontSize: 18, fontWeight: '700' }}>↓</Text>
           </TouchableOpacity>
         )}
-        <View style={[styles.inputContainer, { paddingBottom: keyboardOpen ? 4 : Math.max(insets.bottom, 6) }]}>
+        <View style={[styles.inputContainer, { marginBottom: keyboardOpen ? keyboardHeight : 0, paddingBottom: keyboardOpen ? 4 : Math.max(insets.bottom, 6) }]}>
           <TouchableOpacity
             onPress={()=>{ try { onAttach(); } catch {} }}
             style={[styles.attachBtn, { width:36, height:36, borderRadius:18, backgroundColor:'#D4AF37', alignItems:'center', justifyContent:'center' }]}
@@ -1948,13 +1934,11 @@ function RoomInner() {
               value={text}
               onChangeText={setText}
               onFocus={()=> {
-                setKeyboardOpen(true);
                 // Performance: log input focus time
                 if (typeof __DEV__ !== 'undefined' && __DEV__) {
                   console.log(`[PERF] chat-input-focus at: ${Date.now() - roomMountTimeRef.current}ms from room mount`);
                 }
               }}
-              onBlur={()=> setKeyboardOpen(false)}
               onContentSizeChange={(e)=>{ try { const h=Math.min(120, Math.max(36, Math.ceil(e.nativeEvent?.contentSize?.height||36))); setInputHeight(h); } catch {} }}
               placeholder="메시지를 입력하세요..."
               placeholderTextColor="#777"
@@ -1974,7 +1958,7 @@ function RoomInner() {
             </TouchableOpacity>
           </View>
         </View>
-      </KeyboardAvoidingView>
+      </View>
 
       {/* 메시지 액션 시트 (카톡 스타일) */}
       <Modal transparent visible={msgMenuOpen} animationType="fade" onRequestClose={closeMsgMenu}>
