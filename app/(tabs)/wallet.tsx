@@ -8324,13 +8324,12 @@ export default function WalletScreen() {
                   <View style={[styles.qrCodeBox, styles.qrFrame, { marginTop: 10 }]}> 
                     <View style={styles.qrCode}>
                     {(() => {
-                      // QR2: 데이터 URL(payload) + 중앙 로고 포함
+                      // QR: 로고 없이 안정적인 QR 코드 (인식률 최대화)
                       const addr = qrCoin.address;
                       const amtForUrl = recvAmountType === 'amount'
                         ? convertAmountToQuantity(parseFloat(recvInput) || 0, qrCoin.symbol).toString()
                         : (recvInput || '');
                       const payload = buildPayUri(addr, qrCoin.symbol, amtForUrl);
-                      // 웹에서는 라이브러리 호환성 이슈가 있어 항상 이미지 폴백 사용
                       if (Platform.OS !== 'web' && QRCode) {
                         try {
                           const Comp = QRCode as any;
@@ -8338,43 +8337,22 @@ export default function WalletScreen() {
                             <View style={styles.qrCodeWrapper} ref={qrShotBoxRef as any} collapsable={false}>
                               <Comp 
                                 value={payload} 
-                                size={360}
+                                size={280}
                                 backgroundColor="#FFFFFF" 
                                 color="#000000"
-                                quietZone={64}
+                                quietZone={20}
                                 ecl="H"
                                 getRef={(c:any)=>{ (qrRef as any).current = c; }}
                               />
-                              {/* 중앙 로고 오버레이(네이티브) */}
-                                <View style={styles.qrCenterLogoAbsWrap}>
-                                  <View style={styles.qrCenterLogoAbs}>
-                                    <Image 
-                                      source={require('@/assets/images/side_logo.png')} 
-                                      style={styles.qrCenterLogoAbsImg} 
-                                      resizeMode="contain" 
-                                    />
-                                  </View>
-                                </View>
                             </View>
                           );
                         } catch {}
                       }
-                      // 폴백: API 생성 (웹 기본) - 고해상도, 여백/색상 명시
-                      const url = `https://api.qrserver.com/v1/create-qr-code/?size=340x340&ecc=H&margin=12&color=000000&bgcolor=ffffff&data=${encodeURIComponent(payload)}`;
+                      // 폴백: API 생성 (웹 기본)
+                      const url = `https://api.qrserver.com/v1/create-qr-code/?size=560x560&ecc=H&margin=20&color=000000&bgcolor=ffffff&data=${encodeURIComponent(payload)}`;
                       return (
                         <View style={styles.qrCodeWrapper} ref={qrShotBoxRef as any} collapsable={false}>
-                          <Image source={{ uri: url }} style={{ width: 284, height: 284 }} resizeMode="contain" />
-                          {true && (
-                            <View style={styles.qrCenterLogoAbsWrap}>
-                              <View style={styles.qrCenterLogoAbs}>
-                                <Image 
-                                  source={require('@/assets/images/side_logo.png')} 
-                                  style={styles.qrCenterLogoAbsImg} 
-                                  resizeMode="contain" 
-                                />
-                              </View>
-                            </View>
-                          )}
+                          <Image source={{ uri: url }} style={{ width: 280, height: 280 }} resizeMode="contain" />
                         </View>
                       );
                     })()}
