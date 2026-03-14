@@ -8533,60 +8533,59 @@ export default function WalletScreen() {
               </View>
               
               {/* 경고 섹션 제거 요청 */}
+              
+              {/* 저장 버튼 - 실제 보이는 팝업 화면 캡처 */}
+              {qrModalType === 'pngsave' && (
+                <View style={styles.qrModalDownloadButtonContainer}>
+                  <TouchableOpacity 
+                    style={[styles.qrSaveButton, { backgroundColor:'#D4AF37', borderColor:'#D4AF37' }]} 
+                    onPress={async () => {
+                      try {
+                        if (Platform.OS === 'web') {
+                          Alert.alert('Web not supported');
+                          return;
+                        }
+                        if (!captureRef) {
+                          Alert.alert(language === 'en' ? 'Capture not available' : '캡처 기능 없음');
+                          return;
+                        }
+                        if (!qrPopupOverlayRef.current) {
+                          Alert.alert(language === 'en' ? 'Popup not ready' : '팝업 준비 안됨');
+                          return;
+                        }
+                        
+                        const tmpPng = await captureRef(qrPopupOverlayRef.current, {
+                          format: 'png',
+                          quality: 1,
+                          result: 'tmpfile',
+                        });
+                        
+                        const { status } = await MediaLibrary.requestPermissionsAsync();
+                        if (status !== 'granted') {
+                          Alert.alert(language === 'en' ? 'Storage permission needed' : '저장 권한 필요');
+                          return;
+                        }
+                        
+                        const asset = await MediaLibrary.createAssetAsync(tmpPng);
+                        if (asset) {
+                          Alert.alert(
+                            language === 'en' ? '✅ Saved!' : '✅ 저장 완료!',
+                            language === 'en' ? 'QR image saved to gallery' : 'QR 이미지가 갤러리에 저장되었습니다'
+                          );
+                          setQrModalVisible(false);
+                        }
+                      } catch (err: any) {
+                        console.error('[QR Save Error]', err);
+                        Alert.alert(language === 'en' ? 'Save failed' : '저장 실패', String(err?.message || err));
+                      }
+                    }}
+                  >
+                    <ThemedText style={{ color:'#000', fontWeight:'700' }}>{language==='en'?'Save':'저장'}</ThemedText>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
-            
-            {/* 저장 버튼 - 실제 보이는 팝업 화면 캡처 */}
-            {qrModalType === 'pngsave' && (
-              <View style={styles.qrModalDownloadButtonContainer}>
-                <TouchableOpacity 
-                  style={[styles.qrSaveButton, { backgroundColor:'#D4AF37', borderColor:'#D4AF37' }]} 
-                  onPress={async () => {
-                    try {
-                      if (Platform.OS === 'web') {
-                        Alert.alert('Web not supported');
-                        return;
-                      }
-                      if (!captureRef) {
-                        Alert.alert(language === 'en' ? 'Capture not available' : '캡처 기능 없음');
-                        return;
-                      }
-                      if (!qrPopupOverlayRef.current) {
-                        Alert.alert(language === 'en' ? 'Popup not ready' : '팝업 준비 안됨');
-                        return;
-                      }
-                      
-                      const tmpPng = await captureRef(qrPopupOverlayRef.current, {
-                        format: 'png',
-                        quality: 1,
-                        result: 'tmpfile',
-                      });
-                      
-                      const { status } = await MediaLibrary.requestPermissionsAsync();
-                      if (status !== 'granted') {
-                        Alert.alert(language === 'en' ? 'Storage permission needed' : '저장 권한 필요');
-                        return;
-                      }
-                      
-                      const asset = await MediaLibrary.createAssetAsync(tmpPng);
-                      if (asset) {
-                        Alert.alert(
-                          language === 'en' ? '✅ Saved!' : '✅ 저장 완료!',
-                          language === 'en' ? 'QR image saved to gallery' : 'QR 이미지가 갤러리에 저장되었습니다'
-                        );
-                        setQrModalVisible(false);
-                      }
-                    } catch (err: any) {
-                      console.error('[QR Save Error]', err);
-                      Alert.alert(language === 'en' ? 'Save failed' : '저장 실패', String(err?.message || err));
-                    }
-                  }}
-                >
-                  <ThemedText style={{ color:'#000', fontWeight:'700' }}>{language==='en'?'Save':'저장'}</ThemedText>
-                </TouchableOpacity>
-              </View>
-            )}
           </View>
-        </View>
       )}
 
       {/* 오프스크린 QR 저장 전용 뷰(제목 + 프레임 + QR) */}
