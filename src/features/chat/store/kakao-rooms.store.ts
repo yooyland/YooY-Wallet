@@ -342,14 +342,27 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
             avatarUrl: room.avatarUrl || null,
           };
           void setDoc(ref, payload, { merge: true });
-          // 생성자 자동 멤버십 기록 (교차 계정 검색 노출 보장)
+          // 모든 멤버에게 멤버십 및 joinedRooms 기록 (초대된 사람도 방 목록에 표시)
           try {
-            const uid = firebaseAuth.currentUser?.uid || 'me';
-            const memberRef = doc(firestore, 'rooms', room.id, 'members', uid);
-            const userRoomRef = doc(firestore, 'users', uid, 'joinedRooms', room.id);
-            void setDoc(memberRef, { joinedAt: serverTimestamp(), role: 'admin' }, { merge: true });
-            void setDoc(userRoomRef, { joinedAt: serverTimestamp(), title: room.title, type: room.type }, { merge: true });
-            void updateDoc(ref, { memberCount: (payload.memberCount || 0) + 1, updatedAt: serverTimestamp() } as any).catch(async()=>{ try { await setDoc(ref, { memberCount: (payload.memberCount || 0) + 1, updatedAt: serverTimestamp() } as any, { merge: true }); } catch {} });
+            const creatorUid = firebaseAuth.currentUser?.uid || 'me';
+            const allMembers = Array.isArray(members) ? members : [creatorUid];
+            // 생성자를 포함하여 모든 멤버에게 멤버십 기록
+            for (const memberId of allMembers) {
+              const isCreator = memberId === creatorUid;
+              const memberRef = doc(firestore, 'rooms', room.id, 'members', memberId);
+              const userRoomRef = doc(firestore, 'users', memberId, 'joinedRooms', room.id);
+              void setDoc(memberRef, { 
+                joinedAt: serverTimestamp(), 
+                role: isCreator ? 'admin' : 'member' 
+              }, { merge: true });
+              void setDoc(userRoomRef, { 
+                joinedAt: serverTimestamp(), 
+                title: room.title, 
+                type: room.type,
+                createdBy: creatorUid
+              }, { merge: true });
+            }
+            void updateDoc(ref, { memberCount: allMembers.length, updatedAt: serverTimestamp() } as any).catch(async()=>{ try { await setDoc(ref, { memberCount: allMembers.length, updatedAt: serverTimestamp() } as any, { merge: true }); } catch {} });
           } catch {}
         } catch {}
         return room;
