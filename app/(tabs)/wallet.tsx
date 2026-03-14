@@ -8256,17 +8256,12 @@ export default function WalletScreen() {
                 <ThemedText style={styles.qrModalTitle}>
                   {qrModalType === 'pngsave' 
                     ? `[${qrCoin.symbol}] / ${recvInput ? `${recvInput} ${qrCoin.symbol}` : '—'}`
-                    : `[${qrCoin.symbol}] Wallet`
+                    : `${currentUser?.displayName || currentUser?.email?.split('@')[0] || '사용자'}님의 ${qrCoin.symbol} Wallet`
                   }
                 </ThemedText>
               </View>
               
-              <View style={[styles.qrModalBody, { paddingTop: 16 }]}>
-                {qrModalType === 'wallet' && (
-                  <View style={{ alignItems:'center', marginBottom: 8 }}>
-                    <ThemedText style={{ color:'#FFD700', fontWeight:'800', fontSize:16 }}>QR코드</ThemedText>
-                  </View>
-                )}
+              <View style={[styles.qrModalBody, { paddingTop: 8 }]}>
                 {/* PNG 저장 미리보기 - 전체 화면 캡처 방식 */}
                 {qrModalType === 'pngsave' ? (
                   <View style={{ alignItems:'center', justifyContent:'center' }}>
@@ -8320,11 +8315,23 @@ export default function WalletScreen() {
                     </View>
                   </View>
                 ) : (
-                <View style={styles.qrCodeContainer}>
-                  <View style={[styles.qrCodeBox, styles.qrFrame, { marginTop: 10 }]}> 
-                    <View style={styles.qrCode}>
+                <View style={{ alignItems:'center', paddingHorizontal: 16 }}>
+                  {/* QR 박스 - 금색 테두리 정사각형 */}
+                  <View style={{ 
+                    padding: 4, 
+                    borderRadius: 12, 
+                    borderWidth: 4, 
+                    borderColor: '#D4AF37', 
+                    backgroundColor: '#1A1A1A' 
+                  }}>
+                    <View style={{ 
+                      backgroundColor: '#fff', 
+                      borderRadius: 8, 
+                      padding: 8,
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }} ref={qrShotBoxRef as any} collapsable={false}>
                     {(() => {
-                      // QR: 로고 없이 안정적인 QR 코드 (인식률 최대화)
                       const addr = qrCoin.address;
                       const amtForUrl = recvAmountType === 'amount'
                         ? convertAmountToQuantity(parseFloat(recvInput) || 0, qrCoin.symbol).toString()
@@ -8334,102 +8341,66 @@ export default function WalletScreen() {
                         try {
                           const Comp = QRCode as any;
                           return (
-                            <View style={styles.qrCodeWrapper} ref={qrShotBoxRef as any} collapsable={false}>
-                              <Comp 
-                                value={payload} 
-                                size={280}
-                                backgroundColor="#FFFFFF" 
-                                color="#000000"
-                                quietZone={20}
-                                ecl="H"
-                                getRef={(c:any)=>{ (qrRef as any).current = c; }}
-                              />
-                            </View>
+                            <Comp 
+                              value={payload} 
+                              size={240}
+                              backgroundColor="#FFFFFF" 
+                              color="#000000"
+                              quietZone={12}
+                              ecl="H"
+                              getRef={(c:any)=>{ (qrRef as any).current = c; }}
+                            />
                           );
                         } catch {}
                       }
-                      // 폴백: API 생성 (웹 기본)
-                      const url = `https://api.qrserver.com/v1/create-qr-code/?size=560x560&ecc=H&margin=20&color=000000&bgcolor=ffffff&data=${encodeURIComponent(payload)}`;
-                      return (
-                        <View style={styles.qrCodeWrapper} ref={qrShotBoxRef as any} collapsable={false}>
-                          <Image source={{ uri: url }} style={{ width: 280, height: 280 }} resizeMode="contain" />
-                        </View>
-                      );
+                      const url = `https://api.qrserver.com/v1/create-qr-code/?size=480x480&ecc=H&margin=12&color=000000&bgcolor=ffffff&data=${encodeURIComponent(payload)}`;
+                      return <Image source={{ uri: url }} style={{ width: 240, height: 240 }} resizeMode="contain" />;
                     })()}
                     </View>
                   </View>
                 </View>
                 )}
                 
+                {/* 주소 복사 영역 - wallet 모드 */}
                 {qrModalType === 'wallet' && (
-                  <ThemedText style={styles.qrAddressLabel}>
-                    {`${currentUser?.displayName || currentUser?.email || '사용자'}님의 ${qrCoin.symbol} 지갑입니다.`}
-                  </ThemedText>
+                  <TouchableOpacity 
+                    style={{ 
+                      flexDirection: 'row', 
+                      alignItems: 'center', 
+                      backgroundColor: '#243034', 
+                      borderRadius: 10, 
+                      paddingVertical: 12, 
+                      paddingHorizontal: 14, 
+                      marginTop: 16,
+                      marginHorizontal: 16,
+                      borderWidth: 1,
+                      borderColor: '#375A64'
+                    }}
+                    onPress={async () => {
+                      try {
+                        const addr = qrCoin.address;
+                        try {
+                          const Clipboard = require('expo-clipboard');
+                          await Clipboard.setStringAsync(addr);
+                        } catch {
+                          await (navigator as any)?.clipboard?.writeText?.(addr);
+                        }
+                        Alert.alert(language==='en'?'Copied':'복사됨', `${qrCoin.symbol} 지갑주소가 복사되었습니다`);
+                      } catch {}
+                    }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <ThemedText style={{ color: '#888', fontSize: 11, marginBottom: 2 }}>{`[${qrCoin.symbol}] 받을 주소`}</ThemedText>
+                      <ThemedText style={{ color: '#FFF', fontSize: 12 }} numberOfLines={1} ellipsizeMode="middle">
+                        {qrCoin.address}
+                      </ThemedText>
+                    </View>
+                    <View style={{ marginLeft: 8, padding: 4 }}>
+                      <ThemedText style={{ color: '#D4AF37', fontSize: 14 }}>📋</ThemedText>
+                    </View>
+                  </TouchableOpacity>
                 )}
                 
-                {qrModalType !== 'pngsave' && (
-                  <View style={styles.qrAddressContainer}>
-                  {qrModalType === 'wallet' ? (
-                    <>
-                      <TouchableOpacity 
-                        style={[styles.ctaCopy, { flex:1, backgroundColor:'#243034', borderColor:'#375A64' }]}
-                        onPress={async () => {
-                          try {
-                            const addr = qrCoin.address;
-                            try {
-                              const Clipboard = require('expo-clipboard');
-                              await Clipboard.setStringAsync(addr);
-                            } catch {
-                              await (navigator as any)?.clipboard?.writeText?.(addr);
-                            }
-                            Alert.alert(language==='en'?'Copied':'복사됨', `${qrCoin.symbol} 지갑주소가 복사되었습니다`);
-                          } catch {}
-                        }}
-                      >
-                        <ThemedText style={styles.ctaCopyText}>{`[${qrCoin.symbol}] 받을 주소`}</ThemedText>
-                      </TouchableOpacity>
-                    </>
-                  ) : (
-                    (() => {
-                    const addr = qrCoin.address;
-                    const amtForUrl = recvAmountType === 'amount'
-                      ? convertAmountToQuantity(parseFloat(recvInput) || 0, qrCoin.symbol).toString()
-                      : (recvInput || '');
-                    const url = buildPayUri(addr, qrCoin.symbol, amtForUrl);
-                    return (
-                      <>
-                        <ThemedText style={styles.qrAddressText} numberOfLines={1} ellipsizeMode="middle">
-                          {url}
-                        </ThemedText>
-                        <TouchableOpacity 
-                          style={styles.qrCopyButton}
-                          onPress={async () => {
-                            try {
-                                try {
-                                  const Clipboard = require('expo-clipboard');
-                                  await Clipboard.setStringAsync(url);
-                                } catch {
-                              await (navigator as any)?.clipboard?.writeText?.(url);
-                                }
-                              setQrModalCopySuccess(true);
-                              setTimeout(() => setQrModalCopySuccess(false), 2000);
-                            } catch (error) {
-                              console.error('Copy failed:', error);
-                            }
-                          }}
-                        >
-                          {qrModalCopySuccess ? (
-                            <Ionicons name="checkmark" size={16} color="#4CAF50" />
-                          ) : (
-                            <Ionicons name="copy-outline" size={16} color="#FFFFFF" />
-                          )}
-                        </TouchableOpacity>
-                      </>
-                    );
-                    })()
-                  )}
-                  </View>
-                )}
                 
                 {qrModalType === 'wallet' && (
                   <View style={styles.qrButtonContainer}>
