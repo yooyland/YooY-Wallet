@@ -8270,10 +8270,12 @@ export default function WalletScreen() {
                 {/* PNG 저장 미리보기 - 전체 화면 캡처 방식 */}
                 {qrModalType === 'pngsave' ? (
                   <View style={{ alignItems:'center', justifyContent:'center' }}>
-                    {/* 저장 안내 */}
+                    {/* 스크린샷 안내 */}
                     <View style={{ alignItems:'center', marginBottom: 12, paddingHorizontal: 16 }}>
                       <ThemedText style={{ color:'#AAAAAA', fontSize:13, textAlign:'center' }}>
-                        {language==='en' ? 'Tap Save to capture this screen' : '저장 버튼을 눌러 화면을 캡처하세요'}
+                        {language==='en' 
+                          ? 'Take a screenshot to save this QR code' 
+                          : '스크린샷을 찍어서 QR코드를 저장하세요'}
                       </ThemedText>
                     </View>
                     {/* 상단 타이틀 */}
@@ -8534,53 +8536,14 @@ export default function WalletScreen() {
               
               {/* 경고 섹션 제거 요청 */}
               
-              {/* 저장 버튼 - 실제 보이는 팝업 화면 캡처 */}
+              {/* 닫기 버튼 - 스크린샷 방식 안내 */}
               {qrModalType === 'pngsave' && (
                 <View style={styles.qrModalDownloadButtonContainer}>
                   <TouchableOpacity 
                     style={[styles.qrSaveButton, { backgroundColor:'#D4AF37', borderColor:'#D4AF37' }]} 
-                    onPress={async () => {
-                      try {
-                        if (Platform.OS === 'web') {
-                          Alert.alert('Web not supported');
-                          return;
-                        }
-                        if (!captureRef) {
-                          Alert.alert(language === 'en' ? 'Capture not available' : '캡처 기능 없음');
-                          return;
-                        }
-                        if (!qrPopupOverlayRef.current) {
-                          Alert.alert(language === 'en' ? 'Popup not ready' : '팝업 준비 안됨');
-                          return;
-                        }
-                        
-                        const tmpPng = await captureRef(qrPopupOverlayRef.current, {
-                          format: 'png',
-                          quality: 1,
-                          result: 'tmpfile',
-                        });
-                        
-                        const { status } = await MediaLibrary.requestPermissionsAsync();
-                        if (status !== 'granted') {
-                          Alert.alert(language === 'en' ? 'Storage permission needed' : '저장 권한 필요');
-                          return;
-                        }
-                        
-                        const asset = await MediaLibrary.createAssetAsync(tmpPng);
-                        if (asset) {
-                          Alert.alert(
-                            language === 'en' ? '✅ Saved!' : '✅ 저장 완료!',
-                            language === 'en' ? 'QR image saved to gallery' : 'QR 이미지가 갤러리에 저장되었습니다'
-                          );
-                          setQrModalVisible(false);
-                        }
-                      } catch (err: any) {
-                        console.error('[QR Save Error]', err);
-                        Alert.alert(language === 'en' ? 'Save failed' : '저장 실패', String(err?.message || err));
-                      }
-                    }}
+                    onPress={() => setQrModalVisible(false)}
                   >
-                    <ThemedText style={{ color:'#000', fontWeight:'700' }}>{language==='en'?'Save':'저장'}</ThemedText>
+                    <ThemedText style={{ color:'#000', fontWeight:'700' }}>{language==='en'?'Close':'닫기'}</ThemedText>
                   </TouchableOpacity>
                 </View>
               )}
