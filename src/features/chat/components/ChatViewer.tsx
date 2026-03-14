@@ -705,7 +705,14 @@ export default function ChatViewer(props: ChatViewerProps) {
             return (
               <View style={{ width:'96%', height:'100%', alignItems:'center', justifyContent:'center' }}>
                 <EImage source={{ uri: icon }} style={{ width: 160, height: 160, borderRadius: 12, backgroundColor:'#111' }} contentFit={'cover'} />
-                <Text style={{ color:'#EEE', marginTop: 12, fontWeight:'800' }} numberOfLines={2}>{name}</Text>
+                <Text style={{ color:'#EEE', marginTop: 16, fontWeight:'800', fontSize: 16 }} numberOfLines={2}>{name}</Text>
+                <Text style={{ color:'#888', marginTop: 8, fontSize: 12 }}>{ext} 파일</Text>
+                <TouchableOpacity 
+                  onPress={() => { try { require('expo-linking').openURL(src); } catch {} }}
+                  style={{ marginTop: 20, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#FFD700', backgroundColor: 'rgba(255,215,0,0.1)' }}
+                >
+                  <Text style={{ color: '#FFD700', fontWeight: '800' }}>외부 앱으로 열기</Text>
+                </TouchableOpacity>
               </View>
             );
           }

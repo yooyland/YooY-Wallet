@@ -1394,9 +1394,13 @@ function RoomInner() {
           }
           if (type === 'file') {
             const refForExt = String(item.imageUrl || item.content || '');
-            const ext = (() => { try { const m = /\\.([a-z0-9]{1,8})(?:\\?|#|$)/i.exec(refForExt); return (m?.[1]||'file'); } catch { return 'file'; } })();
-            const icon = fileIcon(ext);
+            const ext = (() => { try { const m = /\.([a-z0-9]{1,8})(?:\?|#|$)/i.exec(refForExt); return (m?.[1]||'file').toLowerCase(); } catch { return 'file'; } })();
             const hasUrl = !!item.imageUrl;
+            const isImage = /^(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(ext);
+            const isVideo = /^(mp4|mov|avi|mkv|webm|m4v|3gp)$/i.test(ext);
+            const isPdf = /^pdf$/i.test(ext);
+            const fileLabel = ext.toUpperCase().slice(0, 6);
+            const fileColor = isPdf ? '#E53935' : (isImage ? '#4CAF50' : (isVideo ? '#9C27B0' : '#FFD700'));
             return (
               <TouchableOpacity
                 activeOpacity={0.9}
@@ -1406,17 +1410,26 @@ function RoomInner() {
                       Alert.alert('파일 준비 중', '파일 업로드가 완료되면 미리보기를 열 수 있습니다.');
                       return;
                     }
-                    const lower = String(item.imageUrl || '').toLowerCase();
-                    if (lower.endsWith('.pdf') || /(?:^|\\.|\\?)pdf(?:$|[&#])/i.test(lower)) { setViewerList([]); setViewerMsgId(String(item?.id||'')); setViewerUrl(String(item.imageUrl)); setViewerKind('pdf'); setViewerOpen(true); }
-                    else { setViewerList([]); setViewerMsgId(String(item?.id||'')); setViewerUrl(String(item.imageUrl)); setViewerKind('web'); setViewerOpen(true); }
+                    const url = String(item.imageUrl);
+                    setViewerList([]); 
+                    setViewerMsgId(String(item?.id||''));
+                    setViewerUrl(url);
+                    if (isImage) setViewerKind('image');
+                    else if (isVideo) setViewerKind('video');
+                    else if (isPdf) setViewerKind('pdf');
+                    else setViewerKind('web');
+                    setViewerOpen(true);
                   } catch {}
                 }}
                 onLongPress={() => { try { openMsgMenu(item, isMe); } catch {} }}
               >
-                <View style={{ width: 220, borderRadius: 10, overflow:'hidden', backgroundColor:'#FFF' }}>
-                  <Image source={{ uri: icon }} style={{ width: 220, height: 120 }} />
-                  <View style={{ padding:8 }}>
-                    <Text style={{ color:'#111', fontWeight:'700' }} numberOfLines={2}>{String(item?.content||'파일')}</Text>
+                <View style={{ width: 200, borderRadius: 12, overflow:'hidden', backgroundColor:'#1A1A1A', borderWidth:1, borderColor:'#333' }}>
+                  <View style={{ height: 80, alignItems:'center', justifyContent:'center', backgroundColor:'#111' }}>
+                    <Text style={{ color: fileColor, fontSize: 28, fontWeight:'900' }}>{fileLabel}</Text>
+                  </View>
+                  <View style={{ padding:10, backgroundColor:'#1A1A1A' }}>
+                    <Text style={{ color:'#EEE', fontWeight:'600', fontSize:13 }} numberOfLines={2}>{String(item?.content||'파일')}</Text>
+                    <Text style={{ color:'#888', fontSize:10, marginTop:4 }}>{isImage?'이미지':isVideo?'동영상':isPdf?'PDF':'파일'}</Text>
                   </View>
                 </View>
               </TouchableOpacity>
@@ -1842,11 +1855,12 @@ function RoomInner() {
         data={filteredMessages}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
-        initialNumToRender={10}
-        windowSize={8}
-        maxToRenderPerBatch={6}
-        updateCellsBatchingPeriod={100}
+        initialNumToRender={15}
+        windowSize={5}
+        maxToRenderPerBatch={10}
+        updateCellsBatchingPeriod={50}
         removeClippedSubviews={Platform.OS !== 'web'}
+        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
         onScroll={({ nativeEvent }) => {
           try {
             const y = Number(nativeEvent?.contentOffset?.y || 0);
