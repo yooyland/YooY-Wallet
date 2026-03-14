@@ -8341,20 +8341,64 @@ export default function WalletScreen() {
                         try {
                           const Comp = QRCode as any;
                           return (
-                            <Comp 
-                              value={payload} 
-                              size={240}
-                              backgroundColor="#FFFFFF" 
-                              color="#000000"
-                              quietZone={12}
-                              ecl="H"
-                              getRef={(c:any)=>{ (qrRef as any).current = c; }}
-                            />
+                            <View style={{ position: 'relative' }}>
+                              <Comp 
+                                value={payload} 
+                                size={240}
+                                backgroundColor="#FFFFFF" 
+                                color="#000000"
+                                quietZone={12}
+                                ecl="H"
+                                getRef={(c:any)=>{ (qrRef as any).current = c; }}
+                              />
+                              {/* 중앙 로고 */}
+                              <View style={{ 
+                                position: 'absolute', 
+                                top: '50%', 
+                                left: '50%', 
+                                transform: [{ translateX: -24 }, { translateY: -24 }],
+                                width: 48, 
+                                height: 48, 
+                                backgroundColor: '#000', 
+                                borderRadius: 8, 
+                                alignItems: 'center', 
+                                justifyContent: 'center' 
+                              }}>
+                                <Image 
+                                  source={require('@/assets/images/side_logo.png')} 
+                                  style={{ width: 36, height: 36 }} 
+                                  resizeMode="contain" 
+                                />
+                              </View>
+                            </View>
                           );
                         } catch {}
                       }
                       const url = `https://api.qrserver.com/v1/create-qr-code/?size=480x480&ecc=H&margin=12&color=000000&bgcolor=ffffff&data=${encodeURIComponent(payload)}`;
-                      return <Image source={{ uri: url }} style={{ width: 240, height: 240 }} resizeMode="contain" />;
+                      return (
+                        <View style={{ position: 'relative' }}>
+                          <Image source={{ uri: url }} style={{ width: 240, height: 240 }} resizeMode="contain" />
+                          {/* 중앙 로고 */}
+                          <View style={{ 
+                            position: 'absolute', 
+                            top: '50%', 
+                            left: '50%', 
+                            transform: [{ translateX: -24 }, { translateY: -24 }],
+                            width: 48, 
+                            height: 48, 
+                            backgroundColor: '#000', 
+                            borderRadius: 8, 
+                            alignItems: 'center', 
+                            justifyContent: 'center' 
+                          }}>
+                            <Image 
+                              source={require('@/assets/images/side_logo.png')} 
+                              style={{ width: 36, height: 36 }} 
+                              resizeMode="contain" 
+                            />
+                          </View>
+                        </View>
+                      );
                     })()}
                     </View>
                   </View>
@@ -8389,12 +8433,9 @@ export default function WalletScreen() {
                       } catch {}
                     }}
                   >
-                    <View style={{ flex: 1 }}>
-                      <ThemedText style={{ color: '#888', fontSize: 11, marginBottom: 2 }}>{`[${qrCoin.symbol}] 받을 주소`}</ThemedText>
-                      <ThemedText style={{ color: '#FFF', fontSize: 12 }} numberOfLines={1} ellipsizeMode="middle">
-                        {qrCoin.address}
-                      </ThemedText>
-                    </View>
+                    <ThemedText style={{ flex: 1, color: '#FFF', fontSize: 12 }} numberOfLines={1} ellipsizeMode="middle">
+                      {qrCoin.address}
+                    </ThemedText>
                     <View style={{ marginLeft: 8, padding: 4 }}>
                       <ThemedText style={{ color: '#D4AF37', fontSize: 14 }}>📋</ThemedText>
                     </View>
