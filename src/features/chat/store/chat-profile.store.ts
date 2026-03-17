@@ -11,6 +11,8 @@ export interface ChatProfile {
   displayName: string; // 채팅 대화명
   chatName?: string; // 별도 채팅 닉네임(우선 표시)
   useHashInChat?: boolean; // 닉네임 대신 해시 사용 여부
+  /** 채팅/프로필에서 표시하는 사용자 ID (Firestore users/{uid}.username와 동기화) */
+  username?: string;
   avatar?: string;
   status: 'online' | 'idle' | 'dnd' | 'offline';
   customStatus?: string;
@@ -37,6 +39,8 @@ interface ChatProfileActions {
   // 프로필 CRUD
   createProfile: (profile: Omit<ChatProfile, 'id' | 'createdAt'>) => Promise<ChatProfile>;
   updateProfileById: (userId: string, updates: Partial<ChatProfile>) => void;
+  /** Set or merge profile for another user (e.g. DM peer). Does not change currentProfile. */
+  setPeerProfile: (userId: string, data: Partial<ChatProfile> & { displayName?: string }) => void;
   deleteProfile: (userId: string) => void;
   getProfile: (userId: string) => ChatProfile | null;
   
@@ -225,6 +229,26 @@ export const useChatProfileStore = create<ChatProfileState & ChatProfileActions>
         }
       })),
 
+      setPeerProfile: (userId, data) => set((state) => {
+        const existing = state.profiles[userId];
+        const now = Date.now();
+        const merged: ChatProfile = existing
+          ? { ...existing, ...data, userId }
+          : {
+              id: `peer_${userId}`,
+              userId,
+              displayName: data.displayName || data.chatName || userId,
+              chatName: data.chatName ?? data.displayName,
+              status: 'offline',
+              createdAt: now,
+              lastActive: now,
+              ...data,
+            };
+        return {
+          profiles: { ...state.profiles, [userId]: merged },
+        };
+      }),
+
       deleteProfile: (userId) => set((state) => {
         const newProfiles = { ...state.profiles };
         delete newProfiles[userId];
@@ -273,6 +297,24 @@ export const useChatProfileStore = create<ChatProfileState & ChatProfileActions>
         try {
           const uid = firebaseAuth.currentUser?.uid || 'anonymous-user';
           const state = get();
+          const authUser = firebaseAuth.currentUser;
+          const email = authUser?.email || '';
+          const emailLocalPart = (() => {
+            try {
+              if (!email) return '';
+              const [local] = email.split('@');
+              return String(local || '').trim();
+            } catch {
+              return '';
+            }
+          })();
+          const fallbackBaseName = (() => {
+            const fromDisplay = String(authUser?.displayName || '').trim();
+            if (fromDisplay) return fromDisplay;
+            if (emailLocalPart) return emailLocalPart;
+            if (uid && uid !== 'anonymous-user') return uid.slice(0, 8);
+            return '사용자';
+          })();
           // 현재 프로필이 다른 계정의 것이라면 무시
           if (state.currentProfile && state.currentProfile.userId !== uid) {
             set({ currentProfile: null });
@@ -280,22 +322,56 @@ export const useChatProfileStore = create<ChatProfileState & ChatProfileActions>
           // 해당 uid의 프로필이 있으면 로드
           const existing = state.profiles[uid];
           if (existing) {
-            set({ currentProfile: existing, isInitialized: true });
-            // Firestore users/{uid} 문서에 이메일/닉네임/아바타 자동 동기화
+            // Firestore에서 username 등 최신 값 로드하여 채팅 리스트·프로필 설정과 동기화
+            try {
+              const { doc, getDoc, setDoc, serverTimestamp } = await import('firebase/firestore');
+              const userSnap = await getDoc(doc(firestore, 'users', uid));
+              const userData = userSnap.exists() ? (userSnap.data() as any) : {};
+              const remoteDisplay = String(userData?.displayName ?? '').trim();
+              const remoteChatName = String(userData?.chatName ?? '').trim();
+              const remoteUsername = String(userData?.username ?? '').trim();
+              const existingDisplay = String(existing.displayName || '').trim();
+              const existingChatName = String(existing.chatName || '').trim();
+              const merged = {
+                ...existing,
+                // Firestore 값이 있으면 사용하되, 비어 있거나 '사용자' 같은 기본값이면
+                // 기존 로컬 값이나 이메일/UID 기반 이름을 유지
+                username: (remoteUsername && remoteUsername !== '사용자') ? remoteUsername : (existing as any).username,
+                displayName: (() => {
+                  if (existingDisplay && existingDisplay !== '사용자') return existingDisplay;
+                  if (remoteDisplay && remoteDisplay !== '사용자') return remoteDisplay;
+                  return fallbackBaseName;
+                })(),
+                chatName: (() => {
+                  if (existingChatName && existingChatName !== '사용자') return existingChatName;
+                  if (remoteChatName && remoteChatName !== '사용자') return remoteChatName;
+                  return fallbackBaseName;
+                })(),
+                avatar: userData?.avatar ?? existing.avatar,
+                customStatus: userData?.customStatus ?? existing.customStatus,
+                bio: userData?.bio ?? existing.bio,
+              };
+              set({
+                currentProfile: merged,
+                profiles: { ...state.profiles, [uid]: merged },
+                isInitialized: true,
+              });
+            } catch {
+              set({ currentProfile: existing, isInitialized: true });
+            }
+            // Firestore users/{uid} 문서에 이메일/닉네임/아바타 자동 동기화 (현재 프로필 기준)
             if (uid && uid !== 'anonymous-user') {
               try {
-                const { doc, setDoc, serverTimestamp } = await import('firebase/firestore');
-                const authUser = firebaseAuth.currentUser;
-                const email = authUser?.email || undefined;
+                const current = get().currentProfile;
                 await setDoc(
                   doc(firestore, 'users', uid),
                   {
-                    email,
-                    displayName: existing.displayName || authUser?.displayName || '사용자',
-                    chatName: existing.chatName || existing.displayName || authUser?.displayName || '사용자',
-                    username: (existing as any).username || undefined,
-                    usernameLower: (existing as any).username ? String((existing as any).username).toLowerCase() : undefined,
-                    avatar: existing.avatar || undefined,
+                    email: email || undefined,
+                    displayName: (current?.displayName || existing.displayName || fallbackBaseName),
+                    chatName: (current?.chatName ?? existing.chatName ?? fallbackBaseName),
+                    username: (current as any)?.username ?? (existing as any).username ?? undefined,
+                    usernameLower: (current as any)?.username ? String((current as any).username).toLowerCase() : ((existing as any).username ? String((existing as any).username).toLowerCase() : undefined),
+                    avatar: (current?.avatar ?? existing.avatar) ?? undefined,
                     updatedAt: serverTimestamp(),
                   } as any,
                   { merge: true }
@@ -309,7 +385,7 @@ export const useChatProfileStore = create<ChatProfileState & ChatProfileActions>
           // 없으면 생성
           const created = await get().createProfile({
             userId: uid,
-            displayName: firebaseAuth.currentUser?.displayName || '사용자',
+            displayName: fallbackBaseName,
             status: 'online',
             bio: '채팅 프로필을 설정해보세요!',
           });
@@ -318,14 +394,12 @@ export const useChatProfileStore = create<ChatProfileState & ChatProfileActions>
           if (uid && uid !== 'anonymous-user') {
             try {
               const { doc, setDoc, serverTimestamp } = await import('firebase/firestore');
-              const authUser = firebaseAuth.currentUser;
-              const email = authUser?.email || undefined;
               await setDoc(
                 doc(firestore, 'users', uid),
                 {
-                  email,
-                  displayName: created.displayName || authUser?.displayName || '사용자',
-                  chatName: created.chatName || created.displayName || authUser?.displayName || '사용자',
+                  email: email || undefined,
+                  displayName: created.displayName || fallbackBaseName,
+                  chatName: created.chatName || created.displayName || fallbackBaseName,
                   username: (created as any).username || undefined,
                   usernameLower: (created as any).username ? String((created as any).username).toLowerCase() : undefined,
                   avatar: created.avatar || undefined,
@@ -362,6 +436,7 @@ export const useChatProfileStore = create<ChatProfileState & ChatProfileActions>
             userId: p.userId,
             displayName: p.displayName,
             chatName: p.chatName,
+            username: (p as any).username,
             useHashInChat: p.useHashInChat ?? false,
             // 저장 용량 보호: dataURL/avatar는 퍼시스트하지 않음 (런타임에서만 유지)
             avatar: isHttpAvatar ? p.avatar : undefined,

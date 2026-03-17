@@ -59,6 +59,8 @@ export default function ChatProfileSettingsScreen() {
   const [viewerBox, setViewerBox] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [viewerRatio, setViewerRatio] = useState<number | null>(null);
   const [viewerImgSize, setViewerImgSize] = useState<{ w: number; h: number } | null>(null);
+  // 프로필 화면이 열린 뒤 currentProfile이 갱신되어도 사용자가 입력 중인 값은 덮어쓰지 않기 위한 플래그
+  const profileLoadedRef = useRef(false);
   // PDF 썸네일 캐시(웹): uri -> dataURL
   const [pdfThumbs, setPdfThumbs] = useState<Record<string, string>>({});
   // 비디오 썸네일 캐시(웹): uri -> dataURL
@@ -545,11 +547,13 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
   // New simple gallery v2
   // 갤러리 v3: 매우 단순한 4열 그리드 + 미리보기
   const [mediaV3, setMediaV3] = useState<string[]>([]);
-  const [mediaTab, setMediaTab] = useState<'image'|'video'|'file'|'link'|'qr'|'other'>('image');
+  const [mediaTab, setMediaTab] = useState<'image'|'video'|'file'|'link'|'qr'|'other'|'treasure'>('image');
   const [previewUri, setPreviewUri] = useState<string | null>(null);
   const [resolvedPreviewUri, setResolvedPreviewUri] = useState<string | null>(null);
   // 파일 항목 URL 선해결 캐시 (로컬 UUID/라우트 → Storage 다운로드 URL로 정규화)
   const [resolvedFileMap, setResolvedFileMap] = useState<Record<string, string>>({});
+  // 사진 탭 썸네일용: gs:///UUID 등 → https 다운로드 URL
+  const [resolvedImageMap, setResolvedImageMap] = useState<Record<string, string>>({});
   const [nameMap, setNameMap] = useState<Record<string, string>>({});
   const [userMetaMap, setUserMetaMap] = useState<Record<string, any>>({});
   const ensureMediaName = useCallback(async (raw: string): Promise<string> => {
@@ -751,11 +755,34 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
     })();
   }, [gallery, mediaTab, ensureMediaName]);
 
+  // 사진 탭·보물창고: 썸네일 표시를 위해 gs:///UUID 등 URI를 https 다운로드 URL로 해결
+  useEffect(() => {
+    (async () => {
+      try {
+        if (mediaTab !== 'image' && mediaTab !== 'treasure') return;
+        const imgs = mediaTab === 'image'
+          ? (gallery||[]).filter((g:any)=> String(g?.type||'')==='image' && g.uri && (g.public !== false))
+          : (gallery||[]).filter((g:any)=> g.uri && g.public === false && (String(g?.type||'')==='image' || String(g?.type||'')==='qr'));
+        const next: Record<string, string> = { ...resolvedImageMap };
+        for (const it of imgs) {
+          const u = String(it.uri);
+          if (/^https?:\/\//i.test(u) || /^data:/i.test(u)) { next[u] = u; continue; }
+          if (next[u]) continue;
+          try {
+            const resolved = await resolveStorageUrl(u);
+            if (resolved) next[u] = resolved;
+          } catch {}
+        }
+        setResolvedImageMap(next);
+      } catch {}
+    })();
+  }, [gallery, mediaTab, resolveStorageUrl]);
+
   // 1회 마이그레이션: 갤러리에 남아있는 UUID/비-URL 항목을 실제 다운로드 URL로 교정 저장
   useEffect(() => {
     (async () => {
       try {
-        if (Platform.OS !== 'web') return;
+        if (Platform.OS === 'web') return;
         if (mediaTab !== 'file') return;
         const needsFix = (gallery||[]).filter((g:any)=> g.type==='file' && g.uri && !/^https?:\/\//i.test(String(g.uri)) && !/^gs:\/\//i.test(String(g.uri)));
         if (!needsFix.length) return;
@@ -943,31 +970,36 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
     return 'file';
   };
 
+  // 스토어 초기화는 한 번만 호출
   useEffect(() => {
-    // 스토어 초기화로 저장된 아바타/프로필 로드
     initialize();
-    if (currentProfile) {
-      setDisplayName((currentProfile as any).chatName || currentProfile.displayName);
-      try { setUsername(((currentProfile as any).username || '').trim()); } catch {}
-      setUseHash(Boolean((currentProfile as any).useHashInChat));
-      setBio(currentProfile.bio || '');
-      setCustomStatusText(currentProfile.customStatus || '');
-      setTags(Array.isArray(currentProfile?.tags) ? ([...currentProfile!.tags!] as string[]) : []);
-      setTagDraft('');
-      setAvatar(currentProfile.avatar);
-      setSelectedStatus(currentProfile.status);
-      // 아바타가 있는데 갤러리에 항목이 없다면 미리보기 소스로 활용
-      if (currentProfile.avatar && !currentProfile.avatar.startsWith('blob:')) {
-        setMediaV3((prev) => {
-          const set = new Set(prev);
-          set.add(currentProfile.avatar!);
-          return Array.from(set);
-        });
-        // 갤러리에 자동 저장
-        addToGallery(currentProfile.avatar!, 'image');
-      }
+  }, [initialize]);
+
+  // currentProfile이 처음 준비되었을 때만 폼 값을 채움 (사용자 입력을 덮어쓰지 않도록)
+  useEffect(() => {
+    if (!currentProfile) return;
+    if (profileLoadedRef.current) return;
+    profileLoadedRef.current = true;
+    setDisplayName((currentProfile as any).chatName || currentProfile.displayName);
+    try { setUsername((currentProfile?.username || (currentProfile as any)?.username || '').trim()); } catch {}
+    setUseHash(Boolean((currentProfile as any).useHashInChat));
+    setBio(currentProfile.bio || '');
+    setCustomStatusText(currentProfile.customStatus || '');
+    setTags(Array.isArray(currentProfile?.tags) ? ([...currentProfile!.tags!] as string[]) : []);
+    setTagDraft('');
+    setAvatar(currentProfile.avatar);
+    setSelectedStatus(currentProfile.status);
+    // 아바타가 있는데 갤러리에 항목이 없다면 미리보기 소스로 활용
+    if (currentProfile.avatar && !currentProfile.avatar.startsWith('blob:')) {
+      setMediaV3((prev) => {
+        const set = new Set(prev);
+        set.add(currentProfile.avatar!);
+        return Array.from(set);
+      });
+      // 갤러리에 자동 저장
+      addToGallery(currentProfile.avatar!, 'image');
     }
-  }, [currentProfile, initialize, addToGallery]);
+  }, [currentProfile, addToGallery]);
 
   const saveUsername = useCallback(async () => {
     try {
@@ -1942,16 +1974,17 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
         {/**/}
         <ScrollView horizontal showsHorizontalScrollIndicator contentContainerStyle={[styles.mediaTabsRow, { paddingHorizontal: 16 }]}> 
           <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
-          {(['image','video','file','link','qr','other'] as const).map((tab) => {
-            const label = tab==='image'?t('photo', language):tab==='video'?t('video', language):tab==='file'?t('file', language):tab==='link'?t('link', language):tab==='qr'?t('qr', language):t('other', language);
+          {(['image','video','file','link','qr','other','treasure'] as const).map((tab) => {
+            const label = tab==='image'?t('photo', language):tab==='video'?t('video', language):tab==='file'?t('file', language):tab==='link'?t('link', language):tab==='qr'?t('qr', language):tab==='treasure'?(language==='en'?'Treasure':'보물창고'):t('other', language);
             const count = (() => {
               try {
-                if (tab==='image') return (gallery||[]).filter((g:any)=> String(g?.type||'')==='image' && g.uri).length;
-                if (tab==='video') return (gallery||[]).filter((g:any)=> String(g?.type||'')==='video' && g.uri).length;
-                if (tab==='file') return (gallery||[]).filter((g:any)=> String(g?.type||'')==='file' && g.uri).length;
-                if (tab==='link') return (gallery||[]).filter((g:any)=> String(g?.type||'')==='link' && g.uri).length;
-                if (tab==='qr') return (gallery||[]).filter((g:any)=> String(g?.type||'')==='qr' && g.uri).length;
-                return (gallery||[]).filter((g:any)=> !['image','video','file','link','qr'].includes(String(g?.type||'')) && g.uri).length;
+                if (tab==='image') return (gallery||[]).filter((g:any)=> String(g?.type||'')==='image' && g.uri && g.public !== false).length;
+                if (tab==='video') return (gallery||[]).filter((g:any)=> String(g?.type||'')==='video' && g.uri && g.public !== false).length;
+                if (tab==='file') return (gallery||[]).filter((g:any)=> String(g?.type||'')==='file' && g.uri && g.public !== false).length;
+                if (tab==='link') return (gallery||[]).filter((g:any)=> String(g?.type||'')==='link' && g.uri && g.public !== false).length;
+                if (tab==='qr') return (gallery||[]).filter((g:any)=> String(g?.type||'')==='qr' && g.uri && g.public !== false).length;
+                if (tab==='treasure') return (gallery||[]).filter((g:any)=> g.uri && g.public === false).length;
+                return (gallery||[]).filter((g:any)=> !['image','video','file','link','qr'].includes(String(g?.type||'')) && g.uri && g.public !== false).length;
               } catch { return 0; }
             })();
             return (
@@ -1966,16 +1999,16 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
         </ScrollView>
 
         {mediaTab==='image' && (
-          (gallery.filter((g:any)=>g.type==='image' && g.uri).length === 0) ? (
+          (gallery.filter((g:any)=>g.type==='image' && g.uri && g.public !== false).length === 0) ? (
             <View style={styles.mediaEmpty}><ThemedText style={styles.mediaEmptyText}>{t('noPhotos', language)}</ThemedText></View>
           ) : (
         <View style={[styles.photoCard, { borderWidth: 0, paddingHorizontal: 0 }]}>
               <View style={[styles.gridWrap, { gap: 2 }]}> 
-            {gallery.filter((g:any)=>g.type==='image' && g.uri).map((it:any, idx:number) => { const u = it.uri; const isPrivate = (gallery.find(g=>g.uri===u)?.public === false); const normalized = (()=>{ try { const url=new URL(String(u)); url.search=''; url.hash=''; return url.toString(); } catch { return String(u||''); } })(); const prettyName = (()=>{ const n=String(it?.name||'').trim(); const meta=nameMap[normalized]; if (meta) return meta; if (!n || ['image','photo','사진','file'].includes(n.toLowerCase())) return deriveName(String(u)); return n; })(); try { if (!nameMap[normalized] && (!it?.name || ['image','photo','사진','file'].includes(String(it?.name||'').toLowerCase()))) { ensureMediaName(String(u)); } } catch {} return (
+            {gallery.filter((g:any)=>g.type==='image' && g.uri && g.public !== false).map((it:any, idx:number) => { const u = it.uri; const displayUri = resolvedImageMap[u] || u; const isPrivate = (gallery.find(g=>g.uri===u)?.public === false); const normalized = (()=>{ try { const url=new URL(String(u)); url.search=''; url.hash=''; return url.toString(); } catch { return String(u||''); } })(); const prettyName = (()=>{ const n=String(it?.name||'').trim(); const meta=nameMap[normalized]; if (meta) return meta; if (!n || ['image','photo','사진','file'].includes(n.toLowerCase())) return deriveName(String(u)); return n; })(); try { if (!nameMap[normalized] && (!it?.name || ['image','photo','사진','file'].includes(String(it?.name||'').toLowerCase()))) { ensureMediaName(String(u)); } } catch {} return (
               <View key={`${u}-${idx}`} style={[styles.gridItem, styles.gridItem4]}> 
                     <TouchableOpacity onLongPress={() => { setSelecting(true); toggleSelect(u); }} onPress={() => { if (selecting) { toggleSelect(u); } else { setPreviewUri(u); setPreviewOpen(true); setEditName(gallery.find(g=>g.uri===u)?.name||''); setEditProtect(!!gallery.find(g=>g.uri===u)?.protect); setEditPublic(!!gallery.find(g=>g.uri===u)?.public); } }} disabled={!u} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
                   <EImage
-                    source={{ uri: u }}
+                    source={{ uri: displayUri || u }}
                     style={styles.gridImage}
                     contentFit="cover"
                     transition={200}
@@ -2039,8 +2072,54 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
           )
         )}
 
+        {mediaTab==='treasure' && (
+          (gallery.filter((g:any)=> g.uri && g.public === false).length === 0) ? (
+            <View style={styles.mediaEmpty}><ThemedText style={styles.mediaEmptyText}>{language==='en' ? 'No private items' : '비공개 항목이 없습니다.'}</ThemedText></View>
+          ) : (
+            <View style={[styles.photoCard, { borderWidth: 0, paddingHorizontal: 0 }]}>
+              <View style={[styles.gridWrap, { gap: 2 }]}>
+                {gallery.filter((g:any)=> g.uri && g.public === false).map((it:any, idx:number) => {
+                  const u = it.uri;
+                  const displayUri = (it.type === 'image' || it.type === 'qr') ? (resolvedImageMap[u] || u) : u;
+                  const normalized = (()=>{ try { const url=new URL(String(u)); url.search=''; url.hash=''; return url.toString(); } catch { return String(u||''); } })();
+                  const prettyName = (()=>{ const n=String(it?.name||'').trim(); const meta=nameMap[normalized]; if (meta) return meta; if (!n || ['image','photo','사진','file'].includes(n.toLowerCase())) return deriveName(String(u)); return n; })();
+                  return (
+                    <View key={`treasure-${u}-${idx}`} style={[styles.gridItem, styles.gridItem4]}>
+                      <TouchableOpacity onLongPress={() => { setSelecting(true); toggleSelect(u); }} onPress={() => { if (selecting) { toggleSelect(u); } else { setPreviewUri(u); setPreviewOpen(true); setEditName(it?.name||''); setEditProtect(!!it?.protect); setEditPublic(false); } }} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
+                        {(it.type === 'image' || it.type === 'qr') ? (
+                          <EImage source={{ uri: displayUri || u }} style={styles.gridImage} contentFit="cover" transition={200} cachePolicy="memory-disk" onError={() => setBroken(prev => { const n = new Set(prev); n.add(u); return n; })} />
+                        ) : (
+                          <View style={[styles.gridImage, { backgroundColor: '#1a1a1a', alignItems: 'center', justifyContent: 'center' }]}>
+                            <ThemedText style={{ color: '#888', fontSize: 11 }}>{it.type === 'file' ? '📄' : it.type === 'video' ? '🎬' : '🔗'}</ThemedText>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                      <View style={{ position:'absolute', left:6, right:28, bottom:6 }}>
+                        <ThemedText style={{ color:'#CFCFCF', fontSize:11 }} numberOfLines={1}>{prettyName}</ThemedText>
+                      </View>
+                      <TouchableOpacity onPress={async () => {
+                        try {
+                          const updated = gallery.map(g => g.uri===u ? { ...g, public: true } : g);
+                          setGallery(updated);
+                          await AsyncStorage.setItem(galleryKey, JSON.stringify(updated));
+                          try { const rawM = await AsyncStorage.getItem(metaKey); const m = rawM ? JSON.parse(rawM) : {}; m[u] = { ...(m[u]||{}), public: true }; await AsyncStorage.setItem(metaKey, JSON.stringify(m)); } catch {}
+                          try { const rawT = await AsyncStorage.getItem(treasureKey); const listT: any[] = rawT ? JSON.parse(rawT) : []; const nextT = (listT||[]).filter((x:any)=> String(x?.uri) !== String(u)); await AsyncStorage.setItem(treasureKey, JSON.stringify(nextT)); } catch {}
+                          try { useMediaStore.getState().restoreToGallery([mediaIdForUri(u)]); } catch {}
+                        } catch {}
+                      }} style={{ position:'absolute', right:26, top:4, backgroundColor:'rgba(0,0,0,0.6)', borderRadius:10, paddingHorizontal:6, paddingVertical:2 }}>
+                        <ThemedText style={{ color:'#FFD700', fontSize:11 }}>🔒→공개</ThemedText>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.deleteBadge} onPress={() => handleDeleteMedia(u)}><ThemedText style={styles.deleteBadgeText}>✖</ThemedText></TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
+            </View>
+          )
+        )}
+
         {mediaTab==='video' && (() => {
-          const vids = gallery.filter((g:any)=> g.type==='video' && g.uri);
+          const vids = gallery.filter((g:any)=> g.type==='video' && g.uri && g.public !== false);
           if (!vids.length) return (<View style={styles.mediaEmpty}><ThemedText style={styles.mediaEmptyText}>{t('noVideos', language)}</ThemedText></View>);
           return (
           <View style={[styles.photoCard, { borderWidth: 0, paddingHorizontal: 0 }]}>
@@ -2146,7 +2225,7 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
             </View>
           );
         })()}
-        {mediaTab==='file' && (() => { const files = gallery.filter((g:any)=> g.type==='file' && g.uri); return files.length ? (
+        {mediaTab==='file' && (() => { const files = gallery.filter((g:any)=> g.type==='file' && g.uri && g.public !== false); return files.length ? (
           <View style={[styles.photoCard, { borderWidth: 0, paddingHorizontal: 0 }]}>
             <View style={[styles.gridWrap, { gap: 6 }]}> 
               {files.map((it:any, idx:number)=> { 

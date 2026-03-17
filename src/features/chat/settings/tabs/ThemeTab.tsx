@@ -59,14 +59,22 @@ export default function ThemeTab({ settings, onChange }: RoomSettingsModalProps)
           </View>
         </View>
       )}
-      <Text style={{ color:'#9BA1A6', fontSize:12, marginTop:12 }}>글자 크기</Text>
-      <View style={{ flexDirection:'row', gap:8, marginTop:6 }}>
-        {[1,2,3,4,5].map(level => (
-          <TouchableOpacity key={level} onPress={()=>onChange({ theme:{...t, fontScaleLevel: level as 1|2|3|4|5 } } as any)}
-            style={{ paddingHorizontal:12, paddingVertical:6, borderRadius:999, borderWidth:1, borderColor: (t.fontScaleLevel||3)===level ? '#FFD700':'#333' }}>
-            <Text style={{ color: (t.fontScaleLevel||3)===level ? '#FFD700':'#CFCFCF' }}>{level}</Text>
-          </TouchableOpacity>
-        ))}
+      <Text style={{ color:'#9BA1A6', fontSize:12, marginTop:12 }}>글자 크기 (1=작게, 5=크게)</Text>
+      <View style={{ flexDirection:'row', gap:8, marginTop:6, alignItems:'center' }}>
+        {[1,2,3,4,5].map(level => {
+          const sizePx = [12,14,16,18,20][level - 1];
+          const selected = (t.fontScaleLevel || 3) === level;
+          return (
+            <TouchableOpacity
+              key={level}
+              onPress={()=>onChange({ theme:{...t, fontScaleLevel: level as 1|2|3|4|5 } } as any)}
+              hitSlop={{ top:12, bottom:12, left:12, right:12 }}
+              style={{ paddingHorizontal:14, paddingVertical:8, borderRadius:999, borderWidth:1, borderColor: selected ? '#FFD700' : '#333', backgroundColor: selected ? 'rgba(255,215,0,0.1)' : 'transparent' }}
+            >
+              <Text style={{ color: selected ? '#FFD700' : '#CFCFCF', fontSize: sizePx, fontWeight: '700' }}>{level}</Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
     </View>
   );

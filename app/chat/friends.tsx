@@ -1211,9 +1211,77 @@ export default function ChatFriendsScreen() {
       clearSelection();
     }
   };
-  const handleChatMany = () => {
-    router.push('/chat/create-room');
-    clearSelection();
+  const handleChatMany = async () => {
+    try {
+      const myId = firebaseAuth.currentUser?.uid || 'me';
+      const idSet = new Set(selectedIds);
+      // 선택된 친구들의 ID 수집 (uid 우선, 없으면 id)
+      const selectedFriends = friends.filter(f => idSet.has(f.id));
+      const memberIds = selectedFriends.map(f => f.uid || f.id).filter(Boolean);
+      
+      if (memberIds.length === 0) {
+        clearSelection();
+        router.push('/chat/create-room');
+        return;
+      }
+      
+      // 1명만 선택된 경우 DM으로 처리
+      if (memberIds.length === 1) {
+        const friendId = memberIds[0];
+        const roomId = await (useKakaoRoomsStore as any).getState().getOrCreateDmRoom(myId, friendId);
+        clearSelection();
+        router.push({ pathname: '/chat/room/' + roomId } as any);
+        return;
+      }
+      
+      // 2명 이상: 그룹 채팅방 생성
+      const allMembers = [myId, ...memberIds.filter(id => id !== myId)];
+      const memberNames = selectedFriends.map(f => f.name || f.displayName || f.uid || f.id).slice(0, 3);
+      const title = memberNames.join(', ') + (selectedFriends.length > 3 ? ` 외 ${selectedFriends.length - 3}명` : '');
+      
+      // 방 생성 (모든 멤버 포함 + 초대 알림 생성)
+      const room = useKakaoRoomsStore.getState().createRoom(
+        title,
+        allMembers,
+        'group',
+        undefined,
+        undefined,
+        [],
+        undefined,
+        undefined,
+        undefined
+      );
+      
+      // 초대 알림 메시지 생성 (한 번만)
+      try {
+        const { doc, setDoc, serverTimestamp } = await import('firebase/firestore');
+        const inviterName = (useChatProfileStore.getState().currentProfile as any)?.chatName
+          || (useChatProfileStore.getState().currentProfile as any)?.displayName
+          || firebaseAuth.currentUser?.displayName
+          || '사용자';
+        const invitedNames = selectedFriends.map(f => f.name || f.displayName || f.uid || f.id);
+        const invitedNamesStr = invitedNames.join('님, ') + '님';
+        
+        const msgId = `invite-${room.id}-${Date.now()}`;
+        const msgRef = doc(firestore, 'rooms', room.id, 'messages', msgId);
+        await setDoc(msgRef, {
+          id: msgId,
+          roomId: room.id,
+          senderId: 'system',
+          type: 'system',
+          content: `${inviterName}님이 ${invitedNamesStr}을 초대하셨습니다.`,
+          createdAt: serverTimestamp(),
+          readBy: [],
+          isInviteNotice: true, // 초대 알림 마커
+        });
+      } catch {}
+      
+      clearSelection();
+      router.push({ pathname: '/chat/room/' + room.id } as any);
+    } catch (err) {
+      clearSelection();
+      router.push('/chat/create-room');
+    }
   };
 
   // 연락처 새 항목 생성 (OS 기본 연락처 편집 화면)
@@ -1745,9 +1813,9 @@ export default function ChatFriendsScreen() {
                     </TouchableOpacity>
                   </View>
                 ) : (
-                  <TouchableOpacity onPress={() => { setEditingUserId(true); setUserIdInput(String((currentProfile as any)?.username || '')); }} style={[styles.actBtn, { alignSelf:'flex-start', borderColor:'#FFD700' }]}>
+                    <TouchableOpacity onPress={() => { setEditingUserId(true); setUserIdInput(String(currentProfile?.username || (currentProfile as any)?.username || '')); }} style={[styles.actBtn, { alignSelf:'flex-start', borderColor:'#FFD700' }]}>
                     <Text style={styles.actText}>
-                      {(currentProfile as any)?.username ? String((currentProfile as any).username) : t('userId', language)}
+                      {currentProfile?.username || (currentProfile as any)?.username ? String(currentProfile?.username || (currentProfile as any).username) : t('userId', language)}
                     </Text>
                   </TouchableOpacity>
                 )}

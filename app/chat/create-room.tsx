@@ -87,6 +87,19 @@ export default function CreateRoomScreen() {
     const lim = parseInt(memberLimit||'') || 0;
     // 방 생성 전에 인증 보장 (웹/네이티브 공통)
     try { if (!firebaseAuth.currentUser && Platform.OS === 'web') { await signInAnonymously(firebaseAuth); } } catch {}
+    // 1:1 DM은 여기서 새 방을 만들지 않고, getOrCreateDmRoom으로 기존 방을 재사용한다.
+    if (type === 'dm' && members.length === 2) {
+      try {
+        const [_, friendId] = members;
+        const roomId = await (useKakaoRoomsStore as any).getState().getOrCreateDmRoom(myUid, friendId);
+        clearForm();
+        router.replace(`/chat/room/${roomId}` as any);
+        return;
+      } catch {
+        // 실패 시 일반 그룹 생성 플로우로 폴백
+      }
+    }
+
     const room = rooms.createRoom(
       name,
       members,

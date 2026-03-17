@@ -453,18 +453,53 @@ export default function AddFriendQRScreen() {
 
   const handleSaveGenerated = async () => {
     try {
-      try { console.log('[QR] save clicked'); } catch {}
       setSaveToast('저장 중...');
       if (Platform.OS !== 'web') {
-        // 네이티브: ViewShot → 파일 → 갤러리 저장
         if (!qrCardRef.current) { setSaveToast(null); Alert.alert('안내','저장할 이미지가 없습니다.'); return; }
-        const b64 = await captureRef(qrCardRef.current, { format: 'png', quality: 1, result: 'base64' });
+        await new Promise((r) => setTimeout(r, 300));
+        let b64: string | undefined;
+        try {
+          b64 = await captureRef(qrCardRef.current, { format: 'png', quality: 1, result: 'base64' });
+        } catch (e) {
+          setSaveToast(null);
+          Alert.alert('저장 실패', '이미지를 캡처할 수 없습니다. 잠시 후 다시 시도해 주세요.');
+          return;
+        }
+        if (!b64) { setSaveToast(null); Alert.alert('저장 실패','캡처된 이미지가 없습니다.'); return; }
         const file = FileSystem.cacheDirectory + `my-card-qr-${Date.now()}.png`;
         await FileSystem.writeAsStringAsync(file, b64, { encoding: FileSystem.EncodingType.Base64 });
         const { status } = await MediaLibrary.requestPermissionsAsync();
-        if (status !== 'granted') { setSaveToast(null); Alert.alert('권한','갤러리 접근 권한이 필요합니다.'); return; }
-        await MediaLibrary.saveToLibraryAsync(file);
-        setSaveToast('저장됨'); setTimeout(() => setSaveToast(null), 1500);
+        if (status !== 'granted') {
+          setSaveToast(null);
+          try {
+            const Share = require('expo-sharing');
+            if (Share.isAvailableAsync && (await Share.isAvailableAsync())) {
+              await Share.shareAsync(file, { mimeType: 'image/png', dialogTitle: 'QR 명함 저장' });
+              setSaveToast('공유로 저장'); setTimeout(() => setSaveToast(null), 1500);
+              return;
+            }
+          } catch {}
+          Alert.alert('권한','사진 저장 권한이 필요합니다. 설정에서 허용하거나, 공유 버튼으로 저장해 주세요.');
+          return;
+        }
+        try {
+          await MediaLibrary.saveToLibraryAsync(file);
+          setSaveToast('저장됨'); setTimeout(() => setSaveToast(null), 1500);
+        } catch (saveErr) {
+          try {
+            const Share = require('expo-sharing');
+            if (Share.isAvailableAsync && (await Share.isAvailableAsync())) {
+              await Share.shareAsync(file, { mimeType: 'image/png', dialogTitle: 'QR 명함 저장' });
+              setSaveToast('공유로 저장'); setTimeout(() => setSaveToast(null), 1500);
+            } else {
+              setSaveToast(null);
+              Alert.alert('저장 실패', '갤러리 저장에 실패했습니다. 공유 메뉴에서 "이미지 저장"을 선택해 주세요.');
+            }
+          } catch {
+            setSaveToast(null);
+            Alert.alert('저장 실패', '갤러리 저장에 실패했습니다. 설정에서 사진 접근을 허용해 주세요.');
+          }
+        }
         return;
       }
       // 0) 먼저 화면 QR 컨테이너 영역을 DOM 캡처하여 저장(파란 테두리/로고 100% 반영)

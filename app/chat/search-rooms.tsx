@@ -41,7 +41,7 @@ export default function SearchRoomsScreen() {
         const memberRef = doc(firestore, 'rooms', String(room.id), 'members', uid);
         const userRoomRef = doc(firestore, 'users', uid, 'joinedRooms', String(room.id));
         void setDoc(memberRef, { joinedAt: serverTimestamp() }, { merge: true });
-        void setDoc(userRoomRef, { joinedAt: serverTimestamp(), title: room.title || t('chatAction', language) }, { merge: true });
+        void setDoc(userRoomRef, { joinedAt: serverTimestamp(), title: room.title || t('chatAction', language), unread: 0 }, { merge: true });
         void updateDoc(roomRef, { updatedAt: serverTimestamp() } as any).catch(async()=>{ try { await setDoc(roomRef, { updatedAt: serverTimestamp() } as any, { merge: true }); } catch {} });
       } catch {}
       Alert.alert(t('done', language), t('chatRoomsList', language));
@@ -59,6 +59,7 @@ export default function SearchRoomsScreen() {
   const lastDocRef = useRef<any>(null);
   const [preview, setPreview] = useState<any|null>(null);
   const [recommended, setRecommended] = useState<any[]>([]);
+  const [joiningRoomId, setJoiningRoomId] = useState<string|null>(null);
   const [loadingRec, setLoadingRec] = useState(false);
   const localRooms = useKakaoRoomsStore((s) => s.rooms);
   const { currentProfile } = useChatProfileStore();
@@ -293,6 +294,76 @@ export default function SearchRoomsScreen() {
       loadRecommended().catch(()=>{});
     }
   }, [activeTab]);
+  
+  // 실시간 필터링: qText 또는 tag 변경 시 자동 필터링
+  const filteredRooms = useMemo(() => {
+    const text = (qText || '').trim().toLowerCase();
+    const tagLower = (tag || '').trim().toLowerCase();
+    if (!text && !tagLower) return rooms;
+    return rooms.filter((r: any) => {
+      const hitTitle = text ? String(r.title || '').toLowerCase().includes(text) : true;
+      const hitTag = tagLower ? (Array.isArray(r.tags) && r.tags.some((t: string) => String(t || '').toLowerCase().includes(tagLower))) : true;
+      return hitTitle && hitTag;
+    });
+  }, [rooms, qText, tag]);
+  
+  // 입장하기: 참여자 추가 (시스템 메시지 없음 - 배너로 대체)
+  const handleJoinRoom = async (room: any) => {
+    if (joiningRoomId) return;
+    setJoiningRoomId(room.id);
+    try {
+      const uid = firebaseAuth.currentUser?.uid || 'me';
+      
+      // 이미 참가자인지 확인 (idempotent)
+      try {
+        const { getDoc } = await import('firebase/firestore');
+        const memberRef = doc(firestore, 'rooms', String(room.id), 'members', uid);
+        const memberSnap = await getDoc(memberRef);
+        if (memberSnap.exists()) {
+          // 이미 참가자 - 방으로 바로 이동
+          setPreview(null);
+          router.push({ pathname: '/chat/room/' + String(room.id) } as any);
+          return;
+        }
+      } catch {}
+      
+      // 1. 로컬 방 목록에 추가
+      const add = {
+        id: room.id,
+        title: room.title || t('chatAction', language),
+        members: [uid],
+        unreadCount: 0,
+        lastMessageAt: room.lastActiveAt || Date.now(),
+        type: room.type || 'group',
+        expiresAt: room.expiresAt,
+        messageTtlMs: (room.type === 'ttl' ? room.messageTtlMs : null),
+      } as any;
+      useKakaoRoomsStore.setState((s: any) => {
+        if ((s.rooms || []).some((r: any) => r.id === room.id)) return s;
+        return { rooms: [add, ...(s.rooms || [])] };
+      });
+      
+      // 2. Firestore 멤버십 기록 (이것이 입장 이벤트를 트리거함)
+      try {
+        const roomRef = doc(firestore, 'rooms', String(room.id));
+        const memberRef = doc(firestore, 'rooms', String(room.id), 'members', uid);
+        const userRoomRef = doc(firestore, 'users', uid, 'joinedRooms', String(room.id));
+        await setDoc(memberRef, { joinedAt: serverTimestamp(), role: 'member' }, { merge: true });
+        await setDoc(userRoomRef, { joinedAt: serverTimestamp(), title: room.title || t('chatAction', language), type: room.type || 'group', unread: 0 }, { merge: true });
+        await updateDoc(roomRef, { updatedAt: serverTimestamp() } as any).catch(async () => { 
+          try { await setDoc(roomRef, { updatedAt: serverTimestamp() } as any, { merge: true }); } catch {} 
+        });
+      } catch {}
+      
+      // 3. 방으로 이동 (시스템 메시지 생성 없음 - 방의 멤버 리스너가 배너를 표시함)
+      setPreview(null);
+      router.push({ pathname: '/chat/room/' + String(room.id) } as any);
+    } catch (err) {
+      Alert.alert(t('error', language), t('orderRejected', language));
+    } finally {
+      setJoiningRoomId(null);
+    }
+  };
 
   return (
     <ThemedView style={styles.container}>
@@ -323,9 +394,11 @@ export default function SearchRoomsScreen() {
         {/* 방 검색 결과 - 방 탭에서만 노출 */}
         {activeTab==='rooms' && (
           <>
-            {rooms.length === 0 && !loading ? (
-              <View style={{ paddingVertical: 10 }} />
-            ) : rooms.map((r) => (
+            {filteredRooms.length === 0 && !loading ? (
+              <View style={{ paddingVertical: 10, alignItems: 'center' }}>
+                <Text style={{ color: '#777' }}>{qText || tag ? '검색 결과가 없습니다' : ''}</Text>
+              </View>
+            ) : filteredRooms.map((r) => (
               <View key={`res-${r.id}`} style={styles.item}>
                 <View style={{ flex: 1 }}>
                   <ThemedText style={styles.itemTitle}>{r.title}</ThemedText>
@@ -334,11 +407,19 @@ export default function SearchRoomsScreen() {
                     <Text style={styles.itemTags}>#{(r.tags || []).slice(0,3).join(' #')}</Text>
                   )}
                 </View>
-                <TouchableOpacity style={styles.joinBtn} onPress={() => setPreview(r)}><Text style={styles.joinText}>미리보기</Text></TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.joinBtn, joiningRoomId === r.id && { opacity: 0.5 }]} 
+                  disabled={joiningRoomId === r.id}
+                  onPress={() => handleJoinRoom(r)}
+                >
+                  <Text style={[styles.joinText, { color: '#FFD700' }]}>
+                    {joiningRoomId === r.id ? '입장중...' : '입장하기'}
+                  </Text>
+                </TouchableOpacity>
               </View>
             ))}
             {loading && <ActivityIndicator style={{ marginVertical: 12 }} />}
-            {!loading && rooms.length>=20 && (
+            {!loading && filteredRooms.length>=20 && (
               <TouchableOpacity style={[styles.btn,{ alignSelf:'center', marginTop: 8 }]} onPress={() => runSearch(true)}>
                 <Text style={styles.btnText}>더 불러오기</Text>
               </TouchableOpacity>
@@ -392,7 +473,7 @@ export default function SearchRoomsScreen() {
           <ThemedText style={{ color:'#FFD700', marginBottom: 6 }}>{t('chatRoomsList', language)}</ThemedText>
           {loadingRec && <ActivityIndicator />}
           {!loadingRec && recommended
-            .filter((r) => rooms.findIndex((x)=>x.id===r.id) === -1)
+            .filter((r) => filteredRooms.findIndex((x)=>x.id===r.id) === -1)
             .map((r) => (
             <View key={`rec-${r.id}`} style={styles.item}>
               <View style={{ flex: 1 }}>
@@ -402,7 +483,15 @@ export default function SearchRoomsScreen() {
                   <Text style={styles.itemTags}>#{(r.tags || []).slice(0,3).join(' #')}</Text>
                 )}
               </View>
-              <TouchableOpacity style={styles.joinBtn} onPress={() => setPreview(r)}><Text style={styles.joinText}>미리보기</Text></TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.joinBtn, joiningRoomId === r.id && { opacity: 0.5 }]} 
+                disabled={joiningRoomId === r.id}
+                onPress={() => handleJoinRoom(r)}
+              >
+                <Text style={[styles.joinText, { color: '#FFD700' }]}>
+                  {joiningRoomId === r.id ? '입장중...' : '입장하기'}
+                </Text>
+              </TouchableOpacity>
             </View>
           ))}
         </View>
@@ -421,7 +510,13 @@ export default function SearchRoomsScreen() {
               )}
               <View style={{ flexDirection:'row', gap:8, marginTop: 12 }}>
                 <TouchableOpacity style={[styles.btn,{ flex:1 }]} onPress={() => setPreview(null)}><Text style={styles.btnText}>닫기</Text></TouchableOpacity>
-                <TouchableOpacity style={[styles.btn,{ flex:1, borderColor:'#D4AF37' }]} onPress={() => { setPreview(null); handleJoinLocal(preview); }}><Text style={styles.btnText}>입장하기</Text></TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.btn,{ flex:1, borderColor:'#D4AF37' }, joiningRoomId === preview.id && { opacity: 0.5 }]} 
+                  disabled={joiningRoomId === preview.id}
+                  onPress={() => handleJoinRoom(preview)}
+                >
+                  <Text style={styles.btnText}>{joiningRoomId === preview.id ? '입장중...' : '입장하기'}</Text>
+                </TouchableOpacity>
               </View>
             </View>
           </View>

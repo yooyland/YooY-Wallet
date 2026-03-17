@@ -95,6 +95,7 @@ export default function MembersTab({ settings, onInvite, roomId }: RoomSettingsM
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownerId, JSON.stringify(participantUserIds||[]), JSON.stringify(roomMemberIds||[]), JSON.stringify(remoteMemberIds||[])]);
   // 참가자 목록 계산: 방장 + 설정 참가자 + 방 객체 멤버 + 원격 members 컬렉션 → 중복 제거
+  // 정렬: admin/owner 먼저, 그 다음 일반 멤버
   const allIds: string[] = React.useMemo(() => {
     const set = new Set<string>([
       ...((participantUserIds||[]) as string[]),
@@ -102,8 +103,23 @@ export default function MembersTab({ settings, onInvite, roomId }: RoomSettingsM
       ...((remoteMemberIds||[]) as string[]),
     ].filter(Boolean).map(String));
     if (ownerId) set.add(String(ownerId));
-    return Array.from(set);
-  }, [ownerId, JSON.stringify(participantUserIds||[]), JSON.stringify(roomMemberIds||[]), JSON.stringify(remoteMemberIds||[])]);
+    const ids = Array.from(set);
+    // 정렬: owner 먼저, 그 다음 admin, 그 다음 나머지
+    ids.sort((a, b) => {
+      const aIsOwner = a === ownerId;
+      const bIsOwner = b === ownerId;
+      if (aIsOwner && !bIsOwner) return -1;
+      if (!aIsOwner && bIsOwner) return 1;
+      const aRole = userIdToRole[a] || 'member';
+      const bRole = userIdToRole[b] || 'member';
+      const aIsAdmin = aRole === 'admin';
+      const bIsAdmin = bRole === 'admin';
+      if (aIsAdmin && !bIsAdmin) return -1;
+      if (!aIsAdmin && bIsAdmin) return 1;
+      return 0;
+    });
+    return ids;
+  }, [ownerId, userIdToRole, JSON.stringify(participantUserIds||[]), JSON.stringify(roomMemberIds||[]), JSON.stringify(remoteMemberIds||[])]);
   return (
     <View>
       <Text style={{ color:'#9BA1A6', fontSize:12, marginTop:6 }}>운영자</Text>

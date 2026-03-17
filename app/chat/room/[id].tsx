@@ -1,7 +1,8 @@
 // @ts-nocheck
 /* eslint-disable */
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, TextInput, KeyboardAvoidingView, Platform, Image, FlatList, Alert, Switch, ImageBackground, Keyboard, Modal, InteractionManager, Share, ActivityIndicator } from 'react-native';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, TextInput, KeyboardAvoidingView, Platform, Image, Alert, Switch, ImageBackground, Keyboard, Modal, InteractionManager, Share, ActivityIndicator } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import * as ScreenCapture from 'expo-screen-capture';
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 import { ThemedView } from '@/components/themed-view';
@@ -19,12 +20,13 @@ import { createDefaultRoomSettings, type RoomSettings, type RoomType } from '@/s
 const ChatViewer = React.lazy(() => import('@/src/features/chat/components/ChatViewer'));
 import { useKakaoRoomsStore } from '@/src/features/chat/store/kakao-rooms.store';
 import { useChatProfileStore } from '@/src/features/chat/store/chat-profile.store';
-import { firebaseAuth } from '@/lib/firebase';
-import { playNotificationSound, type NotificationMode } from '@/lib/notificationSound';
+import { firebaseAuth, firestore } from '@/lib/firebase';
+import { playNotificationSound, getVolumeFromLevel, type NotificationMode, type NotificationSoundType, type NotificationEventType } from '@/lib/notificationSound';
 import { t } from '@/i18n';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { Ionicons } from '@expo/vector-icons';
 import { perfStart, perfEnd } from '@/lib/perfTimer';
+import { shouldOpenFileExternally } from '@/src/features/chat/lib/media';
 // 안정 참조: 빈 배열 상수 (zustand selector에서 새 배열 생성으로 인한 무한 업데이트 방지)
 const EMPTY_LIST: any[] = [];
 class RoomErrorBoundary extends React.Component<any, { hasError: boolean; err?: any }> {
@@ -63,6 +65,68 @@ class RoomErrorBoundary extends React.Component<any, { hasError: boolean; err?: 
   }
 }
 
+// 컴포저 상태 격리: 입력 시 전체 방/메시지 리스트 리렌더 방지
+export type ChatComposerRef = { setText: (v: string | ((p: string) => string)) => void };
+const ChatComposer = forwardRef<ChatComposerRef, {
+  roomId: string;
+  uid: string;
+  sendMessage: (roomId: string, uid: string, content: string, type?: string) => any;
+  onAttach: () => void;
+  keyboardOpen: boolean;
+  insets: { bottom: number };
+  onAfterSend?: () => void;
+  styles: any;
+  composerFontSize?: number;
+}>((props, ref) => {
+  const { roomId, uid, sendMessage, onAttach, keyboardOpen, insets, onAfterSend, styles, composerFontSize = 16 } = props;
+  const [text, setText] = useState('');
+  const [inputHeight, setInputHeight] = useState(36);
+  const [sending, setSending] = useState(false);
+  const lastSentRef = useRef<{ value: string; ts: number } | null>(null);
+  useImperativeHandle(ref, () => ({ setText }), []);
+  const onSend = async () => {
+    const raw = String(text || '');
+    const val = raw.trim();
+    if (!val || sending) return;
+    const now = Date.now();
+    const last = lastSentRef.current;
+    if (last && last.value === val && now - last.ts < 1000) return;
+    lastSentRef.current = { value: val, ts: now };
+    setSending(true);
+    setText('');
+    try {
+      await Promise.resolve(sendMessage(roomId, uid, val, 'text'));
+      onAfterSend?.();
+    } finally {
+      setSending(false);
+    }
+  };
+  return (
+    <View style={[styles.inputContainer, { paddingBottom: keyboardOpen ? 12 : Math.max(insets.bottom, 12), marginBottom: (Platform.OS === 'android' && keyboardOpen) ? 6 : 0 }]}>
+      <TouchableOpacity onPress={onAttach} style={[styles.attachBtn, { width:36, height:36, borderRadius:18, backgroundColor:'#D4AF37', alignItems:'center', justifyContent:'center' }]} hitSlop={{ top:6, bottom:6, left:6, right:6 }}>
+        <Text style={{ color:'#0C0C0C', fontWeight:'900', fontSize:18 }}>＋</Text>
+      </TouchableOpacity>
+      <View style={{ flex:1, flexDirection:'row', alignItems:'center', marginLeft:8, borderRadius:18, backgroundColor:'#111', borderWidth:1, borderColor:'#2A2A2A', paddingHorizontal:10 }}>
+        <TextInput
+          value={text}
+          onChangeText={setText}
+          onContentSizeChange={(e)=>{ try { const h=Math.min(120, Math.max(36, Math.ceil(e.nativeEvent?.contentSize?.height||36))); setInputHeight(h); } catch {} }}
+          placeholder="메시지를 입력하세요..."
+          placeholderTextColor="#777"
+          style={[styles.input, { flex:1, marginLeft:0, marginRight:6, borderWidth:0, height: inputHeight, paddingVertical:8, backgroundColor:'transparent', fontSize: composerFontSize }]}
+          multiline
+          blurOnSubmit={false}
+          returnKeyType="send"
+          onSubmitEditing={()=>{ if (Platform.OS==='ios') onSend(); }}
+        />
+        <TouchableOpacity onPress={onSend} disabled={sending || !text.trim()} style={{ paddingHorizontal:8, paddingVertical:6, borderRadius:14, backgroundColor:'transparent', opacity: (sending || !text.trim()) ? 0.4 : 1 }} hitSlop={{ top:6, bottom:6, left:4, right:2 }}>
+          <Text style={{ color:'#FFD700', fontWeight:'800', fontSize:13 }}>Sent</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+});
+
 function RoomInner() {
   // Performance: track chat room enter time
   const roomMountTimeRef = useRef(Date.now());
@@ -88,18 +152,33 @@ function RoomInner() {
   const storeMessages = useKakaoRoomsStore((s) => (s.messages && s.messages[roomId]) ? s.messages[roomId] : EMPTY_LIST);
   // 방 객체는 selector에서 직접 구독하여 변경(예: TTL/메시지TTL) 시 재렌더되도록 한다.
   const room = useKakaoRoomsStore((s) => (s.rooms || []).find(r => r.id === roomId));
-  const enterRoom = useKakaoRoomsStore((s) => s.enterRoom);
-  const sendMessage = useKakaoRoomsStore((s) => s.sendMessage);
-  const removeMessage = useKakaoRoomsStore((s) => s.deleteMessage);
-  const markRead = useKakaoRoomsStore((s) => s.markRead);
-  const saveRoomSettings = useKakaoRoomsStore((s) => s.saveRoomSettings);
-  const updateRoomMeta = useKakaoRoomsStore((s) => s.updateRoomMeta);
-  const setRoomPrivacy = useKakaoRoomsStore((s) => s.setRoomPrivacy);
-  const loadRoomSettings = useKakaoRoomsStore((s) => s.loadRoomSettings);
-  const setMemberRole = useKakaoRoomsStore((s) => s.setMemberRole);
-  const generateInvite = useKakaoRoomsStore((s) => s.generateInvite);
-  const leaveRoom = useKakaoRoomsStore((s) => s.leaveRoom);
+  // 방 설정은 별도 구독 (TTL, 테마 등 변경 시 UI 업데이트 필요)
   const roomSettingsMap = useKakaoRoomsStore((s) => s.roomSettings || {});
+  
+  // 액션 함수들은 구독 대신 getState()로 접근 (리렌더링 방지)
+  // 이 함수들은 스토어 상태 변경 시 재생성되지 않음
+  const getStoreActions = useRef(() => useKakaoRoomsStore.getState()).current;
+  const enterRoom = useRef((id: string) => getStoreActions().enterRoom(id)).current;
+  const sendMessage = useRef((...args: Parameters<typeof useKakaoRoomsStore.getState>['sendMessage']) => 
+    (getStoreActions() as any).sendMessage(...args)).current;
+  const removeMessage = useRef((roomId: string, msgId: string) => 
+    getStoreActions().deleteMessage(roomId, msgId)).current;
+  const markRead = useRef((roomId: string, userId: string) => 
+    getStoreActions().markRead(roomId, userId)).current;
+  const saveRoomSettings = useRef((roomId: string, settings: any) => 
+    getStoreActions().saveRoomSettings(roomId, settings)).current;
+  const updateRoomMeta = useRef((roomId: string, meta: any) => 
+    getStoreActions().updateRoomMeta(roomId, meta)).current;
+  const setRoomPrivacy = useRef((roomId: string, isPublic: boolean, password?: string | null) => 
+    getStoreActions().setRoomPrivacy(roomId, isPublic, password)).current;
+  const loadRoomSettings = useRef((roomId: string) => 
+    getStoreActions().loadRoomSettings(roomId)).current;
+  const setMemberRole = useRef((roomId: string, userId: string, role: any) => 
+    getStoreActions().setMemberRole(roomId, userId, role)).current;
+  const generateInvite = useRef((roomId: string) => 
+    getStoreActions().generateInvite(roomId)).current;
+  const leaveRoom = useRef((roomId: string) => 
+    (getStoreActions() as any).leaveRoom?.(roomId)).current;
   const messages = Array.isArray(storeMessages) ? storeMessages : [];
   const isTTLRoom = String((room as any)?.type || '').toLowerCase() === 'ttl';
   const settingsTtlMs = useMemo(() => {
@@ -126,7 +205,48 @@ function RoomInner() {
       return top || fromSettings || 0;
     } catch { return 0; }
   }, [room, roomSettingsMap, roomId]);
-  const memberIds = Array.isArray((room as any)?.members) ? ((room as any).members as string[]) : [];
+  // members: Firestore는 map 형태일 수 있음 → 배열로 통일 (1:1 대칭)
+  const memberIds = useMemo(() => {
+    const m = (room as any)?.members;
+    if (Array.isArray(m)) return m as string[];
+    if (m && typeof m === 'object') return Object.keys(m).filter(Boolean);
+    return [];
+  }, [room?.members]);
+  // 1:1 DM: 상대방 uid (헤더 제목/프로필용, 한 번만 계산)
+  const dmOtherId = useMemo(() => {
+    if (String((room as any)?.type || '') !== 'dm' || !memberIds.length) return null;
+    return memberIds.find((m: string) => String(m) !== String(uid)) || null;
+  }, [room?.type, memberIds, uid]);
+  // 1:1 상대방 프로필 (구독 최소화: 해당 uid만)
+  const peerProfile = useChatProfileStore((s) => (dmOtherId ? s.profiles?.[dmOtherId] : null) ?? null);
+  // DM 상대 프로필이 없으면 Firestore에서 로드 (초대된 사용자 쪽에서도 헤더 제목 표시)
+  useEffect(() => {
+    if (!dmOtherId) return;
+    if (peerProfile?.displayName || peerProfile?.chatName) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { doc, getDoc } = await import('firebase/firestore');
+        const snap = await getDoc(doc(firestore, 'users', dmOtherId));
+        if (cancelled || !snap.exists()) return;
+        const d = snap.data() as any;
+        const displayName = d?.displayName || d?.chatName || d?.nickname || dmOtherId;
+        useChatProfileStore.getState().setPeerProfile(dmOtherId, {
+          displayName,
+          chatName: d?.chatName ?? d?.displayName,
+          avatar: d?.avatar,
+          status: 'offline',
+          lastActive: typeof d?.lastActive === 'number' ? d.lastActive : Date.now(),
+        } as any);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [dmOtherId, peerProfile?.displayName, peerProfile?.chatName]);
+  // 1:1 방 헤더 표시 제목 (양쪽 동일 규칙: 상대방 이름)
+  const dmDisplayTitle = useMemo(() => {
+    if (!dmOtherId) return '';
+    return peerProfile?.chatName || peerProfile?.displayName || dmOtherId;
+  }, [dmOtherId, peerProfile?.chatName, peerProfile?.displayName]);
   // 참여자 수 계산: members 배열 → room.memberCount → roles.keys → 메시지 발신자 유추 순으로 폴백
   const participantCount = React.useMemo(() => {
     try {
@@ -150,8 +270,8 @@ function RoomInner() {
   const bgImage = String(themeSettings?.backgroundImageUrl || '') || undefined;
   const bubbleColorTheme = String(themeSettings?.bubbleColorHex || '#D4AF37');
   const fontScaleLevel = Number(themeSettings?.fontScaleLevel || 3) as 1|2|3|4|5;
-  const fontSizes = [12, 13.5, 15, 17, 19];
-  const bodyFont = fontSizes[Math.min(Math.max(1, fontScaleLevel), 5)-1];
+  const fontSizes = [12, 14, 16, 18, 20]; // 1~5 단계
+  const bodyFont = fontSizes[Math.min(Math.max(1, fontScaleLevel), 5) - 1];
   const timeFont = Math.max(8, Math.floor(bodyFont - 4));
   // TTL 보안 정책
   const ttlSecurity = useMemo(() => {
@@ -180,25 +300,44 @@ function RoomInner() {
   const isPrivileged = (myRole === 'admin' || myRole === 'moderator');
   const [nowTick, setNowTick] = useState<number>(Date.now());
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
-  // 키보드 상태 및 높이 관리 - 빈 공간 없이 즉시 반영
+  // 키보드 상태 관리 - useRef로 메시지 리스트 리렌더 방지
+  const keyboardOpenRef = useRef(false);
+  const keyboardHeightRef = useRef(0);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    
     const sh = Keyboard.addListener(showEvent, (e) => {
-      setKeyboardHeight(e.endCoordinates.height);
+      keyboardOpenRef.current = true;
+      keyboardHeightRef.current = e.endCoordinates.height;
       setKeyboardOpen(true);
     });
     const hd = Keyboard.addListener(hideEvent, () => {
-      setKeyboardHeight(0);
+      keyboardOpenRef.current = false;
+      keyboardHeightRef.current = 0;
       setKeyboardOpen(false);
     });
     return () => { 
       try { sh.remove(); hd.remove(); } catch {} 
     };
   }, []);
+
+  // 이전 메시지 lazy loading
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
+  const loadOlderMessages = useKakaoRoomsStore((s) => s.loadOlderMessages);
+  const handleLoadOlder = React.useCallback(async () => {
+    if (isLoadingOlder || !hasMoreMessages) return;
+    const oldest = messages?.[0];
+    if (!oldest?.createdAt) return;
+    setIsLoadingOlder(true);
+    try {
+      const loaded = await loadOlderMessages(roomId, oldest.createdAt, 30);
+      if (loaded.length < 30) setHasMoreMessages(false);
+    } catch {} finally {
+      setIsLoadingOlder(false);
+    }
+  }, [isLoadingOlder, hasMoreMessages, messages, loadOlderMessages, roomId]);
 
   // 새 메시지 알림 소리/진동 처리
   const prevMsgCountRef = useRef<number>(0);
@@ -215,15 +354,21 @@ function RoomInner() {
       // 새 메시지가 추가되었을 때만
       if (msgCount > prevMsgCountRef.current) {
         const lastMsg = messages[messages.length - 1];
-        // 내가 보낸 메시지가 아닐 때만 알림
-        if (lastMsg && String(lastMsg?.senderId || '') !== uid) {
-          // 알림 설정 확인
-          const notifSettings = (roomSettingsMap as any)?.[roomId]?.notifications || {};
-          const mode = String(notifSettings?.mode || notifSettings?.sound || 'sound') as NotificationMode;
-          const enabled = notifSettings?.enabled !== false;
-          if (enabled && mode !== 'mute' && mode !== 'off') {
-            playNotificationSound(mode);
-          }
+        if (!lastMsg || String(lastMsg?.senderId || '') === uid) { prevMsgCountRef.current = msgCount; return; }
+        const notif = (roomSettingsMap as any)?.[roomId]?.notifications || {};
+        const mode = String(notif?.mode || 'sound') as NotificationMode;
+        const enabled = notif?.enabled !== false;
+        const keywords: string[] = Array.isArray(notif?.keywordAlerts) ? notif.keywordAlerts : [];
+        const mentionOn = notif?.mentionAlertEnabled !== false;
+        const content = String(lastMsg?.content || '');
+        const keywordMatch = keywords.length > 0 && keywords.some((k: string) => content.includes(String(k).trim()));
+        const mentionMatch = mentionOn && (content.includes('@') || content.toLowerCase().includes(uid.toLowerCase()));
+        const shouldAlert = (enabled && mode !== 'mute' && mode !== 'off') || keywordMatch || mentionMatch;
+        if (shouldAlert && mode !== 'mute' && mode !== 'off') {
+          const vol = getVolumeFromLevel(notif?.notificationVolume);
+          const roomSound = (notif?.notificationSound || 'gold') as NotificationSoundType;
+          const eventType: NotificationEventType = (room as any)?.type === 'dm' ? 'dm_message' : mentionMatch ? 'mention' : 'normal';
+          playNotificationSound(mode, vol, roomSound, eventType);
         }
       }
       prevMsgCountRef.current = msgCount;
@@ -661,10 +806,7 @@ function RoomInner() {
     return `${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
   };
 
-  const [text, setText] = useState('');
-  const [inputHeight, setInputHeight] = useState<number>(36);
-  const [sending, setSending] = useState(false);
-  const lastSentRef = useRef<{ value: string; ts: number } | null>(null);
+  const composerRef = useRef<ChatComposerRef | null>(null);
   const listRef = useRef<any>(null);
   const didAutoScrollRef = useRef<boolean>(false);
   const nearBottomRef = useRef<boolean>(true);
@@ -791,22 +933,27 @@ function RoomInner() {
         exif: false,
       });
       if (!res || res.canceled || !Array.isArray(res.assets) || res.assets.length === 0) return;
-      const assets: Array<{ uri: string; type?: string }> = res.assets.map((a: any) => ({ uri: String(a?.uri||''), type: a?.type }));
+      const assets: Array<{ uri: string; type?: string; mimeType?: string; fileName?: string }> = res.assets.map((a: any) => ({
+        uri: String(a?.uri||''),
+        type: a?.type,
+        mimeType: a?.mimeType,
+        fileName: a?.fileName,
+      }));
       // 이미지: 여러 장이면 앨범 또는 개별 이미지로 전송, 1장이면 단일 이미지
       if (mode !== 'video') {
         const images = assets.filter(a => !String(a.type||'').includes('video'));
-        if (images.length > 1) {
-          const urls = images.map(a => String(a.uri));
-          // 앨범 타입으로 한 번에 묶어서 전송
-          sendMessage(roomId, uid, '', 'album', undefined, undefined, urls);
-        } else if (images.length === 1) {
-          sendMessage(roomId, uid, '', 'image', String(images[0].uri));
+        // 앨범 타입이 아직 기기 테스트에서 불안정하므로, 다중 선택도 "개별 이미지 메시지"로 전송한다.
+        if (images.length >= 1) {
+          for (const a0 of images) {
+            if (!a0?.uri) continue;
+            sendMessage(roomId, uid, a0.fileName || '', 'image', String(a0.uri), undefined, undefined, undefined, { mimeType: a0.mimeType || 'image/jpeg', filename: a0.fileName });
+          }
         }
       }
       // 비디오: 선택된(또는 강제) 비디오 각각 전송
       const videos = assets.filter(a => String(a.type||'').includes('video') || mode==='video');
       for (const v of videos) {
-        if (v?.uri) sendMessage(roomId, uid, '[video]', 'video', String(v.uri));
+        if (v?.uri) sendMessage(roomId, uid, v.fileName || '[video]', 'video', String(v.uri), undefined, undefined, undefined, { mimeType: v.mimeType || 'video/mp4', filename: v.fileName || '[video]' });
       }
     } catch {}
     setAttachOpen(false);
@@ -815,8 +962,9 @@ function RoomInner() {
     try {
       const out: any = await (DocumentPicker as any).getDocumentAsync({ copyToCacheDirectory: true });
       if (out && out.assets && out.assets[0]?.uri) {
-        const u = String(out.assets[0].uri);
-        sendMessage(roomId, uid, out.assets[0].name || '[file]', 'file', u);
+        const a0 = out.assets[0];
+        const u = String(a0.uri);
+        sendMessage(roomId, uid, a0.name || '[file]', 'file', u, undefined, undefined, undefined, { mimeType: a0.mimeType, filename: a0.name });
       }
     } catch {}
     setAttachOpen(false);
@@ -829,38 +977,39 @@ function RoomInner() {
       const lat = pos?.coords?.latitude; const lng = pos?.coords?.longitude;
       if (lat && lng) {
         const url = `https://maps.google.com/?q=${encodeURIComponent(String(lat)+','+String(lng))}`;
-        // 도로명 주소 역지오코딩 (OS 제공)
+        // 도로명 주소 역지오코딩 (OS → 공통 유틸 순)
         let pretty = '';
         try {
           const addr = await (Location as any).reverseGeocodeAsync?.({ latitude: Number(lat), longitude: Number(lng) });
           if (Array.isArray(addr) && addr[0]) {
             const a = addr[0] as any;
-            const city = String(a.subregion || a.city || a.district || '').trim();
-            const region = String(a.region || '').trim();
             const country = String(a.country || '').trim();
+            let region = String(a.region || '').trim();
+            const gu = String(a.subregion || a.city || a.district || '').trim(); // 강남구
             let street = String(a.street || '').trim();
-            let streetNo = '';
-            let nameLine = String(a.name || '').trim();
-            if (!street && nameLine) {
+            let streetNo = String(a.streetNumber || '').trim();
+            // iOS/Android 일부는 name에 "테헤란로 323" 형태로 들어옴
+            if ((!street || !streetNo) && a.name) {
+              const nameLine = String(a.name || '').trim();
               const m = nameLine.match(/^([\p{L}\s\.\-]+?)\s+(\d[\d\-]*)$/u);
-              if (m) {
-                street = m[1].trim();
-                streetNo = m[2].trim();
-              }
+              if (m) { if (!street) street = m[1].trim(); if (!streetNo) streetNo = m[2].trim(); }
             }
-            if (!streetNo) {
-              const n = (a.streetNumber ?? '').toString().trim();
-              if (/^\d+([-\s]?\d+)?$/.test(n)) streetNo = n;
-            }
-            const roadWithNo = [street, streetNo].filter(Boolean).join(' ').trim();
-            pretty = [country, region, city, roadWithNo].filter(Boolean).join(' ').replace(/\s+/g, ' ');
+            if (region === '서울특별시') region = '서울';
+            const road = [street, streetNo].filter(Boolean).join(' ').trim();
+            const parts = [country, region, gu, road].filter(Boolean);
+            const out = parts.join(' ').replace(/\s+/g, ' ').trim();
+            if (out && road) pretty = out; // 도로명 있는 케이스만 OS 결과로 채택
           }
         } catch {}
+        if (!pretty) {
+          try {
+            const { reverseGeocode } = require('@/src/features/chat/lib/media');
+            pretty = await reverseGeocode(Number(lat), Number(lng));
+          } catch {}
+        } catch {}
         const addrLine = (pretty || `${lat}, ${lng}`).trim();
-        // 1) 도로명 주소 텍스트 말풍선
-        try { sendMessage(roomId, uid, addrLine, 'text'); } catch {}
-        // 2) 지도 링크 말풍선 (썸네일/미리보기 팝업은 LinkPreviewBox/ChatViewer가 처리)
-        try { sendMessage(roomId, uid, url, 'text'); } catch {}
+        // location 타입으로 단일 메시지로 저장 (송신/수신 동일 렌더링)
+        try { sendMessage(roomId, uid, addrLine, 'location', url, undefined, undefined, undefined, { mimeType: 'application/vnd.yooyland.location', filename: 'location' }); } catch {}
       }
     } catch {}
     setAttachOpen(false);
@@ -956,27 +1105,6 @@ function RoomInner() {
     } catch {}
   };
 
-  const onSend = async () => {
-    const raw = String(text || '');
-    const val = raw.trim();
-    if (!val || sending) return;
-    // 같은 내용을 너무 빨리 여러 번 누르는 경우, 1초 이내 중복은 무시
-    const now = Date.now();
-    const last = lastSentRef.current;
-    if (last && last.value === val && now - last.ts < 1000) {
-      return;
-    }
-    lastSentRef.current = { value: val, ts: now };
-    setSending(true);
-    setText('');
-    try {
-      await Promise.resolve(sendMessage(roomId, uid, val, 'text'));
-      try { listRef.current?.scrollToEnd?.({ animated: true }); } catch {}
-    } finally {
-      setSending(false);
-    }
-  };
-
   const VideoThumb: React.FC<{ uri: string }> = ({ uri }) => {
     const [thumb, setThumb] = React.useState<string | null>(() => videoThumbCacheRef.current[uri] || null);
     React.useEffect(() => {
@@ -1033,7 +1161,7 @@ function RoomInner() {
   // 미리보기 뷰어 상태
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerUrl, setViewerUrl] = useState<string | null>(null);
-  const [viewerKind, setViewerKind] = useState<'image'|'video'|'web'|'youtube'|'map'|'pdf'>('image');
+  const [viewerKind, setViewerKind] = useState<'image'|'video'|'web'|'youtube'|'map'|'pdf'|'audio'|'file'|'text'>('image');
   const [viewerList, setViewerList] = useState<string[]>([]);
   const [viewerIndex, setViewerIndex] = useState<number>(0);
   const [viewerMsgId, setViewerMsgId] = useState<string | null>(null);
@@ -1042,35 +1170,111 @@ function RoomInner() {
   const [viewerHeaderTs, setViewerHeaderTs] = useState<number | undefined>(undefined);
   const [viewerHeaderAvatar, setViewerHeaderAvatar] = useState<string | undefined>(undefined);
 
-  // 입장 알림: 새 멤버 감지 → 알림 스토어 + 토스트
-  const prevMembersRef = useRef<Set<string>>(new Set<string>(memberIds || []));
+  // 입장 알림: 실제 새 입장만 감지 → 임시 상단 배너 (시스템 메시지 없음)
+  // 규칙:
+  // - 화면 재열기/리스너 재연결/새로고침 시 재표시하지 않음
+  // - 방 생성 시 초대된 멤버에게는 입장 알림 표시하지 않음
+  // - 실제로 나중에 입장한 새 멤버만 알림 표시
+  const roomMountTimestampRef = useRef<number>(Date.now()); // 화면 마운트 시점
+  const notifiedMembersRef = useRef<Set<string>>(new Set<string>()); // 이미 알림 표시한 멤버
+  const initialLoadDoneRef = useRef<boolean>(false); // 첫 로드 완료 여부
   const [joinToast, setJoinToast] = useState<string>('');
+  
+  // 실제 새 입장 감지를 위한 Firestore 멤버 변경 리스너
   useEffect(() => {
-    try {
-      const prev = prevMembersRef.current;
-      const curr = new Set<string>((memberIds || []).map(String));
-      // 추가된 멤버
-      const added: string[] = [];
-      curr.forEach((id) => { if (!prev.has(id)) added.push(id); });
-      prevMembersRef.current = curr;
-      if (added.length === 0) return;
-      // 자신 제외
-      const others = added.filter(id => String(id) !== String(uid));
-      if (others.length === 0) return;
-      // 프로필에서 이름 가져오기
-      const store = require('@/src/features/chat/store/chat-profile.store');
-      const getProf = (id: string) => {
-        try { return store.useChatProfileStore.getState().getProfile?.(id) || null; } catch { return null; }
-      };
-      const names = others.map(id => (getProf(id)?.chatName || getProf(id)?.displayName || id));
-      const msg = names.length === 1 ? `${names[0]} 님이 입장했습니다` : `${names.join(', ')} 님이 입장했습니다`;
-      // 방 입장은 쪽지 알림 대신, 화면 내 토스트만 표시
-      setJoinToast(msg);
-      const t = setTimeout(() => { try { setJoinToast(''); } catch {} }, 3000);
-      return () => { try { clearTimeout(t); } catch {} };
-    } catch {}
-  // stringify로 안정 비교
-  }, [JSON.stringify(memberIds||[]), roomId, uid]);
+    let alive = true;
+    let unsub: (() => void) | null = null;
+    
+    (async () => {
+      try {
+        if (!roomId) return;
+        
+        const { collection, onSnapshot, query, orderBy } = await import('firebase/firestore');
+        const { firestore, firebaseAuth } = await import('@/lib/firebase');
+        const myUid = firebaseAuth.currentUser?.uid || 'me';
+        
+        // 자신은 알림에서 제외
+        notifiedMembersRef.current.add(myUid);
+        
+        const membersRef = collection(firestore, 'rooms', roomId, 'members');
+        const q = query(membersRef, orderBy('joinedAt', 'desc'));
+        
+        unsub = onSnapshot(q, async (snap) => {
+          try {
+            if (!alive) return;
+            
+            // 첫 로드: 기존 멤버 모두 기록 (알림 표시 안 함)
+            if (!initialLoadDoneRef.current) {
+              snap.forEach((d) => {
+                notifiedMembersRef.current.add(d.id);
+              });
+              initialLoadDoneRef.current = true;
+              return;
+            }
+            
+            // 변경 감지: 실제 새로 추가된 멤버만 확인
+            const newJoined: string[] = [];
+            const mountTime = roomMountTimestampRef.current;
+            
+            for (const change of snap.docChanges()) {
+              if (change.type === 'added') {
+                const memberId = change.doc.id;
+                const data = change.doc.data();
+                const joinedAt = data?.joinedAt?.toMillis?.() || data?.joinedAt || 0;
+                
+                // 조건: 아직 알림 안 표시 + 화면 마운트 후 입장 + 자신 아님
+                if (!notifiedMembersRef.current.has(memberId) && 
+                    joinedAt > mountTime - 5000 && // 마운트 5초 전 이후 입장만
+                    memberId !== myUid) {
+                  newJoined.push(memberId);
+                  notifiedMembersRef.current.add(memberId);
+                }
+              }
+            }
+            
+            if (newJoined.length === 0) return;
+            
+            // 이름 가져오기
+            const { doc, getDoc } = await import('firebase/firestore');
+            const fetchUserName = async (userId: string): Promise<string> => {
+              try {
+                const store = require('@/src/features/chat/store/chat-profile.store');
+                const localProf = store.useChatProfileStore.getState().getProfile?.(userId);
+                if (localProf?.displayName) return String(localProf.displayName);
+                if (localProf?.nickname) return String(localProf.nickname);
+                if (localProf?.chatName) return String(localProf.chatName);
+                
+                const userDoc = await getDoc(doc(firestore, 'users', userId));
+                if (userDoc.exists()) {
+                  const d = userDoc.data();
+                  if (d?.displayName) return String(d.displayName);
+                  if (d?.nickname) return String(d.nickname);
+                  if (d?.chatName) return String(d.chatName);
+                  if (d?.username) return String(d.username);
+                }
+                return userId;
+              } catch { return userId; }
+            };
+            
+            const names = await Promise.all(newJoined.map(fetchUserName));
+            if (!alive) return;
+            
+            const msg = names.length === 1 
+              ? `${names[0]}님이 입장하였습니다` 
+              : `${names.join(', ')}님이 입장하였습니다`;
+            
+            setJoinToast(msg);
+            setTimeout(() => { if (alive) setJoinToast(''); }, 3000);
+          } catch {}
+        });
+      } catch {}
+    })();
+    
+    return () => { 
+      alive = false; 
+      if (unsub) unsub();
+    };
+  }, [roomId]);
 
   // 링크 미리보기(카카오톡 스타일 간단 버전)
   const linkPreviewCacheRef = useRef<Record<string, { url: string; title?: string; description?: string; image?: string }>>({});
@@ -1220,22 +1424,127 @@ function RoomInner() {
         {(() => {
           if (type === 'image') {
             // imageUrl이 있으면 이미지 표시, 없으면 업로드 중 로딩 표시
-            if (item?.imageUrl) {
-              return (
-                <TouchableOpacity 
-                  activeOpacity={0.9} 
-                  onPress={() => { try { setViewerList([]); setViewerMsgId(String(item?.id||'')); setViewerUrl(String(item.imageUrl)); setViewerKind('image'); setViewerOpen(true); } catch {} }}
-                  onLongPress={() => { try { openMsgMenu(item, isMe); } catch {} }}
-                >
-                  <Image source={{ uri: String(item.imageUrl) }} style={{ width: 220, height: 220, borderRadius: 10 }} />
-                </TouchableOpacity>
-              );
+            const mediaUrl = String(item?.url || item?.imageUrl || '');
+            if (mediaUrl) {
+              const ImageBubble = () => {
+                const [imgLoading, setImgLoading] = React.useState(true);
+                const [imgError, setImgError] = React.useState(false);
+                const [retryCount, setRetryCount] = React.useState(0);
+                const uri = mediaUrl + (retryCount > 0 ? `${mediaUrl.includes('?') ? '&' : '?'}retry=${retryCount}` : '');
+                
+                // 10초 후에도 로딩 중이면 타임아웃 처리
+                React.useEffect(() => {
+                  if (!imgLoading) return;
+                  const t = setTimeout(() => {
+                    if (imgLoading) setImgError(true);
+                  }, 10000);
+                  return () => clearTimeout(t);
+                }, [imgLoading, retryCount]);
+                
+                if (imgError) {
+                  return (
+                    <TouchableOpacity 
+                      onPress={() => { setImgError(false); setImgLoading(true); setRetryCount(c => c + 1); }}
+                      style={{ width: 220, height: 160, borderRadius: 10, backgroundColor: '#2A2A2A', justifyContent: 'center', alignItems: 'center' }}
+                    >
+                      <Text style={{ color: '#FF6B6B', fontSize: 14 }}>로드 실패</Text>
+                      <Text style={{ color: '#888', marginTop: 8, fontSize: 12 }}>탭하여 재시도</Text>
+                    </TouchableOpacity>
+                  );
+                }
+                
+                return (
+                  <TouchableOpacity 
+                    activeOpacity={0.9} 
+                    onPress={() => { try { setViewerList([]); setViewerMsgId(String(item?.id||'')); setViewerUrl(mediaUrl); setViewerKind('image'); setViewerOpen(true); } catch {} }}
+                    onLongPress={() => { try { openMsgMenu(item, isMe); } catch {} }}
+                  >
+                    {imgLoading && (
+                      <View style={{ position: 'absolute', width: 220, height: 220, borderRadius: 10, backgroundColor: '#2A2A2A', justifyContent: 'center', alignItems: 'center', zIndex: 1 }}>
+                        <ActivityIndicator size="small" color="#FFD700" />
+                      </View>
+                    )}
+                    <Image 
+                      source={{ uri }} 
+                      style={{ width: 220, height: 220, borderRadius: 10 }} 
+                      onLoad={() => setImgLoading(false)}
+                      onError={() => setImgError(true)}
+                    />
+                  </TouchableOpacity>
+                );
+              };
+              return <ImageBubble />;
             }
-            // imageUrl이 아직 없는 경우 (업로드 중)
+            // imageUrl이 아직 없는 경우 (업로드 중) - 10초 후 타임아웃
+            const UploadingBubble = () => {
+              const [showRetry, setShowRetry] = React.useState(false);
+              React.useEffect(() => {
+                const t = setTimeout(() => setShowRetry(true), 10000);
+                return () => clearTimeout(t);
+              }, []);
+              return (
+                <View style={{ width: 220, height: 160, borderRadius: 10, backgroundColor: '#2A2A2A', justifyContent: 'center', alignItems: 'center' }}>
+                  {showRetry ? (
+                    <>
+                      <Text style={{ color: '#FF6B6B', fontSize: 14 }}>업로드 지연</Text>
+                      <Text style={{ color: '#888', marginTop: 8, fontSize: 12, textAlign: 'center', paddingHorizontal: 12 }}>이미지가 아직 준비되지 않았습니다</Text>
+                    </>
+                  ) : (
+                    <>
+                      <ActivityIndicator size="large" color="#FFD700" />
+                      <Text style={{ color: '#888', marginTop: 8, fontSize: 12 }}>이미지 업로드 중...</Text>
+                    </>
+                  )}
+                </View>
+              );
+            };
+            return <UploadingBubble />;
+          }
+          if (type === 'video') {
+            const mediaUrl = String(item?.url || item?.imageUrl || '');
+            const hasUrl = !!mediaUrl;
+            const thumbUri = hasUrl ? mediaUrl : '';
             return (
-              <View style={{ width: 220, height: 160, borderRadius: 10, backgroundColor: '#2A2A2A', justifyContent: 'center', alignItems: 'center' }}>
-                <ActivityIndicator size="large" color="#FFD700" />
-                <Text style={{ color: '#888', marginTop: 8, fontSize: 12 }}>이미지 업로드 중...</Text>
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={() => {
+                  try {
+                    if (!hasUrl) { Alert.alert('영상 준비 중', '영상 업로드가 완료되면 자동으로 재생할 수 있습니다.'); return; }
+                    setViewerList([]); setViewerMsgId(String(item?.id||'')); setViewerUrl(mediaUrl); setViewerKind('video'); setViewerOpen(true);
+                  } catch {}
+                }}
+                onLongPress={() => { try { openMsgMenu(item, isMe); } catch {} }}
+              >
+                {hasUrl
+                  ? <VideoThumb uri={thumbUri} />
+                  : (
+                    <View style={{ width: 220, height: 160, borderRadius: 10, backgroundColor:'#000', alignItems:'center', justifyContent:'center' }}>
+                      <Text style={{ color:'#FFF', fontSize:32 }}>▶</Text>
+                    </View>
+                  )}
+              </TouchableOpacity>
+            );
+          }
+          if (type === 'location') {
+            const mapUrl = String(item?.url || item?.imageUrl || '');
+            const label = String(item?.content || '').trim();
+            return (
+              <View style={{ width: 260 }}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  onPress={() => { try { if (mapUrl) require('expo-linking').openURL(mapUrl); } catch {} }}
+                  style={{ flexDirection:'row', alignItems:'flex-start', gap:6 }}
+                >
+                  <Text style={{ color:'#B71C1C' }}>📍</Text>
+                  <Text style={{ color:'#0C0C0C', fontWeight:'900', textDecorationLine:'underline' }} numberOfLines={2}>
+                    {label || '위치'}
+                  </Text>
+                </TouchableOpacity>
+                {!!mapUrl && (
+                  <View style={{ marginTop:8 }}>
+                    <LinkPreviewBox url={mapUrl} />
+                  </View>
+                )}
               </View>
             );
           }
@@ -1246,9 +1555,21 @@ function RoomInner() {
               const j = JSON.parse(rawText);
               if (j && (j.lat != null) && (j.lng != null) && (j.url || (typeof j.address === 'string'))) {
                 const mapUrl = String(j.url || `https://maps.google.com/?q=${encodeURIComponent(String(j.lat)+','+String(j.lng))}`);
-                const roadWithNo = [String(j.street||'').trim(), String(j.streetNo||'').trim()].filter(Boolean).join(' ');
+                const street = String(j.street||'').trim();
+                const streetNo = String(j.streetNo||'').trim();
+                const roadWithNo = [street, streetNo].filter(Boolean).join(' ');
+                const country = String(j.country||'').trim();
+                let region = String(j.region||'').trim();
+                const city = String(j.city||'').trim();
+                // '서울특별시' → '서울' 등 불필요한 행정구 단어 단순화
+                if (region === '서울특별시') region = '서울';
+                const addrParts: string[] = [];
+                if (country) addrParts.push(country);
+                if (region) addrParts.push(region);
+                else if (city) addrParts.push(city);
+                if (roadWithNo) addrParts.push(roadWithNo);
                 const address =
-                  String(j.display || j.address || [String(j.country||'').trim(), String(j.region||'').trim(), String(j.city||'').trim(), roadWithNo].filter(Boolean).join(' '));
+                  String(j.display || j.address || addrParts.join(' '));
                 return (
                   <View style={{ width: 240 }}>
                     <TouchableOpacity
@@ -1301,30 +1622,6 @@ function RoomInner() {
                   ))}
                 </View>
               </View>
-            );
-          }
-          if (type === 'video') {
-            const hasUrl = !!item?.imageUrl;
-            const thumbUri = hasUrl ? String(item.imageUrl) : '';
-            return (
-              <TouchableOpacity
-                activeOpacity={0.9}
-                onPress={() => {
-                  try {
-                    if (!hasUrl) { Alert.alert('영상 준비 중', '영상 업로드가 완료되면 자동으로 재생할 수 있습니다.'); return; }
-                    setViewerList([]); setViewerMsgId(String(item?.id||'')); setViewerUrl(String(item.imageUrl)); setViewerKind('video'); setViewerOpen(true);
-                  } catch {}
-                }}
-                onLongPress={() => { try { openMsgMenu(item, isMe); } catch {} }}
-              >
-                {hasUrl
-                  ? <VideoThumb uri={thumbUri} />
-                  : (
-                    <View style={{ width: 220, height: 160, borderRadius: 10, backgroundColor:'#000', alignItems:'center', justifyContent:'center' }}>
-                      <Text style={{ color:'#FFF', fontSize:32 }}>▶</Text>
-                    </View>
-                  )}
-              </TouchableOpacity>
             );
           }
           if (type === 'poll') {
@@ -1388,14 +1685,28 @@ function RoomInner() {
             );
           }
           if (type === 'file') {
-            const refForExt = String(item.imageUrl || item.content || '');
+            // 확장자 추출은 항상 파일명(content)을 우선 사용하고,
+            // 없을 때만 URL에서 추출한다. (수신자 단말에서도 썸네일 판정이 동일하도록)
+            const refForExt = String((item as any)?.filename || item.content || item.url || item.imageUrl || '');
             const ext = (() => { try { const m = /\.([a-z0-9]{1,8})(?:\?|#|$)/i.exec(refForExt); return (m?.[1]||'file').toLowerCase(); } catch { return 'file'; } })();
-            const hasUrl = !!item.imageUrl;
+            const fileUrl = String(item?.url || item?.imageUrl || '');
+            const hasUrl = !!fileUrl;
+            const mime = String((item as any)?.mimeType || '').toLowerCase();
+            const mimeIsImage = /^image\//.test(mime);
+            const mimeIsVideo = /^video\//.test(mime);
             const isImage = /^(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(ext);
             const isVideo = /^(mp4|mov|avi|mkv|webm|m4v|3gp)$/i.test(ext);
             const isPdf = /^pdf$/i.test(ext);
+            const isAudio = /^(mp3|wav|m4a|aac|ogg|flac|wma)$/i.test(ext);
+            const isText = /^(txt|json|xml|md|log|csv|ini|cfg|yaml|yml|toml|html|css|js|ts|jsx|tsx|py|java|c|cpp|h|hpp|go|rs|rb|php|sql|sh|bat|ps1)$/i.test(ext);
+            const isDoc = /^(docx?|doc)$/i.test(ext);
+            const isXls = /^(xlsx?|xls)$/i.test(ext);
+            const isPpt = /^(pptx?|ppt)$/i.test(ext);
+            const isZip = /^(zip|rar|7z|tar|gz)$/i.test(ext);
             const fileLabel = ext.toUpperCase().slice(0, 6);
-            const fileColor = isPdf ? '#E53935' : (isImage ? '#4CAF50' : (isVideo ? '#9C27B0' : '#FFD700'));
+            const iconEmoji = isImage ? '🖼️' : isVideo ? '🎬' : isPdf ? '📕' : isAudio ? '🎵' : isText ? '📝' : isDoc ? '📄' : isXls ? '📊' : isPpt ? '📽️' : isZip ? '📦' : '📁';
+            const fileColor = isPdf ? '#E53935' : isImage ? '#4CAF50' : isVideo ? '#9C27B0' : isAudio ? '#9C27B0' : isDoc ? '#1E88E5' : isXls ? '#2E7D32' : isPpt ? '#E67E22' : isZip ? '#9C27B0' : '#FFD700';
+            const fileName = String((item as any)?.filename || item?.content || '파일');
             return (
               <TouchableOpacity
                 activeOpacity={0.9}
@@ -1405,26 +1716,69 @@ function RoomInner() {
                       Alert.alert('파일 준비 중', '파일 업로드가 완료되면 미리보기를 열 수 있습니다.');
                       return;
                     }
-                    const url = String(item.imageUrl);
+                    const url = fileUrl;
+                    if (shouldOpenFileExternally(url)) {
+                      (async () => {
+                        try {
+                          const Linking = require('expo-linking');
+                          const FS = require('expo-file-system');
+                          const u = url.toLowerCase();
+                          if (u.startsWith('file://') || u.startsWith('content://')) {
+                            Linking.openURL(url);
+                            return;
+                          }
+                          if (u.startsWith('http://') || u.startsWith('https://')) {
+                            const cacheDir = FS.cacheDirectory || FS.documentDirectory;
+                            const extFromUrl = (/\.[a-z0-9]{1,8}(?=\?|#|$)/i.exec(url) || [])[0] || '.bin';
+                            const localUri = `${cacheDir}open_external_${Date.now()}${extFromUrl}`;
+                            const res = await FS.downloadAsync(url, localUri);
+                            if (res?.uri) Linking.openURL(res.uri);
+                            else Alert.alert('열기 실패', '파일을 열 수 없습니다.');
+                          } else {
+                            Linking.openURL(url);
+                          }
+                        } catch (e) {
+                          try { Alert.alert('열기 실패', '기본 앱으로 열 수 없습니다. 링크를 복사해 브라우저에서 열어보세요.'); } catch {}
+                        }
+                      })();
+                      return;
+                    }
                     setViewerList([]); 
                     setViewerMsgId(String(item?.id||''));
                     setViewerUrl(url);
-                    if (isImage) setViewerKind('image');
-                    else if (isVideo) setViewerKind('video');
+                    setViewerTitle(fileName);
+                    if (mimeIsImage || isImage) setViewerKind('image');
+                    else if (mimeIsVideo || isVideo) setViewerKind('video');
                     else if (isPdf) setViewerKind('pdf');
-                    else setViewerKind('web');
+                    else if (isAudio) setViewerKind('audio');
+                    else if (isText) setViewerKind('text');
+                    else setViewerKind('file');
                     setViewerOpen(true);
                   } catch {}
                 }}
                 onLongPress={() => { try { openMsgMenu(item, isMe); } catch {} }}
               >
-                <View style={{ width: 200, borderRadius: 12, overflow:'hidden', backgroundColor:'#1A1A1A', borderWidth:1, borderColor:'#333' }}>
-                  <View style={{ height: 80, alignItems:'center', justifyContent:'center', backgroundColor:'#111' }}>
-                    <Text style={{ color: fileColor, fontSize: 28, fontWeight:'900' }}>{fileLabel}</Text>
-                  </View>
-                  <View style={{ padding:10, backgroundColor:'#1A1A1A' }}>
-                    <Text style={{ color:'#EEE', fontWeight:'600', fontSize:13 }} numberOfLines={2}>{String(item?.content||'파일')}</Text>
-                    <Text style={{ color:'#888', fontSize:10, marginTop:4 }}>{isImage?'이미지':isVideo?'동영상':isPdf?'PDF':'파일'}</Text>
+                <View style={{ width: 200, borderRadius: 12, overflow:'hidden', backgroundColor:'#1A1A1A', borderWidth:1, borderColor:'#333', flexDirection:'row' }}>
+                  {/* 이미지/동영상은 왼쪽에 썸네일 표시 */}
+                  {hasUrl && (mimeIsImage || mimeIsVideo || isImage || isVideo) ? (
+                    <View style={{ width: 80, height: 80, backgroundColor:'#000' }}>
+                      {(mimeIsImage || isImage) ? (
+                        <Image source={{ uri: fileUrl }} style={{ width:80, height:80 }} resizeMode="cover" />
+                      ) : (
+                        <VideoThumb uri={fileUrl} />
+                      )}
+                    </View>
+                  ) : (
+                    <View style={{ width: 80, height: 80, alignItems:'center', justifyContent:'center', backgroundColor:'#111', borderRightWidth:1, borderRightColor:'#222' }}>
+                      <Text style={{ fontSize: 36 }}>{iconEmoji}</Text>
+                      <Text style={{ color: fileColor, fontSize: 12, fontWeight:'900', marginTop:4 }}>{fileLabel}</Text>
+                    </View>
+                  )}
+                  <View style={{ flex:1, padding:10, backgroundColor:'#1A1A1A', justifyContent:'center' }}>
+                    <Text style={{ color:'#EEE', fontWeight:'600', fontSize:13 }} numberOfLines={2}>{fileName}</Text>
+                    <Text style={{ color:'#888', fontSize:10, marginTop:4 }}>
+                      {isImage?'이미지':isVideo?'동영상':isPdf?'PDF':isAudio?'오디오':isText?'텍스트':isDoc?'문서':isXls?'스프레드시트':isPpt?'프레젠테이션':isZip?'압축파일':'파일'}
+                    </Text>
                   </View>
                 </View>
               </TouchableOpacity>
@@ -1523,6 +1877,17 @@ function RoomInner() {
         ) : null}
       </View>
     );
+  }, (prev, next) => {
+    try {
+      return (
+        prev.item?.id === next.item?.id &&
+        prev.item?.content === next.item?.content &&
+        prev.item?.type === next.item?.type &&
+        prev.showHeader === next.showHeader &&
+        prev.item?.senderId === next.item?.senderId &&
+        prev.item?.createdAt === next.item?.createdAt
+      );
+    } catch { return false; }
   }), [uid, room, ttlSecurity, bubbleColorTheme, bodyFont, timeFont, ttlMs, serverOffsetMs]);
 
   const renderItem = React.useCallback(({ item }: any) => {
@@ -1546,22 +1911,28 @@ function RoomInner() {
     createDefaultRoomSettings({ roomId, roomType: modalRoomType, ownerUserId: String((room as any)?.createdBy || uid) })
   ), [roomId, modalRoomType, uid]);
   const [modalSettings, setModalSettings] = React.useState(modalDefault);
+  const modalLoadedForOpenRef = React.useRef(false);
   React.useEffect(() => {
-    if (!settingsOpen) return;
+    if (!settingsOpen) {
+      modalLoadedForOpenRef.current = false;
+      return;
+    }
+    if (modalLoadedForOpenRef.current) return;
+    modalLoadedForOpenRef.current = true;
     (async () => {
       try {
         const saved: any = await loadRoomSettings(roomId);
         const base = createDefaultRoomSettings({ roomId, roomType: modalRoomType, ownerUserId: String(uid) });
         const merged: typeof base = {
           ...base,
-             basic: {
-               ...base.basic,
-               ...(saved?.basic || {}),
-               title: String((room as any)?.title || base.basic.title),
-               imageUrl: String((room as any)?.avatarUrl || (room as any)?.image || (saved?.basic?.imageUrl || '')) || null,
-               tags: Array.isArray((room as any)?.tags) ? (room as any).tags : (saved?.basic?.tags || []),
-               isPublic: typeof (room as any)?.isPublic === 'boolean' ? !!(room as any).isPublic : (saved?.basic?.isPublic ?? base.basic.isPublic),
-             },
+          basic: {
+            ...base.basic,
+            ...(saved?.basic || {}),
+            title: String((room as any)?.title || base.basic.title),
+            imageUrl: String((room as any)?.avatarUrl || (room as any)?.image || (saved?.basic?.imageUrl || '')) || null,
+            tags: Array.isArray((room as any)?.tags) ? (room as any).tags : (saved?.basic?.tags || []),
+            isPublic: typeof (room as any)?.isPublic === 'boolean' ? !!(room as any).isPublic : (saved?.basic?.isPublic ?? base.basic.isPublic),
+          },
           members: {
             ...base.members,
             ...(saved?.members || {}),
@@ -1580,9 +1951,7 @@ function RoomInner() {
         setModalSettings(modalDefault);
       }
     })();
-    // include memberIds and room expiry to refresh when opening
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settingsOpen, roomId, modalRoomType, JSON.stringify(memberIds), room, roomExpireAt]);
+  }, [settingsOpen, roomId, modalRoomType, uid, room, memberIds, roomExpireAt, modalDefault]);
   const onModalChange = React.useCallback((partial: Partial<typeof modalSettings>) => {
     setModalSettings(prev => ({
       ...prev,
@@ -1627,30 +1996,16 @@ function RoomInner() {
           <Text style={styles.roomLeaveText}>←</Text>
         </TouchableOpacity>
         <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
-          {(() => {
-            try {
-              if (String((room as any)?.type || '') !== 'dm') return null;
-              const members: string[] = Array.isArray((room as any)?.members) ? (room as any).members as string[] : [];
-              const otherId = members.find((u) => String(u) !== String(uid));
-              if (!otherId) return null;
-              // eslint-disable-next-line @typescript-eslint/no-var-requires
-              const store = require('@/src/features/chat/store/chat-profile.store');
-              const p = store.useChatProfileStore.getState().profiles?.[otherId];
-              return (
-                <>
-                  <View style={{ width:22, height:22, borderRadius:11, overflow:'hidden', backgroundColor:'#333' }}>
-                    {p?.avatar ? <Image source={{ uri: String(p.avatar) }} style={{ width:'100%', height:'100%' }} /> : null}
-                  </View>
-                  <Text style={styles.roomTitleText}>{p?.chatName || p?.displayName || otherId}</Text>
-                </>
-              );
-            } catch {
-              return <Text style={styles.roomTitleText}>{String((room as any)?.title || t('chatRoom', language) || '대화방')}</Text>;
-            }
-          })()}
-          {String((room as any)?.type || '') !== 'dm' ? (
+          {String((room as any)?.type || '') === 'dm' && dmOtherId ? (
+            <>
+              <View style={{ width:22, height:22, borderRadius:11, overflow:'hidden', backgroundColor:'#333' }}>
+                {peerProfile?.avatar ? <Image source={{ uri: String(peerProfile.avatar) }} style={{ width:'100%', height:'100%' }} /> : null}
+              </View>
+              <Text style={styles.roomTitleText}>{dmDisplayTitle || dmOtherId}</Text>
+            </>
+          ) : (
             <Text style={styles.roomTitleText}>{String((room as any)?.title || t('chatRoom', language) || '대화방')}</Text>
-          ) : null}
+          )}
         </View>
         <View style={{ flex:1 }} />
         {/* 상단 아이콘: 시계( TTL ), 사람(멤버), 설정(기본) */}
@@ -1770,9 +2125,11 @@ function RoomInner() {
                   permissions: { lockEnabled: !!s.permissions.lockEnabled, lockPassword: s.permissions.lockPassword||'' } as any,
                   notifications: {
                     enabled: !!s.notifications.enabled,
-                    keywordAlerts: s.notifications.keywordAlerts||[],
+                    keywordAlerts: s.notifications.keywordAlerts || [],
                     mentionAlertEnabled: !!s.notifications.mentionAlertEnabled,
-                    mode: s.notifications.mode||'sound',
+                    mode: s.notifications.mode || 'sound',
+                    notificationVolume: s.notifications.notificationVolume || 'medium',
+                    notificationSound: s.notifications.notificationSound || 'system',
                   },
                   theme: {
                     bubbleColorHex: s.theme.bubbleColorHex||undefined,
@@ -1842,18 +2199,19 @@ function RoomInner() {
         />
       )}
 
-      <View style={{ flex: 1 }}>
-      <FlatList
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        enabled
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+      >
+      <FlashList
         ref={listRef}
         data={filteredMessages}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
-        initialNumToRender={15}
-        windowSize={5}
-        maxToRenderPerBatch={10}
-        updateCellsBatchingPeriod={50}
-        removeClippedSubviews={Platform.OS !== 'web'}
-        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+        estimatedItemSize={72}
+        drawDistance={300}
         onScroll={({ nativeEvent }) => {
           try {
             const y = Number(nativeEvent?.contentOffset?.y || 0);
@@ -1882,24 +2240,28 @@ function RoomInner() {
           return `idx-${index}`;
         }}
         renderItem={renderItem}
-        contentContainerStyle={styles.messagesContent}
-        onLayout={() => { 
+        contentContainerStyle={[styles.messagesContent, { paddingBottom: 96 + Math.max(insets.bottom, 6) }]}
+        ListHeaderComponent={hasMoreMessages && messages.length >= 30 ? (
+          <TouchableOpacity
+            onPress={handleLoadOlder}
+            disabled={isLoadingOlder}
+            style={{ alignItems:'center', paddingVertical:12, marginBottom:8 }}
+          >
+            {isLoadingOlder ? (
+              <ActivityIndicator size="small" color="#D4AF37" />
+            ) : (
+              <Text style={{ color:'#888', fontSize:13 }}>이전 메시지 불러오기</Text>
+            )}
+          </TouchableOpacity>
+        ) : null}
+        onLoad={() => { 
           try { 
             listRef.current?.scrollToEnd?.({ animated: false }); 
-            // Performance: log first render time
             if (!didLogFirstRenderRef.current && typeof __DEV__ !== 'undefined' && __DEV__) {
               didLogFirstRenderRef.current = true;
               console.log(`[PERF] chat-room-first-render: ${Date.now() - roomMountTimeRef.current}ms`);
             }
           } catch {} 
-        }}
-        onContentSizeChange={() => {
-          try {
-            if (!didAutoScrollRef.current) {
-              listRef.current?.scrollToEnd?.({ animated: false });
-              didAutoScrollRef.current = true;
-            }
-          } catch {}
         }}
         ListEmptyComponent={<View style={{ padding: 24, alignItems:'center' }}><Text style={{ color:'#777' }}>메시지가 없습니다</Text></View>}
       />
@@ -1931,44 +2293,19 @@ function RoomInner() {
             <Text style={{ color: '#FFD700', fontSize: 18, fontWeight: '700' }}>↓</Text>
           </TouchableOpacity>
         )}
-        <View style={[styles.inputContainer, { paddingBottom: keyboardOpen ? 4 : Math.max(insets.bottom, 6) }]}>
-          <TouchableOpacity
-            onPress={()=>{ try { onAttach(); } catch {} }}
-            style={[styles.attachBtn, { width:36, height:36, borderRadius:18, backgroundColor:'#D4AF37', alignItems:'center', justifyContent:'center' }]}
-            hitSlop={{ top:6, bottom:6, left:6, right:6 }}
-          >
-            <Text style={{ color:'#0C0C0C', fontWeight:'900', fontSize:18 }}>＋</Text>
-          </TouchableOpacity>
-          <View style={{ flex:1, flexDirection:'row', alignItems:'center', marginLeft:8, borderRadius:18, backgroundColor:'#111', borderWidth:1, borderColor:'#2A2A2A', paddingHorizontal:10 }}>
-            <TextInput
-              value={text}
-              onChangeText={setText}
-              onFocus={()=> {
-                // Performance: log input focus time
-                if (typeof __DEV__ !== 'undefined' && __DEV__) {
-                  console.log(`[PERF] chat-input-focus at: ${Date.now() - roomMountTimeRef.current}ms from room mount`);
-                }
-              }}
-              onContentSizeChange={(e)=>{ try { const h=Math.min(120, Math.max(36, Math.ceil(e.nativeEvent?.contentSize?.height||36))); setInputHeight(h); } catch {} }}
-              placeholder="메시지를 입력하세요..."
-              placeholderTextColor="#777"
-              style={[styles.input, { flex:1, marginLeft:0, marginRight:6, borderWidth:0, height: inputHeight, paddingVertical:8, backgroundColor:'transparent' }]}
-              multiline
-              blurOnSubmit={false}
-              returnKeyType="send"
-              onSubmitEditing={()=>{ if (Platform.OS==='ios') onSend(); }}
-            />
-            <TouchableOpacity
-              onPress={onSend}
-              disabled={sending || !text.trim()}
-              style={{ paddingHorizontal:8, paddingVertical:6, borderRadius:14, backgroundColor:'transparent', opacity: (sending || !text.trim()) ? 0.4 : 1 }}
-              hitSlop={{ top:6, bottom:6, left:4, right:2 }}
-            >
-              <Text style={{ color:'#FFD700', fontWeight:'800', fontSize:13 }}>Sent</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
+        <ChatComposer
+          ref={composerRef}
+          roomId={roomId}
+          uid={uid}
+          sendMessage={sendMessage}
+          onAttach={onAttach}
+          keyboardOpen={keyboardOpen}
+          insets={insets}
+          onAfterSend={() => { try { listRef.current?.scrollToEnd?.({ animated: true }); } catch {} }}
+          styles={styles}
+          composerFontSize={bodyFont}
+        />
+      </KeyboardAvoidingView>
 
       {/* 메시지 액션 시트 (카톡 스타일) */}
       <Modal transparent visible={msgMenuOpen} animationType="fade" onRequestClose={closeMsgMenu}>
@@ -1976,7 +2313,7 @@ function RoomInner() {
           <TouchableOpacity activeOpacity={1} onPress={() => {}} style={styles.msgSheet}>
             <Text style={styles.msgSheetTitle}>메시지</Text>
             <View style={styles.msgSheetRow}>
-              <TouchableOpacity style={styles.msgSheetBtn} onPress={() => { try { setText((prev)=>`> ${String(selectedMsg?.content||'').slice(0,120)}\n`); } catch {} closeMsgMenu(); }}>
+              <TouchableOpacity style={styles.msgSheetBtn} onPress={() => { try { composerRef.current?.setText((prev)=>`> ${String(selectedMsg?.content||'').slice(0,120)}\n`); } catch {} closeMsgMenu(); }}>
                 <Text style={styles.msgSheetBtnText}>답장</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.msgSheetBtn} onPress={() => { try { openReactPicker(); } catch {} }}>

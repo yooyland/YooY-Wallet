@@ -12,6 +12,12 @@ import { ref as storageRef, uploadString, uploadBytes, getDownloadURL } from 'fi
 import { firebaseStorage } from '@/lib/firebase';
 import { signInAnonymously } from 'firebase/auth';
 
+/** Stable key for a DM pair: sorted UIDs joined by '_'. A↔B always yields the same key. */
+export function getDmPairKey(uid1: string, uid2: string): string {
+  if (!uid1 || !uid2) return '';
+  return [uid1, uid2].slice().sort().join('_');
+}
+
 export interface KakaoRoom {
   id: string;
   title: string;
@@ -25,6 +31,8 @@ export interface KakaoRoom {
   type?: 'dm' | 'group' | 'ttl' | 'secret' | 'notice';
   messageTtlMs?: number; // 메시지 자동 소멸 TTL (ms) - ttl 타입에서 사용
   tags?: string[];
+  /** DM only: stable pair key (sorted UIDs) for reuse lookup */
+  dmPairKey?: string;
   // 메타 정보(옵션): 설명, 공개 여부 등
   description?: string;
   isPublic?: boolean;
@@ -37,8 +45,17 @@ export interface KakaoMessage {
   content: string;
   createdAt: number;
   readBy: string[];
-  type?: 'text' | 'image' | 'file' | 'system' | 'album';
+  type?: 'text' | 'image' | 'video' | 'file' | 'location' | 'link' | 'system' | 'album';
+  /** Back-compat: legacy field name used by existing renderer */
   imageUrl?: string;
+  /** Normalized: primary remote/local URL for this message (same value as imageUrl for media) */
+  url?: string;
+  /** Normalized thumbnail URL (optional). If absent and mimeType is image/*, render direct image. */
+  thumbnailUrl?: string;
+  /** Normalized filename (optional). */
+  filename?: string;
+  /** Normalized mime type (optional, but preferred). */
+  mimeType?: string;
   albumUrls?: string[]; // type === 'album'일 때 다중 이미지 URL 목록
   replyToId?: string;
   // 누가 어떤 이모지를 선택했는지: userId -> emoji
@@ -46,6 +63,58 @@ export interface KakaoMessage {
   // 집계된 카운트(빠른 렌더용)
   reactionsCount?: Record<string, number>; // emoji -> count
 }
+
+const guessMimeType = (type: string, uriOrName?: string): string | undefined => {
+  try {
+    const u = String(uriOrName || '').toLowerCase();
+    const ext = (() => {
+      const m = u.match(/\.([a-z0-9]{1,8})(\?|#|$)/i);
+      return (m && m[1]) ? m[1].toLowerCase() : '';
+    })();
+    if (String(type) === 'image') {
+      if (ext === 'png') return 'image/png';
+      if (ext === 'webp') return 'image/webp';
+      if (ext === 'gif') return 'image/gif';
+      return 'image/jpeg';
+    }
+    if (String(type) === 'video') {
+      if (ext === 'mov') return 'video/quicktime';
+      if (ext === 'webm') return 'video/webm';
+      return 'video/mp4';
+    }
+    if (String(type) === 'file') {
+      if (ext === 'pdf') return 'application/pdf';
+      if (ext === 'doc') return 'application/msword';
+      if (ext === 'docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      if (ext === 'xls') return 'application/vnd.ms-excel';
+      if (ext === 'xlsx') return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      if (ext === 'ppt') return 'application/vnd.ms-powerpoint';
+      if (ext === 'pptx') return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+      if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+      if (ext === 'png') return 'image/png';
+      if (ext === 'webp') return 'image/webp';
+      if (ext === 'gif') return 'image/gif';
+      if (ext === 'mp4') return 'video/mp4';
+      if (ext === 'mov') return 'video/quicktime';
+    }
+  } catch {}
+  return undefined;
+};
+
+const guessFilename = (fallback: string | undefined, uri?: string): string | undefined => {
+  try {
+    const f = String(fallback || '').trim();
+    if (f && f !== '[file]' && f !== '파일') return f;
+  } catch {}
+  try {
+    const u = String(uri || '');
+    const base = u.split('?')[0].split('#')[0];
+    const seg = base.split('/').pop() || '';
+    const dec = decodeURIComponent(seg);
+    if (dec && dec.length >= 3) return dec;
+  } catch {}
+  return undefined;
+};
 
 type RoomRole = 'admin' | 'moderator' | 'member';
 
@@ -146,8 +215,8 @@ interface KakaoRoomsActions {
     participantLimit?: number
   ) => KakaoRoom;
   enterRoom: (roomId: string) => void;
-  sendMessage: (roomId: string, senderId: string, content: string, type?: KakaoMessage['type'], imageUrl?: string, replyToId?: string, albumUrls?: string[]) => KakaoMessage;
-  markRead: (roomId: string, userId: string) => void;
+  sendMessage: (roomId: string, senderId: string, content: string, type?: KakaoMessage['type'], imageUrl?: string, replyToId?: string, albumUrls?: string[], meta?: Partial<Pick<KakaoMessage,'mimeType'|'filename'|'thumbnailUrl'|'url'>>) => KakaoMessage;
+  markRead: (roomId: string, userId: string, lastReadMessageId?: string) => void;
   setRoomTTL: (roomId: string, expiresAt: number) => void;
   setMessageTTL: (roomId: string, ttlMs: number) => void;
   setRoomPrivacy: (roomId: string, isPublic: boolean, password?: string | null) => Promise<void>;
@@ -162,6 +231,9 @@ interface KakaoRoomsActions {
   setUnreadCount: (roomId: string, count: number) => void;
   removeRooms: (roomIds: string[]) => void;
 
+  // 이전 메시지 로드 (lazy loading)
+  loadOlderMessages: (roomId: string, beforeTimestamp: number, limit?: number) => Promise<any[]>;
+  
   // 룸 설정
   loadRoomSettings: (roomId: string) => Promise<RoomSettings>;
   saveRoomSettings: (roomId: string, updates: Partial<RoomSettings>) => Promise<void>;
@@ -201,35 +273,63 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
       lastUid: (firebaseAuth?.currentUser?.uid || 'me'),
       roomSubs: {},
 
-      // 1:1 DM 방을 기존 방 우선 → 없으면 생성(양쪽 멤버십/joinedRooms 함께 기록)
+      // 1:1 DM 방: 동일 유저쌍이면 기존 방 재사용, 없을 때만 생성 (dmPairKey로 중복 방지)
       getOrCreateDmRoom: async (me: string, other: string) => {
         try { if (!firebaseAuth.currentUser && Platform.OS === 'web') { try { await signInAnonymously(firebaseAuth); } catch {} } } catch {}
         const myUid = me || (firebaseAuth.currentUser?.uid || 'me');
         const friendUid = other;
         if (!friendUid) throw new Error('friendUid required');
-        // 1) 로컬/원격에서 기존 dm방 탐색 (로컬 캐시 우선)
+        const pairKey = getDmPairKey(myUid, friendUid);
+        if (!pairKey) throw new Error('invalid dm pair');
+
+        // 1) 로컬에서 기존 DM 탐색: dmPairKey 일치 또는 멤버 2명 일치
         try {
-          const local = get().rooms.find(r => r.type === 'dm' && Array.isArray(r.members) && r.members.includes(myUid) && r.members.includes(friendUid));
+          const local = get().rooms.find((r: any) => {
+            if (r.type !== 'dm') return false;
+            if (r.dmPairKey === pairKey) return true;
+            const mem = Array.isArray(r.members) ? r.members : [];
+            return mem.length === 2 && mem.includes(myUid) && mem.includes(friendUid);
+          });
           if (local?.id) return local.id;
         } catch {}
+
+        // 2) Firestore에서 기존 DM 탐색: dmPairKey 우선(동일 유저쌍 재사용), 없으면 members 쿼리
+        // Firestore 인덱스: rooms 컬렉션 (type Asc, dmPairKey Asc)
         try {
           const { query, collection, where, getDocs, limit } = await import('firebase/firestore');
-          const q = query(
+          let snap = await getDocs(query(
             collection(firestore, 'rooms'),
             where('type', '==', 'dm'),
-            where(`members.${myUid}`, '==', true) as any,
-            where(`members.${friendUid}`, '==', true) as any,
+            where('dmPairKey', '==', pairKey),
             limit(1)
-          );
-          const snap = await getDocs(q);
+          ));
+          if (snap.empty) {
+            snap = await getDocs(query(
+              collection(firestore, 'rooms'),
+              where('type', '==', 'dm'),
+              where(`members.${myUid}`, '==', true) as any,
+              where(`members.${friendUid}`, '==', true) as any,
+              limit(1)
+            ));
+          }
           if (!snap.empty) {
-            const id = snap.docs[0].id;
-            // 로컬 목록에 없으면 등록
-            try { set((s)=>({ rooms: s.rooms.some(r=>r.id===id)? s.rooms : [{ id, title:'DM', members:[myUid, friendUid], unreadCount:0, type:'dm', lastMessageAt: Date.now() }, ...s.rooms ] })); } catch {}
+            const docSnap = snap.docs[0];
+            const id = docSnap.id;
+            const data = docSnap.data();
+            const membersArr = [myUid, friendUid];
+            try {
+              set((s) => {
+                if (s.rooms.some((r: any) => r.id === id)) return s;
+                return {
+                  rooms: [{ id, title: 'DM', members: membersArr, unreadCount: 0, type: 'dm', lastMessageAt: Date.now(), dmPairKey: pairKey }, ...s.rooms ],
+                } as any;
+              });
+            } catch {}
             return id;
           }
         } catch {}
-        // 2) 생성 (batch)
+
+        // 3) 새 DM 방 생성 (dmPairKey 저장으로 이후 조회 일관)
         const { doc, writeBatch, serverTimestamp } = await import('firebase/firestore');
         const batch = writeBatch(firestore);
         const roomId = uuidv4();
@@ -237,6 +337,7 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
         const now = serverTimestamp();
         batch.set(roomRef, {
           type: 'dm',
+          dmPairKey: pairKey,
           title: 'DM',
           members: { [myUid]: true, [friendUid]: true },
           isPublic: false,
@@ -246,15 +347,17 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
           lastActiveAt: Date.now(),
           memberCount: 2,
         } as any, { merge: true } as any);
-        // 멤버 문서
-        batch.set(doc(firestore, 'rooms', roomId, 'members', myUid), { role: 'member', joinedAt: now } as any, { merge: true } as any);
-        batch.set(doc(firestore, 'rooms', roomId, 'members', friendUid), { role: 'member', joinedAt: now } as any, { merge: true } as any);
-        // 양쪽 joinedRooms
-        batch.set(doc(firestore, 'users', myUid, 'joinedRooms', roomId), { dmWith: friendUid, joinedAt: now, type: 'dm' } as any, { merge: true } as any);
-        batch.set(doc(firestore, 'users', friendUid, 'joinedRooms', roomId), { dmWith: myUid, joinedAt: now, type: 'dm' } as any, { merge: true } as any);
+        // 멤버 문서 (양쪽 동일한 멤버십 + unread 0)
+        batch.set(doc(firestore, 'rooms', roomId, 'members', myUid), { role: 'member', joinedAt: now, unread: 0 } as any, { merge: true } as any);
+        batch.set(doc(firestore, 'rooms', roomId, 'members', friendUid), { role: 'member', joinedAt: now, unread: 0 } as any, { merge: true } as any);
+        const nowMs = Date.now();
+        const membersArr = [myUid, friendUid];
+        // 양쪽 joinedRooms: 동일 구조로 방 목록/헤더 대칭 (members, lastActiveAt 포함)
+        batch.set(doc(firestore, 'users', myUid, 'joinedRooms', roomId), { dmWith: friendUid, joinedAt: now, type: 'dm', members: membersArr, lastActiveAt: nowMs, unread: 0 } as any, { merge: true } as any);
+        batch.set(doc(firestore, 'users', friendUid, 'joinedRooms', roomId), { dmWith: myUid, joinedAt: now, type: 'dm', members: membersArr, lastActiveAt: nowMs, unread: 0 } as any, { merge: true } as any);
         await batch.commit();
-        // 로컬 반영
-        try { set((s)=>({ rooms: [{ id: roomId, title:'DM', members:[myUid, friendUid], unreadCount:0, type:'dm', lastMessageAt: Date.now() }, ...s.rooms ] })); } catch {}
+        // 로컬 반영 (dmPairKey 포함하여 이후 재조회 시 재사용)
+        try { set((s)=>({ rooms: [{ id: roomId, title: 'DM', members: membersArr, unreadCount: 0, type: 'dm', lastMessageAt: nowMs, dmPairKey: pairKey }, ...s.rooms ] })); } catch {}
         return roomId;
       },
 
@@ -343,27 +446,32 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
           };
           void setDoc(ref, payload, { merge: true });
           // 모든 멤버에게 멤버십 및 joinedRooms 기록 (초대된 사람도 방 목록에 표시)
-          try {
-            const creatorUid = firebaseAuth.currentUser?.uid || 'me';
-            const allMembers = Array.isArray(members) ? members : [creatorUid];
-            // 생성자를 포함하여 모든 멤버에게 멤버십 기록
-            for (const memberId of allMembers) {
-              const isCreator = memberId === creatorUid;
-              const memberRef = doc(firestore, 'rooms', room.id, 'members', memberId);
-              const userRoomRef = doc(firestore, 'users', memberId, 'joinedRooms', room.id);
-              void setDoc(memberRef, { 
-                joinedAt: serverTimestamp(), 
-                role: isCreator ? 'admin' : 'member' 
-              }, { merge: true });
-              void setDoc(userRoomRef, { 
-                joinedAt: serverTimestamp(), 
-                title: room.title, 
-                type: room.type,
-                createdBy: creatorUid
-              }, { merge: true });
-            }
-            void updateDoc(ref, { memberCount: allMembers.length, updatedAt: serverTimestamp() } as any).catch(async()=>{ try { await setDoc(ref, { memberCount: allMembers.length, updatedAt: serverTimestamp() } as any, { merge: true }); } catch {} });
-          } catch {}
+          // createRoom은 동기 반환이므로 비동기 쓰기는 백그라운드에서 실행
+          const allMembers = Array.isArray(members) ? members : [creatorUid];
+          void (async () => {
+            try {
+              for (const memberId of allMembers) {
+                try {
+                  const isCreator = memberId === creatorUid;
+                  const memberRef = doc(firestore, 'rooms', room.id, 'members', memberId);
+                  const userRoomRef = doc(firestore, 'users', memberId, 'joinedRooms', room.id);
+                  await setDoc(memberRef, { joinedAt: serverTimestamp(), role: isCreator ? 'admin' : 'member', unread: 0 }, { merge: true });
+                  await setDoc(userRoomRef, {
+                    joinedAt: serverTimestamp(),
+                    title: room.title,
+                    type: room.type || 'group',
+                    createdBy: creatorUid,
+                    members: allMembers,
+                    lastActiveAt: now,
+                    avatarUrl: room.avatarUrl || null,
+                    isPublic: room.isPublic ?? true,
+                    unread: 0,
+                  }, { merge: true });
+                } catch {}
+              }
+              await updateDoc(ref, { memberCount: allMembers.length, updatedAt: serverTimestamp() } as any).catch(async () => { try { await setDoc(ref, { memberCount: allMembers.length, updatedAt: serverTimestamp() } as any, { merge: true }); } catch {} });
+            } catch {}
+          })();
         } catch {}
         return room;
       },
@@ -383,9 +491,16 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
                 try {
                   if (!snap.exists()) return;
                   const data: any = snap.data() || {};
+                  // members: Firestore는 map일 수 있음 → 배열로 통일 (1:1/그룹 양쪽 동일 동작)
+                  const membersArr = Array.isArray(data.members)
+                    ? data.members
+                    : data.members && typeof data.members === 'object'
+                      ? Object.keys(data.members).filter(Boolean)
+                      : [];
+                  const merged = { ...data, id: roomId, members: membersArr };
                   set((s) => {
-                    const nextRooms = (s.rooms || []).map((r) =>
-                      r.id === roomId ? { ...r, ...data, id: roomId } : r
+                    const nextRooms = (s.rooms || []).map((r: any) =>
+                      r.id === roomId ? { ...r, ...merged, members: (merged.members?.length ? merged.members : r.members) || [] } : r
                     );
                     const prevRS = s.roomSettings?.[roomId] || ({} as any);
                     const prevTTL = prevRS.ttl || {};
@@ -427,67 +542,123 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
                 const q = query(
                   collection(firestore, 'rooms', roomId, 'messages'),
                   orderBy('createdAt', 'desc'),
-                  qlimit(100)
+                  qlimit(30)
                 );
+                let isFirstLoad = true;
                 unsubMsgs = onSnapshot(q, (snap) => {
                   try {
-                    const incoming: any[] = [];
-                    snap.forEach((d: any) => {
+                    if (isFirstLoad) {
+                      isFirstLoad = false;
+                      const incoming: any[] = [];
+                      snap.forEach((d: any) => {
+                        const v: any = d.data() || {};
+                        const createdMs = (() => {
+                          try { return typeof v.createdAt?.toMillis === 'function' ? v.createdAt.toMillis() : Number(v.createdAt || 0); } catch { return 0; }
+                        })();
+                        const rawType = v.type || 'text';
+                        const rawUrl = v.url || v.imageUrl || undefined;
+                        incoming.push({
+                          id: v.id || d.id,
+                          roomId,
+                          senderId: v.senderId,
+                          content: v.content || '',
+                          type: rawType,
+                          imageUrl: rawUrl,
+                          url: rawUrl,
+                          thumbnailUrl: v.thumbnailUrl || undefined,
+                          filename: v.filename || undefined,
+                          mimeType: v.mimeType || undefined,
+                          albumUrls: Array.isArray(v.albumUrls) ? v.albumUrls : undefined,
+                          replyToId: v.replyToId || undefined,
+                          createdAt: createdMs || Date.now(),
+                          readBy: Array.isArray(v.readBy) ? v.readBy : [],
+                          reactionsByUser: v.reactionsByUser || {},
+                          reactionsCount: v.reactionsCount || {},
+                        });
+                      });
+                      const sorted = [...incoming].sort((a: any, b: any) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
+                      set((s) => ({
+                        messages: {
+                          ...(s.messages || {}),
+                          [roomId]: sorted,
+                        },
+                      } as any));
+                      const latestId = sorted.length ? sorted[sorted.length - 1]?.id : undefined;
+                      if (latestId && get().currentRoomId === roomId && firebaseAuth.currentUser?.uid) {
+                        get().markRead(roomId, firebaseAuth.currentUser.uid, latestId);
+                      }
+                      return;
+                    }
+                    const changes = snap.docChanges();
+                    if (changes.length === 0) return;
+                    const added: any[] = [];
+                    const modified: any[] = [];
+                    const removedIds: Set<string> = new Set();
+                    changes.forEach((change: any) => {
+                      const d = change.doc;
                       const v: any = d.data() || {};
                       const createdMs = (() => {
                         try { return typeof v.createdAt?.toMillis === 'function' ? v.createdAt.toMillis() : Number(v.createdAt || 0); } catch { return 0; }
                       })();
-                      incoming.push({
+                      const rawType = v.type || 'text';
+                      const rawUrl = v.url || v.imageUrl || undefined;
+                      const msg = {
                         id: v.id || d.id,
                         roomId,
                         senderId: v.senderId,
                         content: v.content || '',
-                        type: v.type || 'text',
-                        imageUrl: v.imageUrl || undefined,
+                        type: rawType,
+                        imageUrl: rawUrl,
+                        url: rawUrl,
+                        thumbnailUrl: v.thumbnailUrl || undefined,
+                        filename: v.filename || undefined,
+                        mimeType: v.mimeType || undefined,
                         albumUrls: Array.isArray(v.albumUrls) ? v.albumUrls : undefined,
                         replyToId: v.replyToId || undefined,
                         createdAt: createdMs || Date.now(),
                         readBy: Array.isArray(v.readBy) ? v.readBy : [],
                         reactionsByUser: v.reactionsByUser || {},
                         reactionsCount: v.reactionsCount || {},
-                      });
+                      };
+                      if (change.type === 'added') added.push(msg);
+                      else if (change.type === 'modified') modified.push(msg);
+                      else if (change.type === 'removed') removedIds.add(msg.id);
                     });
-                    latestMsgs = incoming;
-                    if (!flushTimer) {
-                      flushTimer = setTimeout(() => {
-                        try {
-                          const take = latestMsgs || [];
-                          // 서버 스냅샷 기준으로 병합하되, 로컬에 imageUrl/albumUrls가 있으면 유지
-                          // (업로드 중인 이미지가 null로 덮어쓰이는 것을 방지)
-                          set((s) => {
-                            const prevMsgs = s.messages?.[roomId] || [];
-                            const merged = take.map((newMsg: any) => {
-                              const old = prevMsgs.find((m: any) => m.id === newMsg.id);
-                              // imageUrl: 서버가 null이고 로컬에 값이 있으면 로컬 유지
-                              if (old?.imageUrl && !newMsg.imageUrl) {
-                                newMsg = { ...newMsg, imageUrl: old.imageUrl };
-                              }
-                              // albumUrls: 서버가 비어있고 로컬에 값이 있으면 로컬 유지
-                              if (Array.isArray(old?.albumUrls) && old.albumUrls.length > 0 && (!newMsg.albumUrls || newMsg.albumUrls.length === 0)) {
-                                newMsg = { ...newMsg, albumUrls: old.albumUrls };
-                              }
-                              return newMsg;
-                            });
-                            return {
-                              messages: {
-                                ...(s.messages || {}),
-                                [roomId]: merged.sort(
-                                  (a: any, b: any) => Number(a.createdAt || 0) - Number(b.createdAt || 0)
-                                ),
-                              },
-                            } as any;
-                          });
-                        } catch {} finally {
-                          latestMsgs = null;
-                          try { clearTimeout(flushTimer); } catch {}
-                          flushTimer = null;
-                        }
-                      }, 100);
+                    if (added.length === 0 && modified.length === 0 && removedIds.size === 0) return;
+                    set((s) => {
+                      let prevMsgs = s.messages?.[roomId] || [];
+                      if (removedIds.size > 0) {
+                        prevMsgs = prevMsgs.filter((m: any) => !removedIds.has(m.id));
+                      }
+                      const existingIds = new Set(prevMsgs.map((m: any) => m.id));
+                      const newAdded = added.filter((m: any) => !existingIds.has(m.id));
+                      let nextMsgs = [...prevMsgs, ...newAdded];
+                      if (modified.length > 0) {
+                        const modMap = new Map(modified.map((m: any) => [m.id, m]));
+                        nextMsgs = nextMsgs.map((m: any) => {
+                          const upd = modMap.get(m.id);
+                          if (!upd) return m;
+                          const merged = { ...upd };
+                          if (m.imageUrl && !upd.imageUrl) merged.imageUrl = m.imageUrl;
+                          if (Array.isArray(m.albumUrls) && m.albumUrls.length > 0 && (!upd.albumUrls || upd.albumUrls.length === 0)) {
+                            merged.albumUrls = m.albumUrls;
+                          }
+                          return merged;
+                        });
+                      }
+                      nextMsgs.sort((a: any, b: any) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
+                      return {
+                        messages: { ...(s.messages || {}), [roomId]: nextMsgs },
+                      } as any;
+                    });
+                    // 현재 사용자가 이 방을 보고 있을 때 새 메시지가 오면 즉시 읽음 처리 (배지 증가 방지)
+                    if (added.length > 0) {
+                      const cur = get().currentRoomId;
+                      const uid = firebaseAuth.currentUser?.uid;
+                      if (cur === roomId && uid && added.some((m: any) => m.senderId !== uid)) {
+                        const latest = added[added.length - 1];
+                        get().markRead(roomId, uid, latest?.id);
+                      }
                     }
                   } catch {}
                 }, () => {});
@@ -517,9 +688,13 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
         })();
       },
 
-      sendMessage: (roomId, senderId, content, type = 'text', imageUrl, replyToId, albumUrls) => {
+      sendMessage: (roomId, senderId, content, type = 'text', imageUrl, replyToId, albumUrls, meta) => {
         // Ensure authenticated before any Firestore writes to avoid permission errors
         try { if (!firebaseAuth.currentUser && Platform.OS === 'web') { try { signInAnonymously(firebaseAuth).catch(()=>{}); } catch {} } } catch {}
+        const normalizedUrl = (meta as any)?.url || imageUrl || undefined;
+        const normalizedMime = (meta as any)?.mimeType || guessMimeType(String(type), String((meta as any)?.filename || content || normalizedUrl || ''));
+        const normalizedFilename = (meta as any)?.filename || guessFilename(content, normalizedUrl);
+        const normalizedThumb = (meta as any)?.thumbnailUrl || undefined;
         const msg: KakaoMessage = {
           id: uuidv4(),
           roomId,
@@ -528,7 +703,11 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
           createdAt: Date.now(),
           readBy: [senderId],
           type,
-          imageUrl,
+          imageUrl: normalizedUrl,
+          url: normalizedUrl,
+          thumbnailUrl: normalizedThumb,
+          filename: normalizedFilename,
+          mimeType: normalizedMime,
           albumUrls: (type === 'album' && Array.isArray(albumUrls) && albumUrls.length) ? albumUrls : undefined,
           replyToId,
           reactionsByUser: {},
@@ -659,10 +838,15 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
                 return { imageUrl: finalUrl, albumUrls: finalAlbum };
               } catch { return { imageUrl: null, albumUrls: null }; }
             };
-            // 1차 + 2차: 비동기 IIFE 내부에서 처리하여 상위 sync 함수에 top-level await를 쓰지 않는다.
-            const safePayloadPromise = preparePayload();
+            // 업로드가 완료되어 최종 URL이 준비된 상태에서만 Firestore에 기록한다.
+            // (수신자 측 "업로드 지연"/무한 로딩의 원인: url/imageUrl=null 상태의 메시지가 먼저 전달됨)
             void (async () => {
-              // 1차: 즉시 Firestore에 기본 메시지 레코드를 남겨 상대방 화면에 최대한 빨리 보이도록 한다.
+              const safe = await preparePayload();
+              const finalUrl = safe?.imageUrl || null;
+              const finalAlbum = (type === 'album') ? (safe?.albumUrls || []) : null;
+              // 업로드 실패 시에는 서버에 "불완전한 미디어"를 남기지 않음 (수신자 무한 로딩 방지)
+              if ((type === 'image' || type === 'video' || type === 'file') && !finalUrl) return;
+              if (type === 'album' && (!Array.isArray(finalAlbum) || finalAlbum.length === 0)) return;
               try {
                 await setDoc(mref, {
                   id: msg.id,
@@ -670,23 +854,17 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
                   senderId,
                   content,
                   type,
-                  // 초기에는 이미지/앨범 URL 없이 텍스트 메타만 기록 → 업로드 완료 후 updateDoc으로 보강
-                  imageUrl: null,
-                  albumUrls: (type === 'album' ? [] : null),
+                  filename: normalizedFilename || null,
+                  mimeType: normalizedMime || null,
+                  thumbnailUrl: normalizedThumb || null,
+                  imageUrl: finalUrl,
+                  url: finalUrl,
+                  albumUrls: finalAlbum,
                   replyToId: replyToId || null,
                   createdAt: serverTimestamp(),
                 } as any, { merge: true });
               } catch {}
-
-              // 2차: 백그라운드에서 Storage 업로드 후 안전한 URL로만 문서를 패치
-              const safe = await safePayloadPromise;
-              try {
-                await setDoc(mref, {
-                  imageUrl: (safe?.imageUrl ?? null),
-                  albumUrls: (type === 'album' ? (safe?.albumUrls || []) : null),
-                } as any, { merge: true });
-              } catch {}
-              // 로컬 메시지도 업로드된 최종 URL로 동기화하여 "이미지 → 텍스트만"으로 바뀌는 현상 방지
+              // 로컬 메시지도 업로드된 최종 URL로 동기화
               try {
                 set((s) => {
                   const list = s.messages[roomId] || [];
@@ -694,20 +872,15 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
                     if (m.id !== msg.id) return m;
                     const patched: any = { ...m };
                     if (type === 'album') {
-                      // 앨범: 업로드 완료 전까지는 로컬 data URL을 유지.
-                      // 안전 URL이 하나라도 생기면 그때만 교체한다.
-                      if (Array.isArray(safe?.albumUrls) && (safe?.albumUrls || []).length > 0) {
-                        patched.albumUrls = safe?.albumUrls || [];
-                      }
+                      patched.albumUrls = Array.isArray(finalAlbum) ? finalAlbum : [];
                       patched.type = 'album';
-                    } else if ((msg as any).type === 'video') {
-                      // 비디오 메시지는 타입/URL을 유지
-                      if (safe?.imageUrl) patched.imageUrl = safe.imageUrl;
-                      patched.type = 'video';
-                    } else if (safe?.imageUrl) {
-                      patched.imageUrl = safe.imageUrl;
-                      patched.type = 'image';
+                    } else {
+                      if (finalUrl) { patched.imageUrl = finalUrl; patched.url = finalUrl; }
+                      patched.type = type;
                     }
+                    patched.filename = normalizedFilename || patched.filename;
+                    patched.mimeType = normalizedMime || patched.mimeType;
+                    patched.thumbnailUrl = normalizedThumb || patched.thumbnailUrl;
                     return patched as typeof m;
                   });
                   return { messages: { ...s.messages, [roomId]: next } } as any;
@@ -720,12 +893,12 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
             lastMessage: content || (type === 'image' ? '[이미지]' : ''),
             updatedAt: serverTimestamp(),
           } as any).catch(async()=>{ try { await setDoc(ref, { lastActiveAt: serverTimestamp(), lastMessage: content || (type === 'image' ? '[이미지]' : ''), updatedAt: serverTimestamp() } as any, { merge: true }); } catch {} });
-          // 다른 멤버의 unread +1 (best-effort)
+          // 다른 멤버의 unread +1 at write time (roomMembers + userRooms). 발신자는 제외.
           try {
-            // 비동기로 처리하여 렌더 블로킹/번들 오류(Top-level await) 방지
+            const displayContent = content || (type === 'image' ? '[이미지]' : type === 'file' ? '[파일]' : type === 'album' ? '[앨범]' : '');
+            const lastMsgAt = msg.createdAt;
             void (async () => {
               try {
-                // 우선 로컬 rooms에서 멤버 목록 사용, 없으면 서버 members 컬렉션 조회
                 let memberIds: string[] = [];
                 try { memberIds = (get().rooms.find(r=>r.id===roomId)?.members || []) as string[]; } catch {}
                 if (!Array.isArray(memberIds) || memberIds.length === 0) {
@@ -736,10 +909,23 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
                   } catch {}
                 }
                 const { increment } = await import('firebase/firestore');
-                await Promise.all((memberIds || []).filter(uid => uid && uid !== senderId).map(async (uid) => {
+                const others = (memberIds || []).filter((uid: string) => uid && uid !== senderId);
+                await Promise.all(others.map(async (uid: string) => {
                   try {
                     const mref = doc(firestore, 'rooms', roomId, 'members', uid);
                     await setDoc(mref, { unread: increment(1), lastServerAt: serverTimestamp() } as any, { merge: true });
+                  } catch {}
+                }));
+                // userRooms (joinedRooms): unread +1, lastMessage, lastMessageAt so room list is source of truth
+                await Promise.all(others.map(async (uid: string) => {
+                  try {
+                    const userRoomRef = doc(firestore, 'users', uid, 'joinedRooms', roomId);
+                    await setDoc(userRoomRef, {
+                      unread: increment(1),
+                      lastMessage: displayContent,
+                      lastMessageAt: lastMsgAt,
+                      lastActiveAt: lastMsgAt,
+                    } as any, { merge: true });
                   } catch {}
                 }));
               } catch {}
@@ -749,18 +935,26 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
         return msg;
       },
 
-      markRead: (roomId, userId) => {
+      markRead: (roomId, userId, lastReadMessageId) => {
         set((s) => {
         const list = (s.messages?.[roomId] || []).map((m:any) => (Array.isArray(m.readBy) && m.readBy.includes(userId)) ? m : { ...m, readBy: [...(Array.isArray(m.readBy)?m.readBy:[]), userId] });
-          // 로컬 방 unread 0
+          // 로컬 방 unread 0 (저장된 unread 상태 모델: 재계산 없음)
           const nextRooms = (s.rooms || []).map((r:any) => r.id === roomId ? { ...r, unreadCount: 0 } : r);
           return { messages: { ...(s.messages||{}), [roomId]: list }, rooms: nextRooms } as any;
         });
-        // Firestore: 내 unread 0
+        // Firestore: roomMembers (lastReadAt, lastReadMessageId, unreadCount=0) + userRooms (unreadCount=0)
         (async () => {
           try {
             const mref = doc(firestore, 'rooms', roomId, 'members', userId);
-            await setDoc(mref, { unread: 0, lastReadAt: serverTimestamp() } as any, { merge: true });
+            await setDoc(mref, {
+              unread: 0,
+              lastReadAt: serverTimestamp(),
+              ...(lastReadMessageId != null ? { lastReadMessageId } : {}),
+            } as any, { merge: true });
+          } catch {}
+          try {
+            const userRoomRef = doc(firestore, 'users', userId, 'joinedRooms', roomId);
+            await setDoc(userRoomRef, { unread: 0 } as any, { merge: true });
           } catch {}
           // Firestore: 최근 메시지들의 readBy에 내 uid 추가 (best-effort, 상위 100개)
           try {
@@ -1114,6 +1308,54 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
         } catch {}
       },
 
+      // 이전 메시지 로드 (lazy loading)
+      loadOlderMessages: async (roomId: string, beforeTimestamp: number, limit: number = 30) => {
+        try {
+          const { collection, query, orderBy, where, getDocs, limit: qlimit } = await import('firebase/firestore');
+          const q = query(
+            collection(firestore, 'rooms', roomId, 'messages'),
+            where('createdAt', '<', beforeTimestamp),
+            orderBy('createdAt', 'desc'),
+            qlimit(limit)
+          );
+          const snap = await getDocs(q);
+          const older: any[] = [];
+          snap.forEach((d: any) => {
+            const v: any = d.data() || {};
+            const createdMs = (() => {
+              try { return typeof v.createdAt?.toMillis === 'function' ? v.createdAt.toMillis() : Number(v.createdAt || 0); } catch { return 0; }
+            })();
+            older.push({
+              id: v.id || d.id,
+              roomId,
+              senderId: v.senderId,
+              content: v.content || '',
+              type: v.type || 'text',
+              imageUrl: v.imageUrl || undefined,
+              albumUrls: Array.isArray(v.albumUrls) ? v.albumUrls : undefined,
+              replyToId: v.replyToId || undefined,
+              createdAt: createdMs || Date.now(),
+              readBy: Array.isArray(v.readBy) ? v.readBy : [],
+              reactionsByUser: v.reactionsByUser || {},
+              reactionsCount: v.reactionsCount || {},
+            });
+          });
+          if (older.length > 0) {
+            set((s) => {
+              const prev = s.messages?.[roomId] || [];
+              const existingIds = new Set(prev.map((m: any) => m.id));
+              const newOlder = older.filter((m: any) => !existingIds.has(m.id));
+              const merged = [...newOlder, ...prev].sort((a: any, b: any) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
+              return { messages: { ...(s.messages || {}), [roomId]: merged } } as any;
+            });
+          }
+          return older;
+        } catch (err) {
+          console.error('[loadOlderMessages] error:', err);
+          return [];
+        }
+      },
+
       // 내 화면에서만 채팅방 초기화
       resetRoomForUser: (roomId: string, userId: string) => {
         // 서버에는 영향 주지 않음. 로컬 메시지/숨김 정보만 초기화
@@ -1133,6 +1375,13 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
             subs[roomId]();
             delete subs[roomId];
             set({ roomSubs: { ...subs } });
+          }
+        } catch {}
+        // 현재 방에서 나가는 경우, currentRoomId 초기화
+        try {
+          const cur = get().currentRoomId;
+          if (cur === roomId) {
+            set({ currentRoomId: undefined as any });
           }
         } catch {}
         // 현재 역할 확인 (스토어 → Firestore 순서)
@@ -1166,6 +1415,8 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
             rooms: s.rooms.filter(r => r.id !== roomId),
             messages: Object.fromEntries(Object.entries(s.messages).filter(([rid]) => rid !== roomId)) as any,
             roomSettings: Object.fromEntries(Object.entries(s.roomSettings || {}).filter(([rid]) => rid !== roomId)) as any,
+            hiddenByRoom: Object.fromEntries(Object.entries(s.hiddenByRoom || {}).filter(([rid]) => rid !== roomId)) as any,
+            typing: Object.fromEntries(Object.entries(s.typing || {}).filter(([rid]) => rid !== roomId)) as any,
           }));
         } else {
           // 일반 멤버: 서버 멤버 목록에서 내 uid만 제거 → 로컬 제거
@@ -1195,9 +1446,16 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
             rooms: s.rooms.filter(r => r.id !== roomId),
             messages: Object.fromEntries(Object.entries(s.messages).filter(([rid]) => rid !== roomId)) as any,
             roomSettings: Object.fromEntries(Object.entries(s.roomSettings || {}).filter(([rid]) => rid !== roomId)) as any,
+            hiddenByRoom: Object.fromEntries(Object.entries(s.hiddenByRoom || {}).filter(([rid]) => rid !== roomId)) as any,
+            typing: Object.fromEntries(Object.entries(s.typing || {}).filter(([rid]) => rid !== roomId)) as any,
           }));
         }
-        // 내 joinedRooms에서 제거 (둘 다 공통)
+        // 4) rooms/{roomId}/members/{userId} 서브컬렉션에서 내 멤버 문서 제거 (둘 다 공통)
+        try {
+          const memberRef = doc(firestore, 'rooms', roomId, 'members', userId);
+          await deleteDoc(memberRef);
+        } catch {}
+        // 5) 내 joinedRooms에서 제거 (둘 다 공통)
         try {
           const userRoomRef = doc(firestore, 'users', userId, 'joinedRooms', roomId);
           await deleteDoc(userRoomRef);
@@ -1208,6 +1466,12 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
       name: 'yoo-kakao-rooms-store',
       storage: createJSONStorage(() => AsyncStorage),
       version: 5,
+      merge: (persistedState: any, currentState: KakaoRoomsState) => {
+        const merged = { ...currentState, ...(persistedState as object || {}) } as KakaoRoomsState;
+        merged.rooms = [];
+        merged.messages = {};
+        return merged;
+      },
       migrate: (persistedState: any, version: number) => {
         try {
           const s = persistedState as Partial<KakaoRoomsState> | undefined;
@@ -1266,40 +1530,12 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
           return { rooms: [], messages: {}, roomSettings: {}, typing: {}, hiddenByRoom: {}, lastUid: uidNow, roomSubs: {} } as KakaoRoomsState;
         }
       },
-      // 웹 로컬 스토리지 용량 보호: 최소 데이터만 저장
+      // 방/메시지는 저장하지 않음 → 앱 시작 시 항상 빈 목록, joinedRooms 구독으로만 채움 (고스트 방 방지)
       partialize: (state) => {
         const currentRoomId = state.currentRoomId;
-        const MAX_KEEP = 30;
-        const messages: Record<string, KakaoMessage[]> = {};
-        if (currentRoomId && state.messages[currentRoomId]) {
-          messages[currentRoomId] = (state.messages[currentRoomId] || []).slice(-MAX_KEEP).map((m) => {
-            const content = m.content && m.content.length > 300 ? m.content.slice(0, 300) : m.content;
-            const imageUrl = m.imageUrl && /^https?:\/\//i.test(String(m.imageUrl)) ? m.imageUrl : undefined;
-            const albumUrls = Array.isArray((m as any).albumUrls) ? (m as any).albumUrls.filter((u: string) => /^https?:\/\//i.test(String(u))).slice(0, 12) : undefined;
-            const out: any = { ...m, content, imageUrl };
-            if (albumUrls && albumUrls.length) out.albumUrls = albumUrls; else delete out.albumUrls;
-            return out as KakaoMessage;
-          });
-        }
-        const rooms = (state.rooms || []).map((r) => ({
-          id: r.id,
-          title: r.title,
-          members: r.members,
-          createdBy: r.createdBy,
-          lastMessage: r.lastMessage,
-          lastMessageAt: r.lastMessageAt,
-          unreadCount: r.unreadCount,
-          avatarUrl: r.avatarUrl,
-          expiresAt: r.expiresAt,
-          type: r.type,
-          messageTtlMs: r.messageTtlMs,
-          tags: r.tags,
-          isPublic: r.isPublic,
-        })) as KakaoRoom[];
         const hiddenByRoom = currentRoomId && state.hiddenByRoom[currentRoomId]
           ? { [currentRoomId]: state.hiddenByRoom[currentRoomId] }
           : {};
-        // roomSettings는 용량을 고려해 TTL 관련 핵심만 보존 (보안/TTL/테마 최소치)
         const roomSettings = (() => {
           const src = (state as any).roomSettings || {};
           const out: Record<string, any> = {};
@@ -1337,8 +1573,8 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
           return out;
         })();
         return {
-          rooms,
-          messages,
+          rooms: [],
+          messages: {},
           currentRoomId,
           hiddenByRoom,
           roomSettings,

@@ -8,10 +8,11 @@ import { getMockBalancesForUser } from '@/lib/userBalances';
 import { getAdminRoleByEmail, isAdmin } from '@/constants/admins';
 import { useChatProfileStore } from '@/src/features/chat/store/chat-profile.store';
 import React, { useState } from 'react';
-import { StyleSheet, Switch, Text, TouchableOpacity, View, Image, TextInput, ScrollView } from 'react-native';
+import { Alert, StyleSheet, Switch, Text, TouchableOpacity, View, Image, TextInput, ScrollView } from 'react-native';
 import { router } from 'expo-router';
 import { useChatSettingsStore } from '@/src/features/chat/store/chat-settings.store';
 import { t } from '@/i18n';
+import { resetChatDataLocal } from '@/lib/resetChatData';
 
 export default function ChatSettingsScreen() {
   const store = useChatSettingsStore();
@@ -141,6 +142,35 @@ export default function ChatSettingsScreen() {
             {/* 제목 제거 */}
             <Row label={t('lowDataMode', language)} value={!!store.data?.lowDataMode} onChange={(v)=>save({ data: { ...(store.data||{}), lowDataMode: v } })} />
             <PickerRow label={t('mediaQuality', language)} value={(store.data?.mediaQuality||'auto') as string} options={[["auto",t('auto', language)],["high",t('high', language)],["low",t('low', language)]]} onChange={(v)=>save({ data: { ...(store.data||{}), mediaQuality: v } })} />
+            <View style={{ marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#2A2A2A' }}>
+              <Text style={{ color: '#9BA1A6', fontSize: 12, marginBottom: 8 }}>채팅 데이터 초기화</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  Alert.alert(
+                    '채팅 데이터 초기화',
+                    '로컬 채팅 목록·캐시를 모두 지웁니다. 서버(Firestore) 데이터는 지워지지 않습니다. 서버까지 초기화하려면 프로젝트에서 scripts/reset-chat-firestore.js 를 실행하세요. 계속할까요?',
+                    [
+                      { text: '취소', style: 'cancel' },
+                      {
+                        text: '로컬만 초기화',
+                        onPress: async () => {
+                          try {
+                            await resetChatDataLocal();
+                            Alert.alert('완료', '채팅 로컬 데이터가 초기화되었습니다. 방 목록이 비어 있습니다.');
+                            try { router.push('/chat/rooms'); } catch {}
+                          } catch (e) {
+                            Alert.alert('오류', '초기화 중 오류가 발생했습니다.');
+                          }
+                        },
+                      },
+                    ]
+                  );
+                }}
+                style={{ paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: '#7A1F1F', borderRadius: 8, backgroundColor: '#1A0F0F' }}
+              >
+                <Text style={{ color: '#FF6B6B', fontWeight: '700' }}>채팅 로컬 데이터 초기화</Text>
+              </TouchableOpacity>
+            </View>
           </>
         );
       case 'appearance':

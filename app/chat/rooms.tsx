@@ -7,12 +7,219 @@ import { router, Stack } from 'expo-router';
 import { firebaseAuth, firestore, ensureAuthedUid } from '@/lib/firebase';
 import { collection, getDocs, getDoc, limit, orderBy, query, where, doc, setDoc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import React from 'react';
-import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View, Alert, TextInput, Platform } from 'react-native';
+import { Image, FlatList, StyleSheet, Text, TouchableOpacity, View, Alert, TextInput, Platform } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { t } from '@/i18n';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const RoomItem = React.memo(({ 
+  room, 
+  manageMode, 
+  selectedRoomIds, 
+  toggleSelect, 
+  onPress, 
+  onLongPress, 
+  onLongPressTitle,
+  showDeleteForRoomId,
+  onPressDelete,
+  onDismissDelete,
+  dmProfiles, 
+  myUid, 
+  roomFavorites, 
+  toggleRoomFavorite, 
+  language 
+}: any) => {
+  const isSelected = selectedRoomIds.has(room.id);
+  const isFavorite = roomFavorites[String(room.id)];
+  const other = (Array.isArray(room.members) ? room.members.find((u: string) => u !== myUid) : '') || '';
+  const dmProfile = dmProfiles[other];
+  const isPrivate = room.isPublic === false;
+  const showDelete = showDeleteForRoomId === room.id;
+  
+  return (
+    <TouchableOpacity
+      style={roomItemStyles.roomItem}
+      onPress={onPress}
+      onLongPress={onLongPress}
+    >
+      {manageMode && (
+        <View style={roomItemStyles.selectWrap}>
+          <View style={[roomItemStyles.selectCircle, isSelected && roomItemStyles.selectCircleOn]}>
+            {isSelected && <Text style={roomItemStyles.selectMark}>✔</Text>}
+          </View>
+        </View>
+      )}
+      <View style={roomItemStyles.roomAvatar}>
+        {String(room.type) === 'dm' ? (
+          dmProfile?.avatar ? (
+            <Image source={{ uri: dmProfile.avatar }} style={roomItemStyles.roomAvatarImg} />
+          ) : (
+            <View style={roomItemStyles.roomAvatarFallback}>
+              <Text style={roomItemStyles.roomAvatarText}>{(dmProfile?.displayName || room.title || 'D').charAt(0)}</Text>
+            </View>
+          )
+        ) : room.avatarUrl ? (
+          <Image source={{ uri: room.avatarUrl }} style={roomItemStyles.roomAvatarImg} />
+        ) : (
+          <View style={roomItemStyles.roomAvatarFallback}>
+            <Text style={roomItemStyles.roomAvatarText}>{(room.title || 'G').charAt(0)}</Text>
+          </View>
+        )}
+      </View>
+      <View style={roomItemStyles.roomInfo}>
+        <View style={roomItemStyles.roomHeaderRow}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+            {isPrivate && <Text style={{ marginRight: 6 }}>🔒</Text>}
+            <TouchableOpacity
+              style={{ flex: 1, paddingVertical: 4 }}
+              onPress={onPress}
+              onLongPress={() => onLongPressTitle?.(room.id)}
+              delayLongPress={400}
+              activeOpacity={0.7}
+              hitSlop={{ top: 6, bottom: 6, left: 0, right: 16 }}
+            >
+              <Text style={roomItemStyles.roomName}>
+                {String(room.type) === 'dm' ? (dmProfile?.displayName || room.title) : room.title}
+                {Array.isArray(room.members) ? `(${room.members.length})` : ''}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity onPress={() => toggleRoomFavorite(room.id)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+              <Text style={[roomItemStyles.starIcon, isFavorite && roomItemStyles.starIconOn]}>{isFavorite ? '★' : '☆'}</Text>
+            </TouchableOpacity>
+            <View style={[roomItemStyles.typeBadge, 
+              room.type === 'ttl' && roomItemStyles.typeTtl, 
+              room.type === 'secret' && roomItemStyles.typeSecret, 
+              room.type === 'group' && roomItemStyles.typeGroup, 
+              room.type === 'dm' && roomItemStyles.typeDm
+            ]}>
+              <Text style={roomItemStyles.typeBadgeText}>
+                {room.type === 'ttl' ? t('ttl', language) : 
+                 room.type === 'secret' ? t('secret', language) : 
+                 room.type === 'group' ? t('group', language) : 
+                 room.type === 'dm' ? t('dm', language) : t('notice', language)}
+              </Text>
+            </View>
+          </View>
+        </View>
+        {showDelete && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6, gap: 8 }}>
+            <TouchableOpacity
+              onPress={() => onPressDelete?.(room.id)}
+              style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: '#7A1F1F', borderRadius: 8 }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={{ color: '#FF6B6B', fontWeight: '700', fontSize: 13 }}>삭제 (나가기)</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => onDismissDelete?.()}
+              style={{ paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: '#444', borderRadius: 8 }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={{ color: '#9BA1A6', fontSize: 13 }}>취소</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        <Text style={roomItemStyles.lastMessage} numberOfLines={1}>{room.lastMessage || t('noMessages', language)}</Text>
+      </View>
+      <View style={roomItemStyles.metaCol}>
+        {!!room.lastMessageAt && (
+          <Text style={roomItemStyles.timeText}>
+            {new Date(room.lastMessageAt).toLocaleTimeString(
+              language === 'ko' ? 'ko-KR' : language === 'ja' ? 'ja-JP' : language === 'zh' ? 'zh-CN' : 'en-US', 
+              { hour: '2-digit', minute: '2-digit' }
+            )}
+          </Text>
+        )}
+        {Number(room.unreadCount || 0) > 0 && (
+          <View style={roomItemStyles.unreadBadge}>
+            <Text style={roomItemStyles.unreadText}>{Number(room.unreadCount) > 99 ? '99+' : room.unreadCount}</Text>
+          </View>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+}, (prev, next) => {
+  return (
+    prev.room.id === next.room.id &&
+    prev.room.title === next.room.title &&
+    prev.room.lastMessage === next.room.lastMessage &&
+    prev.room.lastMessageAt === next.room.lastMessageAt &&
+    prev.room.unreadCount === next.room.unreadCount &&
+    prev.manageMode === next.manageMode &&
+    prev.showDeleteForRoomId === next.showDeleteForRoomId &&
+    prev.selectedRoomIds.has(prev.room.id) === next.selectedRoomIds.has(next.room.id) &&
+    prev.roomFavorites[prev.room.id] === next.roomFavorites[next.room.id]
+  );
+});
+
+// DM 폴더 카드: 메인 리스트 상단 1행, 탭 시 DM(초대방) 전용 화면으로 이동
+const DMFolderCard = React.memo(({ totalUnread, dmCount, onPress, language }: { totalUnread: number; dmCount: number; onPress: () => void; language: string }) => {
+  return (
+    <TouchableOpacity style={roomItemStyles.dmFolderCard} onPress={onPress} activeOpacity={0.8}>
+      <View style={roomItemStyles.dmFolderIconWrap}>
+        <Text style={roomItemStyles.dmFolderIcon}>💬</Text>
+      </View>
+      <View style={roomItemStyles.dmFolderInfo}>
+        <Text style={roomItemStyles.dmFolderTitle}>{language === 'ko' ? '초대방' : (t('dm', language) || 'Invites')}</Text>
+        <Text style={roomItemStyles.dmFolderSub}>
+          {dmCount <= 0
+            ? (t('noMessages', language) || '대화 없음')
+            : (language === 'ko'
+                ? (dmCount === 1 ? '1개의 초대방' : `${dmCount}개의 초대방`)
+                : (dmCount === 1 ? '1 chat' : `${dmCount} chats`))}
+        </Text>
+      </View>
+      <View style={roomItemStyles.dmFolderMeta}>
+        {totalUnread > 0 && (
+          <View style={roomItemStyles.unreadBadge}>
+            <Text style={roomItemStyles.unreadText}>{totalUnread > 99 ? '99+' : totalUnread}</Text>
+          </View>
+        )}
+        <Text style={roomItemStyles.dmFolderArrow}>›</Text>
+      </View>
+    </TouchableOpacity>
+  );
+});
+
+const roomItemStyles = StyleSheet.create({
+  dmFolderCard: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 4, borderBottomWidth: 1, borderBottomColor: '#2A2A2A', backgroundColor: 'rgba(76, 175, 80, 0.08)', borderRadius: 10, marginBottom: 8 },
+  dmFolderIconWrap: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#2A2A2A', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  dmFolderIcon: { fontSize: 22 },
+  dmFolderInfo: { flex: 1 },
+  dmFolderTitle: { color: '#F6F6F6', fontSize: 15, fontWeight: '700' },
+  dmFolderSub: { color: '#9BA1A6', fontSize: 12, marginTop: 2 },
+  dmFolderMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 48 },
+  dmFolderArrow: { color: '#777', fontSize: 18, fontWeight: '700' },
+  roomItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#2A2A2A' },
+  selectWrap: { marginRight: 8 },
+  selectCircle: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: '#555', alignItems: 'center', justifyContent: 'center' },
+  selectCircleOn: { borderColor: '#FFD700', backgroundColor: '#2A2A2A' },
+  selectMark: { color: '#FFD700', fontSize: 12, lineHeight: 12 },
+  roomAvatar: { width: 44, height: 44, borderRadius: 22, marginRight: 10, overflow: 'hidden', backgroundColor: '#2A2A2A', alignItems: 'center', justifyContent: 'center' },
+  roomAvatarImg: { width: 44, height: 44 },
+  roomAvatarFallback: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  roomAvatarText: { color: '#D4AF37', fontWeight: '700' },
+  roomInfo: { flex: 1 },
+  roomHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  roomName: { color: '#F6F6F6', fontSize: 15, fontWeight: '700' },
+  typeBadge: { marginLeft: 6, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, borderWidth: 1, borderColor: '#555' },
+  typeBadgeText: { color: '#B8B8B8', fontSize: 10 },
+  typeTtl: { borderColor: '#FFD700' },
+  typeSecret: { borderColor: '#9C27B0' },
+  typeGroup: { borderColor: '#03A9F4' },
+  typeDm: { borderColor: '#4CAF50' },
+  lastMessage: { color: '#9BA1A6', fontSize: 12, marginTop: 2 },
+  metaCol: { alignItems: 'flex-end', minWidth: 56 },
+  timeText: { color: '#777', fontSize: 10, marginBottom: 6 },
+  unreadBadge: { minWidth: 22, paddingHorizontal: 6, height: 22, borderRadius: 11, backgroundColor: '#FF5252', alignItems: 'center', justifyContent: 'center' },
+  unreadText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  starIcon: { color: '#FFFFFF', fontSize: 14 },
+  starIconOn: { color: '#FFD700' },
+});
 
 export default function ChatRoomsScreen() {
   const { currentProfile } = useChatProfileStore();
@@ -20,10 +227,6 @@ export default function ChatRoomsScreen() {
   const { rooms } = roomsStore;
   const { language } = usePreferences();
   const insets = useSafeAreaInsets();
-  // DM 표시용 프로필 캐시/내 UID
-  const [dmProfiles, setDmProfiles] = React.useState<Record<string, { displayName: string; avatar?: string }>>({});
-  const [friendNameOverrides, setFriendNameOverrides] = React.useState<Record<string,string>>({});
-  React.useEffect(() => { (async () => { try { const uid = firebaseAuth.currentUser?.uid || 'me'; const raw = await AsyncStorage.getItem(`u:${uid}:friends.nameOverrides`); setFriendNameOverrides(raw ? JSON.parse(raw) : {}); } catch {} })(); }, []);
   const myUid = React.useMemo(() => firebaseAuth.currentUser?.uid || 'me', []);
   const [remotePublicRooms, setRemotePublicRooms] = React.useState<any[]>([]);
   // 즐겨찾기(로컬)
@@ -41,73 +244,40 @@ export default function ChatRoomsScreen() {
     setRoomFavorites(next);
     try { await AsyncStorage.setItem(`u:${myUid}:chat.roomFavorites`, JSON.stringify(next)); } catch {}
   }, [roomFavorites]);
-  // TTL 만료 방 숨김 + 원격 공개방 병합
+  // DM만 분리 (폴더 카드용 + DM 전용 화면용)
+  const dmRooms = React.useMemo(() => {
+    const now = Date.now();
+    const list = (rooms || []).filter((r: any) => String(r?.type) === 'dm');
+    return [...list].sort((a: any, b: any) => Number(b?.lastMessageAt || 0) - Number(a?.lastMessageAt || 0));
+  }, [rooms]);
+  const dmSummary = React.useMemo(() => {
+    const totalUnread = dmRooms.reduce((sum: number, r: any) => sum + Math.max(0, Number(r?.unreadCount || 0)), 0);
+    return { totalUnread, count: dmRooms.length };
+  }, [dmRooms]);
+  // 메인 리스트: room summary만 사용 (lastMessage, lastMessageAt, unreadCount). 메시지 컬렉션 스캔 없음.
   const visibleRooms = React.useMemo(() => {
     const now = Date.now();
     const local = (rooms || []).filter((r: any) => {
+      if (String(r?.type) === 'dm') return false;
       if (String(r?.type) !== 'ttl') return true;
       const exp = Number(r?.expiresAt || 0);
       return !exp || exp > now;
     });
-    // 정렬:
-    // 1) 공지(notice) 최상단
-    // 2) 즐겨찾기 방
-    // 3) 최근 대화순 (lastMessageAt desc)
-    const notice = local.filter((r:any)=> String(r?.type)==='notice');
-    const others = local.filter((r:any)=> String(r?.type)!=='notice');
-    const favs = others.filter((r:any) => !!roomFavorites[String(r.id)]);
-    const nonFavs = others.filter((r:any) => !roomFavorites[String(r.id)]);
-    favs.sort((a:any,b:any)=> (Number(b?.lastMessageAt||0) - Number(a?.lastMessageAt||0)));
-    nonFavs.sort((a:any,b:any)=> (Number(b?.lastMessageAt||0) - Number(a?.lastMessageAt||0)));
+    const notice = local.filter((r: any) => String(r?.type) === 'notice');
+    const others = local.filter((r: any) => String(r?.type) !== 'notice');
+    const favs = others.filter((r: any) => !!roomFavorites[String(r.id)]);
+    const nonFavs = others.filter((r: any) => !roomFavorites[String(r.id)]);
+    favs.sort((a: any, b: any) => Number(b?.lastMessageAt || 0) - Number(a?.lastMessageAt || 0));
+    nonFavs.sort((a: any, b: any) => Number(b?.lastMessageAt || 0) - Number(a?.lastMessageAt || 0));
     return [...notice, ...favs, ...nonFavs];
   }, [rooms, roomFavorites]);
-  // DM 상대 프로필(대화명/아바타) 로드
-  React.useEffect(() => {
-    let live = true;
-    const load = async () => {
-      try {
-        const list = Array.isArray(rooms) ? rooms : [];
-        const dms = list.filter((r:any) => String(r?.type)==='dm');
-        const uid = firebaseAuth.currentUser?.uid || 'me';
-        const others = Array.from(new Set(dms.map((r:any)=> {
-          try { return (Array.isArray(r.members)? r.members.find((u:string)=>u!==uid):'') || ''; } catch { return ''; }
-        }).filter(Boolean)));
-        const out: Record<string, { displayName: string; avatar?: string }> = {};
-        for (const u of others) {
-          try {
-            const snap = await getDoc(doc(firestore, 'users', u));
-            if (snap.exists()) {
-              const d = snap.data() as any;
-              // 채팅 영역에서는 대화명(chatName) 우선, 이메일은 표시하지 않음
-              const base = d.chatName || d.displayName || d.username || u;
-              const alias = friendNameOverrides[u];
-              let avatar: string | undefined = d.avatarUrl || d.photoURL || d.avatar || undefined;
-              // Storage 경로일 경우 다운로드 URL로 보정
-              try {
-                if (avatar && !/^https?:\/\//i.test(String(avatar))) {
-                  const { ref: storageRef, getDownloadURL } = require('firebase/storage');
-                  const { firebaseStorage } = require('@/lib/firebase');
-                  const r = storageRef(firebaseStorage, String(avatar));
-                  avatar = await getDownloadURL(r);
-                }
-              } catch {}
-              out[u] = { displayName: (alias && alias.trim()) ? alias : base, avatar };
-            } else {
-              const alias = friendNameOverrides[u];
-              out[u] = { displayName: (alias && alias.trim()) ? alias : u };
-            }
-          } catch {
-            const alias = friendNameOverrides[u];
-            out[u] = { displayName: (alias && alias.trim()) ? alias : u };
-          }
-        }
-        if (live) setDmProfiles(out);
-      } catch {}
-    };
-    load();
-    const t = setInterval(load, 60000);
-    return () => { live = false; clearInterval(t); };
-  }, [rooms]);
+  // 리스트 데이터: 첫 줄은 DM 폴더, 이어서 그룹·TTL 방만 (성능: DM 갱신 시 폴더 행만 배지 변경)
+  const listData = React.useMemo(() => {
+    const folder: any = { _type: 'dm_folder', id: '__dm_folder__', totalUnread: dmSummary.totalUnread, dmCount: dmSummary.count };
+    return [folder, ...visibleRooms];
+  }, [visibleRooms, dmSummary.totalUnread, dmSummary.count]);
+  // 그룹/TTL 방에서 DM 아바타 등은 사용하지 않음; DM 프로필은 dm-list 화면에서만 로드
+  const dmProfiles = React.useMemo(() => ({}), []);
   // 로그인된 사용자의 joinedRooms를 구독하여 항상 내 방이 복원/유지되도록
   React.useEffect(() => {
     const uid = firebaseAuth.currentUser?.uid;
@@ -124,21 +294,25 @@ export default function ChatRoomsScreen() {
           title: v.title || '채팅방',
           type: v.type || (v.dmWith ? 'dm' : 'group'),
           members: Array.isArray(v.members) ? v.members : (v.dmWith ? [uid, v.dmWith] : [uid]),
-          unreadCount: Number(v.unread || 0),
+          unreadCount: Number(v.unreadCount ?? v.unread ?? 0),
           lastMessage: v.lastMessage || undefined,
-          lastMessageAt: Number(v.lastActiveAt || joinedAtMs || Date.now()),
+          lastMessageAt: Number(v.lastMessageAt ?? v.lastActiveAt ?? joinedAtMs ?? Date.now()),
           avatarUrl: v.avatarUrl || undefined,
           isPublic: typeof v.isPublic === 'boolean' ? v.isPublic : undefined,
           expiresAt: v.expiresAt || undefined,
           messageTtlMs: v.messageTtlMs || undefined,
+          isFavorite: !!v.isFavorite,
         } as any;
       });
       try {
         (useKakaoRoomsStore as any).setState?.((s:any) => {
-          const by = new Map<string, any>((s.rooms || []).map((r:any)=>[String(r.id), r]));
+          // userRooms(joinedRooms)를 단일 소스로 사용: joinedRooms에서 사라진 방은 rooms에서도 제거
+          const prevById = new Map<string, any>((s.rooms || []).map((r:any)=>[String(r.id), r]));
+          const by = new Map<string, any>();
           rows.forEach((r:any) => {
-            const prev = by.get(String(r.id));
-            by.set(String(r.id), prev ? { ...prev, ...r, members: (Array.isArray(prev.members) && prev.members.length ? prev.members : r.members) } : r);
+            const prev = prevById.get(String(r.id));
+            const unread = typeof r.unreadCount === 'number' ? r.unreadCount : (prev?.unreadCount ?? 0);
+            by.set(String(r.id), prev ? { ...prev, ...r, unreadCount: unread, members: (Array.isArray(prev.members) && prev.members.length ? prev.members : r.members) } : { ...r, unreadCount: unread });
           });
           return { rooms: Array.from(by.values()) };
         });
@@ -181,59 +355,7 @@ export default function ChatRoomsScreen() {
     };
   }, [rooms]);
 
-  // 내 멤버 문서(unread) 실시간 구독 → 방 리스트의 배지를 실제와 동기화
-  const memberWatchersRef = React.useRef<Record<string, any>>({});
-  React.useEffect(() => {
-    const uid = firebaseAuth.currentUser?.uid || 'me';
-    const ids = new Set((rooms || []).map((r:any)=> String(r.id)));
-    // 제거된 방 구독 해제
-    Object.keys(memberWatchersRef.current).forEach((id) => {
-      if (!ids.has(id)) { try { memberWatchersRef.current[id](); } catch {} delete memberWatchersRef.current[id]; }
-    });
-    // 신규 방 구독
-    (rooms || []).forEach((r:any) => {
-      const id = String(r.id);
-      if (memberWatchersRef.current[id]) return;
-      try {
-        const mref = doc(firestore, 'rooms', id, 'members', uid);
-        const unsub = onSnapshot(mref, (snap) => {
-          try {
-            const unread = snap.exists() ? Number((snap.data() as any)?.unread || 0) : 0;
-            (useKakaoRoomsStore as any).getState().setUnreadCount(id, unread);
-          } catch {}
-        }, () => {});
-        memberWatchersRef.current[id] = unsub;
-      } catch {}
-    });
-    return () => {
-      Object.values(memberWatchersRef.current).forEach((u:any)=>{ try { u(); } catch {} });
-      memberWatchersRef.current = {};
-    };
-  }, [rooms]);
-  // 내 uid 기준 서버 멤버 문서의 unread 값을 주기적으로 동기화하여
-  // "내가 실제로 읽지 않은 메시지"만 배지로 표시
-  React.useEffect(() => {
-    let alive = true;
-    const syncUnread = async () => {
-      try {
-        const uid = firebaseAuth.currentUser?.uid || 'me';
-        const list = Array.isArray(rooms) ? rooms : [];
-        for (const r of list) {
-          try {
-            const mref = doc(firestore, 'rooms', String(r.id), 'members', uid);
-            const snap = await getDoc(mref).catch(() => null as any);
-            const unread = snap && snap.exists() ? Number((snap.data() as any)?.unread || 0) : 0;
-            if (!alive) return;
-            try { (useKakaoRoomsStore as any).setState?.((s:any)=>({ rooms: (s.rooms||[]).map((rr:any)=> rr.id===r.id ? { ...rr, unreadCount: unread } : rr ) })); } catch {}
-          } catch {}
-        }
-      } catch {}
-    };
-    // 최초 동기화 + 주기적 새로고침
-    syncUnread();
-    const t = setInterval(syncUnread, 20000);
-    return () => { alive = false; clearInterval(t); };
-  }, [rooms]);
+  // unread는 userRooms(joinedRooms) 단일 소스에서만 사용. 멤버 문서 재구독/주기 스캔 제거로 안정화.
   const leaveRoomAct = useKakaoRoomsStore((s) => s.leaveRoom);
   // 멤버십 확인: 로컬 배열 → Firestore members → users/joinedRooms 순으로 확인
   const isMemberOfRoom = React.useCallback(async (room: any): Promise<boolean> => {
@@ -273,6 +395,18 @@ export default function ChatRoomsScreen() {
       }
     } finally { setPwdLoading(false); }
   };
+
+  // 방 제목 꾹 누르면 삭제(나가기) 버튼 표시
+  const [roomIdForDelete, setRoomIdForDelete] = React.useState<string | null>(null);
+  const handleLeaveSingleRoom = React.useCallback(async (id: string) => {
+    const uid = firebaseAuth.currentUser?.uid || '';
+    const finalUid = uid || (await ensureAuthedUid().catch(() => uid));
+    setRoomIdForDelete(null);
+    try {
+      useKakaoRoomsStore.setState((s: any) => ({ rooms: (s.rooms || []).filter((r: any) => r.id !== id) }));
+      await leaveRoomAct(id, finalUid);
+    } catch {}
+  }, [leaveRoomAct]);
 
   // 관리 모드: 방 다중 선택 후 나가기 수행
   const [manageMode, setManageMode] = React.useState(false);
@@ -488,110 +622,75 @@ export default function ChatRoomsScreen() {
         </View>
       </View>
 
-      {/* 방 리스트 */}
-      <ScrollView
+      {/* 방 리스트: DM 폴더 + 그룹/TTL 방만 (DM 개별 행 없음) */}
+      <FlatList
         style={styles.list}
+        data={listData}
+        keyExtractor={(item) => (item as any)._type === 'dm_folder' ? '__dm_folder__' : (item as any).id}
         keyboardShouldPersistTaps="handled"
         contentContainerStyle={{ padding: 12, paddingBottom: Math.max(insets.bottom, 12) + 56 }}
         showsVerticalScrollIndicator
-      >
-          {visibleRooms.length === 0 ? (
+        ListEmptyComponent={null}
+        ListFooterComponent={
+          visibleRooms.length === 0 ? (
             <View style={{ padding: 16, alignItems: 'center' }}>
               <ThemedText style={{ color: '#B8B8B8' }}>{t('noChatRooms', language)}</ThemedText>
             </View>
-          ) : (
-            visibleRooms.map((room) => (
-              <TouchableOpacity
-                key={room.id}
-                style={styles.roomItem}
-                onPress={() => {
-                  if (manageMode) { toggleSelect(room.id); return; }
-                  (async () => {
-                    try {
-                      // 최신 설정 로드 (비공개/비번 확인)
-                      try { await (useKakaoRoomsStore as any).getState().load?.(room.id); } catch {}
-                      const settings: any = (useKakaoRoomsStore as any).getState().roomSettings?.[room.id] || {};
-                      const isPrivate = (settings?.basic?.isPublic === false) || (room.isPublic === false);
-                      const pwd = String(settings?.security?.passwordLock || '').trim();
-                      if (isPrivate && pwd) {
-                        const member = await isMemberOfRoom(room);
-                        if (!member) {
-                          setPwdAsk({ roomId: room.id, title: room.title || '채팅방' });
-                          setPwdInput(''); setPwdError(''); setPwdVisible(false);
-                          return;
-                        }
+          ) : null
+        }
+        renderItem={({ item }) => {
+          if ((item as any)._type === 'dm_folder') {
+            return (
+              <DMFolderCard
+                totalUnread={(item as any).totalUnread ?? 0}
+                dmCount={(item as any).dmCount ?? 0}
+                onPress={() => router.push('/chat/dm-list')}
+                language={language}
+              />
+            );
+          }
+          const room = item as any;
+          return (
+            <RoomItem
+              room={room}
+              manageMode={manageMode}
+              selectedRoomIds={selectedRoomIds}
+              toggleSelect={toggleSelect}
+              onPress={() => {
+                if (manageMode) { toggleSelect(room.id); return; }
+                if (roomIdForDelete) { setRoomIdForDelete(null); return; }
+                (async () => {
+                  try {
+                    try { await (useKakaoRoomsStore as any).getState().load?.(room.id); } catch {}
+                    const settings: any = (useKakaoRoomsStore as any).getState().roomSettings?.[room.id] || {};
+                    const isPrivate = (settings?.basic?.isPublic === false) || (room.isPublic === false);
+                    const pwd = String(settings?.security?.passwordLock || '').trim();
+                    if (isPrivate && pwd) {
+                      const member = await isMemberOfRoom(room);
+                      if (!member) {
+                        setPwdAsk({ roomId: room.id, title: room.title || '채팅방' });
+                        setPwdInput(''); setPwdError(''); setPwdVisible(false);
+                        return;
                       }
-                      router.push({ pathname: '/chat/room/[id]', params: { id: room.id, type: room.type } });
-                    } catch {}
-                  })();
-                }}
-                onLongPress={() => { if (!manageMode) { setManageMode(true); toggleSelect(room.id); } }}
-              >
-                {manageMode && (
-                  <View style={styles.selectWrap}>
-                    <View style={[styles.selectCircle, selectedRoomIds.has(room.id) && styles.selectCircleOn]}>
-                      {selectedRoomIds.has(room.id) && <Text style={styles.selectMark}>✔</Text>}
-                    </View>
-                  </View>
-                )}
-                <View style={styles.roomAvatar}>
-                  {String(room.type)==='dm'
-                    ? (() => {
-                        try {
-                          const other = (Array.isArray(room.members)? room.members.find((u:string)=>u!==myUid):'') || '';
-                          const p = dmProfiles[other];
-                          if (p?.avatar) return <Image source={{ uri: p.avatar }} style={styles.roomAvatarImg} />;
-                          return (
-                    <View style={styles.roomAvatarFallback}>
-                              <Text style={styles.roomAvatarText}>{(p?.displayName || room.title || 'D').charAt(0)}</Text>
-                    </View>
-                          );
-                        } catch {
-                          return <View style={styles.roomAvatarFallback}><Text style={styles.roomAvatarText}>{(room.title||'D').charAt(0)}</Text></View>;
-                        }
-                      })()
-                    : (room.avatarUrl
-                        ? <Image source={{ uri: room.avatarUrl }} style={styles.roomAvatarImg} />
-                        : <View style={styles.roomAvatarFallback}><Text style={styles.roomAvatarText}>{(room.title||'G').charAt(0)}</Text></View>
-                      )
-                  }
-                </View>
-                <View style={styles.roomInfo}>
-                  <View style={styles.roomHeaderRow}>
-                    <View style={{ flexDirection:'row', alignItems:'center' }}>
-                      {(() => { try { const settings: any = (useKakaoRoomsStore as any).getState().roomSettings?.[room.id] || {}; const isPrivate = (settings?.basic?.isPublic === false) || (room.isPublic === false); if (!isPrivate) return null; return (<Text style={{ marginRight: 6 }}>🔒</Text>); } catch { return null; } })()}
-                      <ThemedText style={styles.roomName}>
-                        {String(room.type)==='dm'
-                          ? (dmProfiles[(Array.isArray(room.members)? room.members.find((u:string)=>u!==myUid):'') || '']?.displayName || room.title)
-                          : room.title}
-                        {(Array.isArray(room.members)?`(${room.members.length})`: '')}
-                      </ThemedText>
-                    </View>
-                    <View style={{ flexDirection:'row', alignItems:'center', gap: 8 }}>
-                      <TouchableOpacity onPress={() => toggleRoomFavorite(room.id)} hitSlop={{ top:6,bottom:6,left:6,right:6 }}>
-                        <Text style={[styles.starIcon, roomFavorites[String(room.id)] && styles.starIconOn]}>{roomFavorites[String(room.id)] ? '★' : '☆'}</Text>
-                      </TouchableOpacity>
-                      <View style={[styles.typeBadge, room.type==='ttl'&&styles.typeTtl, room.type==='secret'&&styles.typeSecret, room.type==='group'&&styles.typeGroup, room.type==='dm'&&styles.typeDm]}>
-                        <Text style={styles.typeBadgeText}>
-                          {room.type==='ttl'?t('ttl', language): room.type==='secret'?t('secret', language): room.type==='group'?t('group', language): room.type==='dm'?t('dm', language):t('notice', language)}
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                  <ThemedText style={styles.lastMessage} numberOfLines={1}>{room.lastMessage || t('noMessages', language)}</ThemedText>
-                </View>
-                <View style={styles.metaCol}>
-                  {!!room.lastMessageAt && (
-                    <Text style={styles.timeText}>{new Date(room.lastMessageAt).toLocaleTimeString(language === 'ko' ? 'ko-KR' : language === 'ja' ? 'ja-JP' : language === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' })}</Text>
-                  )}
-                  {Number(room.unreadCount||0) > 0 && (
-                    <View style={styles.unreadBadge}><Text style={styles.unreadText}>{Number(room.unreadCount) > 99 ? '99+' : room.unreadCount}</Text></View>
-                  )}
-                </View>
-              </TouchableOpacity>
-            ))
-          )}
-        </ScrollView>
+                    }
+                    router.push({ pathname: '/chat/room/[id]', params: { id: room.id, type: room.type } });
+                  } catch {}
+                })();
+              }}
+              onLongPress={() => { if (!manageMode) { setManageMode(true); toggleSelect(room.id); } }}
+              onLongPressTitle={(id: string) => { if (!manageMode) setRoomIdForDelete(id); }}
+              showDeleteForRoomId={roomIdForDelete}
+              onPressDelete={handleLeaveSingleRoom}
+              onDismissDelete={() => setRoomIdForDelete(null)}
+              dmProfiles={dmProfiles}
+              myUid={myUid}
+              roomFavorites={roomFavorites}
+              toggleRoomFavorite={toggleRoomFavorite}
+              language={language}
+            />
+          );
+        }}
+      />
 
       {/* 관리 하단 액션바 */}
       {manageMode && (

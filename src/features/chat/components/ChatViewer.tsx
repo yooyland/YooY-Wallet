@@ -1,7 +1,7 @@
 // @ts-nocheck
 /* eslint-disable */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, Platform, PanResponder } from 'react-native';
+import { View, Text, TouchableOpacity, Platform, PanResponder, ActivityIndicator } from 'react-native';
 import { Image as RNImage } from 'react-native';
 import { Image as EImage } from 'expo-image';
 import { Video, ResizeMode } from 'expo-av';
@@ -10,7 +10,7 @@ import { getStorage, ref as storageRef, getDownloadURL } from 'firebase/storage'
 import { firebaseApp } from '@/lib/firebase';
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 
-type Kind = 'image'|'video'|'youtube'|'web'|'map'|'pdf';
+type Kind = 'image'|'video'|'youtube'|'web'|'map'|'pdf'|'audio'|'file'|'text';
 
 export interface ChatViewerProps {
   visible: boolean;
@@ -168,8 +168,42 @@ export default function ChatViewer(props: ChatViewerProps) {
   };
   const treatAsFileByExt = (raw: string) => {
     const e = extFromUrl(raw);
-    return /^(docx?|xlsx?|pptx?|csv|txt|zip|rar|7z|tar|gz|json|xml|psd|ai|apk|ipa)$/i.test(e);
+    return /^(docx?|xlsx?|pptx?|csv|zip|rar|7z|tar|gz|psd|ai|apk|ipa)$/i.test(e);
   };
+  const isAudioExt = (raw: string) => {
+    const e = extFromUrl(raw);
+    return /^(mp3|wav|m4a|aac|ogg|flac|wma)$/i.test(e);
+  };
+  const isTextExt = (raw: string) => {
+    const e = extFromUrl(raw);
+    return /^(txt|json|xml|md|log|csv|ini|cfg|yaml|yml|toml|html|css|js|ts|jsx|tsx|py|java|c|cpp|h|hpp|go|rs|rb|php|sql|sh|bat|ps1)$/i.test(e);
+  };
+  const [textContent, setTextContent] = useState<string>('');
+  const [textLoading, setTextLoading] = useState<boolean>(false);
+  
+  // Load text file content
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        if (kind !== 'text' && !isTextExt(String(url||''))) {
+          setTextContent('');
+          setTextLoading(false);
+          return;
+        }
+        setTextLoading(true);
+        setTextContent('');
+        const resp = await fetch(String(url||''));
+        const text = await resp.text();
+        if (alive) setTextContent(text.slice(0, 50000)); // Limit to 50KB
+      } catch (err) {
+        if (alive) setTextContent('텍스트를 불러올 수 없습니다.');
+      } finally {
+        if (alive) setTextLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [url, kind]);
 
   // Resolve Firebase Storage URLs to fresh download URLs (handles rotated tokens and wrong bucket hostnames)
   useEffect(() => {
@@ -445,19 +479,27 @@ export default function ChatViewer(props: ChatViewerProps) {
       <View style={{ position:'absolute', left:0, right:0, top: (hideHeader ? 0 : 52) + topPad, bottom: 64 + bottomPad, alignItems:'center', justifyContent:'center' }}>
         {(() => {
           // derive effective kind based on URL/failed image
-          let effKind: Kind | 'pdf' = (kind as any);
+          let effKind: Kind = (kind as any);
           try {
             const raw = String(url||'');
             const lowerNoQ = raw.toLowerCase().split('?')[0];
-            if (effKind === 'web' && /\.pdf$/.test(lowerNoQ)) effKind = 'pdf' as any;
-            if (effKind === 'web' && treatAsFileByExt(raw)) effKind = 'file' as any;
-            if (effKind === 'image' && imgFailed) effKind = 'file' as any;
+            // Auto-detect kind from extension if not specified or 'web'
+            if (!effKind || effKind === 'web' || effKind === 'file') {
+              if (/\.(jpg|jpeg|png|webp|gif|bmp|svg)(\?|$)/i.test(lowerNoQ)) effKind = 'image';
+              else if (/\.(mp4|mov|webm|avi|mkv|m4v|3gp)(\?|$)/i.test(lowerNoQ)) effKind = 'video';
+              else if (/\.pdf(\?|$)/i.test(lowerNoQ)) effKind = 'pdf';
+              else if (isAudioExt(raw)) effKind = 'audio';
+              else if (isTextExt(raw)) effKind = 'text';
+              else if (treatAsFileByExt(raw)) effKind = 'file';
+              else if (effKind !== 'web') effKind = 'file';
+            }
+            if (effKind === 'image' && imgFailed) effKind = 'file';
             // If video points to YouTube, switch to youtube embed for proper playback
             if (effKind === 'video') {
               try {
                 const u = new URL(String(raw));
                 const h = u.host.toLowerCase().replace(/^www\./,'');
-                if (/(^|\.)youtube\.com$/.test(h) || /(^|\.)youtu\.be$/.test(h)) effKind = 'youtube' as any;
+                if (/(^|\.)youtube\.com$/.test(h) || /(^|\.)youtu\.be$/.test(h)) effKind = 'youtube';
               } catch {}
             }
           } catch {}
@@ -468,6 +510,38 @@ export default function ChatViewer(props: ChatViewerProps) {
               return (<video src={src} style={{ width: '96%', height: `calc(100vh - ${pad}px)`, maxHeight: `calc(100vh - ${pad}px)`, objectFit: 'contain' }} controls playsInline preload="metadata" autoPlay />);
             }
             return (<Video source={{ uri: src }} style={{ width:'96%', height:'100%' }} resizeMode={ResizeMode.CONTAIN} useNativeControls shouldPlay />);
+          }
+          if (effKind === 'audio') {
+            const name = fileNameFromUrl(src);
+            const ext = (extFromUrl(src) || 'audio').toUpperCase();
+            if (Platform.OS === 'web') {
+              return (
+                <View style={{ width:'96%', alignItems:'center', justifyContent:'center', padding:24 }}>
+                  <View style={{ width:160, height:160, borderRadius:80, backgroundColor:'#1A1A1A', alignItems:'center', justifyContent:'center', marginBottom:24, borderWidth:2, borderColor:'#9C27B0' }}>
+                    <Text style={{ fontSize:48 }}>🎵</Text>
+                  </View>
+                  <Text style={{ color:'#EEE', fontWeight:'800', fontSize:16, textAlign:'center', marginBottom:8 }} numberOfLines={2}>{name}</Text>
+                  <Text style={{ color:'#888', fontSize:12, marginBottom:24 }}>{ext} 오디오</Text>
+                  <audio src={src} controls autoPlay style={{ width:'100%', maxWidth:400 }} />
+                </View>
+              );
+            }
+            return (
+              <View style={{ width:'96%', alignItems:'center', justifyContent:'center', padding:24 }}>
+                <View style={{ width:160, height:160, borderRadius:80, backgroundColor:'#1A1A1A', alignItems:'center', justifyContent:'center', marginBottom:24, borderWidth:2, borderColor:'#9C27B0' }}>
+                  <Text style={{ fontSize:48 }}>🎵</Text>
+                </View>
+                <Text style={{ color:'#EEE', fontWeight:'800', fontSize:16, textAlign:'center', marginBottom:8 }} numberOfLines={2}>{name}</Text>
+                <Text style={{ color:'#888', fontSize:12, marginBottom:24 }}>{ext} 오디오</Text>
+                <Video source={{ uri: src }} style={{ width:1, height:1 }} useNativeControls shouldPlay />
+                <TouchableOpacity 
+                  onPress={() => { try { require('expo-linking').openURL(src); } catch {} }}
+                  style={{ marginTop:12, paddingHorizontal:24, paddingVertical:12, borderRadius:10, borderWidth:1, borderColor:'#9C27B0', backgroundColor:'rgba(156,39,176,0.1)' }}
+                >
+                  <Text style={{ color:'#9C27B0', fontWeight:'800' }}>외부 앱으로 재생</Text>
+                </TouchableOpacity>
+              </View>
+            );
           }
           if (effKind === 'youtube') {
             try {
@@ -604,13 +678,43 @@ export default function ChatViewer(props: ChatViewerProps) {
             }
           }
           if (effKind === 'image') {
+            // 이미지 미리보기: 로딩/실패/재시도 상태를 명시적으로 관리
+            const [imgLoading, setImgLoading] = React.useState(true);
+            const [imgError, setImgError] = React.useState<string | null>(null);
+            const [reloadTick, setReloadTick] = React.useState(0);
+            // 12초 내 로딩 안 되면 타임아웃 처리
+            React.useEffect(() => {
+              if (!imgLoading) return;
+              const t = setTimeout(() => {
+                try {
+                  if (imgLoading) {
+                    setImgError('이미지를 불러오지 못했습니다.');
+                    setImgLoading(false);
+                  }
+                } catch {}
+              }, 12000);
+              return () => { try { clearTimeout(t); } catch {} };
+            }, [imgLoading, reloadTick]);
+            const retry = () => {
+              try {
+                setImgError(null);
+                setImgLoading(true);
+                setReloadTick((v) => v + 1);
+              } catch {}
+            };
             if (Platform.OS === 'web') {
               const looksQr = (() => { try { const s=String(src).toLowerCase(); if (s.includes('chart.googleapis.com') && /[?&]cht=qr\b/.test(s)) return true; const u=new URL(s); return /\/(qr|codes)\//i.test(u.pathname); } catch { return false; } })();
               return (
                 <View style={{ width:'96%', height:'100%', alignItems:'center', justifyContent:'center' }}>
                   <div style={{ position:'relative', width:'100%', height:'100%', overflow:'hidden', backgroundColor:'#000' }}>
                     <div style={{ position:'absolute', left:0, top:0, right:0, bottom:0, transform:`translate(${imgPan.x}px, ${imgPan.y}px) scale(${imgZoom})`, transformOrigin:'center center', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                      <img src={src} alt={'image'} onError={()=>{ try { setImgFailed(true); } catch {} }} style={{ maxWidth:'100%', maxHeight:'100%', display:'block', objectFit: looksQr ? 'contain' : 'contain' }} />
+                      <img
+                        src={reloadTick ? `${src}${src.includes('?') ? '&' : '?'}r=${reloadTick}` : src}
+                        alt={'image'}
+                        onLoad={()=>{ try { setImgLoading(false); setImgFailed(false); } catch {} }}
+                        onError={()=>{ try { setImgFailed(true); setImgError('이미지를 불러올 수 없습니다.'); setImgLoading(false); } catch {} }}
+                        style={{ maxWidth:'100%', maxHeight:'100%', display:'block', objectFit: looksQr ? 'contain' : 'contain' }}
+                      />
                     </div>
                     {imgPanMode && (
                       <div
@@ -631,10 +735,78 @@ export default function ChatViewer(props: ChatViewerProps) {
                       <TouchableOpacity onPress={()=> { setImgZoom(1); setImgPan({ x:0, y:0 }); setImgPanMode(false); }} style={{ backgroundColor:'rgba(0,0,0,0.6)', borderRadius:8, paddingHorizontal:10, paddingVertical:6 }}><Text style={{ color:'#FFF', fontWeight:'800' }}>초기화</Text></TouchableOpacity>
                     </View>
                   </div>
+                  {/* 로딩/에러 오버레이 */}
+                  {imgLoading && !imgError && (
+                    <View style={{ position:'absolute', left:0, right:0, top:0, bottom:0, alignItems:'center', justifyContent:'center', backgroundColor:'rgba(0,0,0,0.35)' }}>
+                      <ActivityIndicator size="large" color="#FFD700" />
+                      <Text style={{ color:'#EEE', marginTop:8, fontSize:12 }}>이미지 불러오는 중...</Text>
+                    </View>
+                  )}
+                  {imgError && (
+                    <View style={{ position:'absolute', left:0, right:0, top:0, bottom:0, alignItems:'center', justifyContent:'center', backgroundColor:'rgba(0,0,0,0.55)' }}>
+                      <Text style={{ color:'#FF6B6B', fontSize:13, marginBottom:6 }}>{imgError}</Text>
+                      <TouchableOpacity onPress={retry} style={{ paddingHorizontal:16, paddingVertical:8, borderRadius:8, borderWidth:1, borderColor:'#FFD700', backgroundColor:'rgba(0,0,0,0.7)' }}>
+                        <Text style={{ color:'#FFD700', fontWeight:'800', fontSize:12 }}>다시 시도</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={onOpen} style={{ marginTop:8 }}>
+                        <Text style={{ color:'#CCC', fontSize:11, textDecorationLine:'underline' }}>외부 앱에서 열기</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               );
             }
-            return (<EImage source={{ uri: src }} style={{ width:'96%', height:'100%' }} contentFit={'contain'} onError={()=>{ try { setImgFailed(true); } catch {} }} />);
+            // Native: EImage + 로딩/에러/재시도
+            const [imgLoadingNative, setImgLoadingNative] = React.useState(true);
+            const [imgErrorNative, setImgErrorNative] = React.useState<string | null>(null);
+            const [reloadNative, setReloadNative] = React.useState(0);
+            React.useEffect(() => {
+              if (!imgLoadingNative) return;
+              const t = setTimeout(() => {
+                try {
+                  if (imgLoadingNative) {
+                    setImgErrorNative('이미지를 불러오지 못했습니다.');
+                    setImgLoadingNative(false);
+                  }
+                } catch {}
+              }, 12000);
+              return () => { try { clearTimeout(t); } catch {} };
+            }, [imgLoadingNative, reloadNative]);
+            const retryNative = () => {
+              try {
+                setImgErrorNative(null);
+                setImgLoadingNative(true);
+                setReloadNative((v)=>v+1);
+              } catch {}
+            };
+            return (
+              <View style={{ width:'96%', height:'100%', alignItems:'center', justifyContent:'center' }}>
+                <EImage
+                  source={{ uri: reloadNative ? `${src}${src.includes('?') ? '&' : '?'}r=${reloadNative}` : src }}
+                  style={{ width:'100%', height:'100%' }}
+                  contentFit={'contain'}
+                  onLoad={()=>{ try { setImgLoadingNative(false); setImgFailed(false); } catch {} }}
+                  onError={()=>{ try { setImgFailed(true); setImgErrorNative('이미지를 불러올 수 없습니다.'); setImgLoadingNative(false); } catch {} }}
+                />
+                {imgLoadingNative && !imgErrorNative && (
+                  <View style={{ position:'absolute', left:0, right:0, top:0, bottom:0, alignItems:'center', justifyContent:'center', backgroundColor:'rgba(0,0,0,0.35)' }}>
+                    <ActivityIndicator size="large" color="#FFD700" />
+                    <Text style={{ color:'#EEE', marginTop:8, fontSize:12 }}>이미지 불러오는 중...</Text>
+                  </View>
+                )}
+                {imgErrorNative && (
+                  <View style={{ position:'absolute', left:0, right:0, top:0, bottom:0, alignItems:'center', justifyContent:'center', backgroundColor:'rgba(0,0,0,0.55)' }}>
+                    <Text style={{ color:'#FF6B6B', fontSize:13, marginBottom:6 }}>{imgErrorNative}</Text>
+                    <TouchableOpacity onPress={retryNative} style={{ paddingHorizontal:16, paddingVertical:8, borderRadius:8, borderWidth:1, borderColor:'#FFD700', backgroundColor:'rgba(0,0,0,0.7)' }}>
+                      <Text style={{ color:'#FFD700', fontWeight:'800', fontSize:12 }}>다시 시도</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={onOpen} style={{ marginTop:8 }}>
+                      <Text style={{ color:'#CCC', fontSize:11, textDecorationLine:'underline' }}>외부 앱에서 열기</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            );
           }
           if (effKind === 'pdf') {
             // inline canvas 렌더는 웹 전용
@@ -697,22 +869,74 @@ export default function ChatViewer(props: ChatViewerProps) {
             // Native fallback (should not reach here due to idx=1 WebView)
             return (<WebView source={{ uri: direct }} style={{ width:'96%', height:'100%' }} />);
           }
+          // Text file viewer
+          if (effKind === 'text') {
+            const name = fileNameFromUrl(src);
+            const ext = (extFromUrl(src) || 'txt').toUpperCase();
+            return (
+              <View style={{ width:'96%', height:'100%', backgroundColor:'#111', borderRadius:8, overflow:'hidden' }}>
+                <View style={{ padding:12, borderBottomWidth:1, borderBottomColor:'#333', flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+                  <View style={{ flex:1, marginRight:12 }}>
+                    <Text style={{ color:'#EEE', fontWeight:'800', fontSize:14 }} numberOfLines={1}>{name}</Text>
+                    <Text style={{ color:'#888', fontSize:10, marginTop:2 }}>{ext} 파일</Text>
+                  </View>
+                  <TouchableOpacity 
+                    onPress={() => { try { require('expo-linking').openURL(src); } catch {} }}
+                    style={{ paddingHorizontal:12, paddingVertical:6, borderRadius:6, borderWidth:1, borderColor:'#FFD700' }}
+                  >
+                    <Text style={{ color:'#FFD700', fontWeight:'700', fontSize:12 }}>다운로드</Text>
+                  </TouchableOpacity>
+                </View>
+                {textLoading ? (
+                  <View style={{ flex:1, alignItems:'center', justifyContent:'center' }}>
+                    <Text style={{ color:'#888' }}>로딩 중...</Text>
+                  </View>
+                ) : Platform.OS === 'web' ? (
+                  <pre style={{ flex:1, margin:0, padding:12, color:'#DDD', fontSize:12, fontFamily:'monospace', overflow:'auto', whiteSpace:'pre-wrap', wordBreak:'break-all' } as any}>{textContent}</pre>
+                ) : (
+                  <View style={{ flex:1, padding:12 }}>
+                    <Text style={{ color:'#DDD', fontSize:12, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }} selectable>{textContent}</Text>
+                  </View>
+                )}
+              </View>
+            );
+          }
           // Fallback: show extension icon + file name (unrenderable types)
-          if (effKind === ('file' as any)) {
+          if (effKind === 'file') {
             const name = fileNameFromUrl(src);
             const ext = (extFromUrl(src) || 'file').toUpperCase();
             const icon = fileIconSvg(ext);
+            // Determine file type for icon
+            const isDoc = /^(DOCX?|DOC)$/.test(ext);
+            const isXls = /^(XLSX?|XLS|CSV)$/.test(ext);
+            const isPpt = /^(PPTX?|PPT)$/.test(ext);
+            const isZip = /^(ZIP|RAR|7Z|TAR|GZ)$/.test(ext);
+            const iconEmoji = isDoc ? '📄' : isXls ? '📊' : isPpt ? '📽️' : isZip ? '📦' : '📁';
+            const iconColor = isDoc ? '#1E88E5' : isXls ? '#2E7D32' : isPpt ? '#E67E22' : isZip ? '#9C27B0' : '#FFD700';
             return (
               <View style={{ width:'96%', height:'100%', alignItems:'center', justifyContent:'center' }}>
-                <EImage source={{ uri: icon }} style={{ width: 160, height: 160, borderRadius: 12, backgroundColor:'#111' }} contentFit={'cover'} />
-                <Text style={{ color:'#EEE', marginTop: 16, fontWeight:'800', fontSize: 16 }} numberOfLines={2}>{name}</Text>
-                <Text style={{ color:'#888', marginTop: 8, fontSize: 12 }}>{ext} 파일</Text>
-                <TouchableOpacity 
-                  onPress={() => { try { require('expo-linking').openURL(src); } catch {} }}
-                  style={{ marginTop: 20, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#FFD700', backgroundColor: 'rgba(255,215,0,0.1)' }}
-                >
-                  <Text style={{ color: '#FFD700', fontWeight: '800' }}>외부 앱으로 열기</Text>
-                </TouchableOpacity>
+                <View style={{ width:160, height:160, borderRadius:16, backgroundColor:'#1A1A1A', alignItems:'center', justifyContent:'center', borderWidth:2, borderColor:iconColor }}>
+                  <Text style={{ fontSize:64 }}>{iconEmoji}</Text>
+                  <Text style={{ color:iconColor, fontSize:16, fontWeight:'900', marginTop:8 }}>{ext}</Text>
+                </View>
+                <Text style={{ color:'#EEE', marginTop:20, fontWeight:'800', fontSize:16, textAlign:'center', paddingHorizontal:20 }} numberOfLines={2}>{name}</Text>
+                <Text style={{ color:'#888', marginTop:8, fontSize:12 }}>{ext} 파일</Text>
+                <View style={{ flexDirection:'row', gap:12, marginTop:24 }}>
+                  <TouchableOpacity 
+                    onPress={() => { try { require('expo-linking').openURL(src); } catch {} }}
+                    style={{ paddingHorizontal:24, paddingVertical:12, borderRadius:10, borderWidth:1, borderColor:'#FFD700', backgroundColor:'rgba(255,215,0,0.1)' }}
+                  >
+                    <Text style={{ color:'#FFD700', fontWeight:'800' }}>외부 앱으로 열기</Text>
+                  </TouchableOpacity>
+                  {onSave && (
+                    <TouchableOpacity 
+                      onPress={onSave}
+                      style={{ paddingHorizontal:24, paddingVertical:12, borderRadius:10, borderWidth:1, borderColor:'#4CAF50', backgroundColor:'rgba(76,175,80,0.1)' }}
+                    >
+                      <Text style={{ color:'#4CAF50', fontWeight:'800' }}>저장</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
             );
           }

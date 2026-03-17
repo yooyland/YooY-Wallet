@@ -9322,7 +9322,10 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     alignItems: 'center',
-    justifyContent: 'center'
+    justifyContent: 'center',
+    zIndex: 10,
+    elevation: 10,
+    pointerEvents: 'none',
   },
   qrCenterLogoAbs: {
     position: 'absolute',
@@ -9333,7 +9336,9 @@ const styles = StyleSheet.create({
     borderColor: '#FFD700',
     borderRadius: 10,
     alignItems: 'center',
-    justifyContent: 'center'
+    justifyContent: 'center',
+    zIndex: 11,
+    elevation: 11,
   },
   qrCenterLogoAbsImg: {
     width: 38,

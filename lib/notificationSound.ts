@@ -1,18 +1,35 @@
 import { Audio } from 'expo-av';
-import { Platform, Vibration } from 'react-native';
+import { Vibration } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 let soundObject: Audio.Sound | null = null;
 
 export type NotificationMode = 'sound' | 'vibrate' | 'mute' | 'off';
 
-// 볼륨 설정 저장/로드 키
-const VOLUME_STORAGE_KEY = 'notification_volume';
+export type NotificationSoundType =
+  | 'gold'
+  | 'simple'
+  | 'urgent'
+  | 'dm_message'
+  | 'coin_reward'
+  | 'mention'
+  | 'system_notice'
+  | 'warning'
+  | 'system_default'
+  | 'silent';
 
-// 기본 볼륨 (0.0 ~ 1.0)
+/** Event-based override: some events use a fixed sound regardless of room setting */
+export type NotificationEventType =
+  | 'normal'
+  | 'dm_message'
+  | 'mention'
+  | 'coin_reward'
+  | 'system_notice'
+  | 'warning';
+
+const VOLUME_STORAGE_KEY = 'notification_volume';
 let currentVolume = 0.7;
 
-// 볼륨 로드
 export async function loadNotificationVolume(): Promise<number> {
   try {
     const saved = await AsyncStorage.getItem(VOLUME_STORAGE_KEY);
@@ -23,7 +40,6 @@ export async function loadNotificationVolume(): Promise<number> {
   return currentVolume;
 }
 
-// 볼륨 저장
 export async function setNotificationVolume(volume: number): Promise<void> {
   try {
     currentVolume = Math.max(0, Math.min(1, volume));
@@ -31,91 +47,113 @@ export async function setNotificationVolume(volume: number): Promise<void> {
   } catch {}
 }
 
-// 현재 볼륨 반환
 export function getNotificationVolume(): number {
   return currentVolume;
 }
 
-// 안정적인 알림 소리 URL 목록 (폴백용)
-const SOUND_URLS = [
-  // GitHub에서 제공하는 무료 알림 소리
-  'https://github.com/niconicolibs/discord-sfx/raw/main/audios/message1.mp3',
-  // 백업 URL
-  'https://cdn.freesound.org/previews/536/536420_4921277-lq.mp3',
-];
+// All YooY Land sounds from bundled assets (assets/sounds/*.wav). No remote URLs.
+// system_default uses a bundled "device-style" tone; replace with native API later if needed.
+const SOUND_ASSETS: Record<Exclude<NotificationSoundType, 'silent'>, number> = {
+  gold: require('../assets/sounds/gold_notification.wav'),
+  simple: require('../assets/sounds/simple_notification.wav'),
+  urgent: require('../assets/sounds/urgent_notification.wav'),
+  dm_message: require('../assets/sounds/dm_message.wav'),
+  coin_reward: require('../assets/sounds/coin_reward.wav'),
+  mention: require('../assets/sounds/mention_alert.wav'),
+  system_notice: require('../assets/sounds/system_notice.wav'),
+  warning: require('../assets/sounds/warning_alert.wav'),
+  system_default: require('../assets/sounds/system_default.wav'),
+};
 
-export async function playNotificationSound(mode: NotificationMode = 'sound') {
+function getBundledAsset(soundType: NotificationSoundType | undefined): number {
+  if (soundType === 'silent') return SOUND_ASSETS.gold;
+  if (soundType && soundType in SOUND_ASSETS) return SOUND_ASSETS[soundType as keyof typeof SOUND_ASSETS];
+  return SOUND_ASSETS.gold;
+}
+
+/** Resolve which sound to play: event overrides room setting for specific events */
+export function resolveSoundTypeForEvent(
+  roomSoundType: NotificationSoundType | undefined,
+  eventType: NotificationEventType | undefined
+): NotificationSoundType | undefined {
+  if (eventType && eventType !== 'normal') {
+    return eventType as NotificationSoundType;
+  }
+  return roomSoundType === undefined || roomSoundType === 'silent' ? 'gold' : roomSoundType;
+}
+
+const VOLUME_MAP: Record<string, number> = { low: 0.3, medium: 0.5, high: 0.7, max: 1 };
+
+export function getVolumeFromLevel(level: 'low' | 'medium' | 'high' | 'max' | undefined): number {
+  if (level && VOLUME_MAP[level] !== undefined) return VOLUME_MAP[level];
+  return currentVolume;
+}
+
+async function playFromAsset(asset: number, volume: number): Promise<boolean> {
   try {
-    if (mode === 'mute' || mode === 'off') {
-      return;
-    }
+    const { sound } = await Audio.Sound.createAsync(asset, { shouldPlay: true, volume });
+    soundObject = sound;
+    sound.setOnPlaybackStatusUpdate((status: any) => {
+      if (status.isLoaded && status.didJustFinish) {
+        sound.unloadAsync().catch(() => {});
+        soundObject = null;
+      }
+    });
+    return true;
+  } catch (e) {
+    if (__DEV__) console.warn('[NotificationSound] Asset failed:', e);
+    return false;
+  }
+}
 
+export async function playNotificationSound(
+  mode: NotificationMode = 'sound',
+  volumeOverride?: number,
+  soundType?: NotificationSoundType,
+  eventType?: NotificationEventType
+) {
+  try {
+    if (mode === 'mute' || mode === 'off') return;
     if (mode === 'vibrate') {
       Vibration.vibrate(200);
       return;
     }
+    if (mode !== 'sound') return;
 
-    if (mode === 'sound') {
-      // 진동도 함께 실행
-      Vibration.vibrate(100);
+    const resolved = resolveSoundTypeForEvent(soundType, eventType);
+    if (resolved === 'silent') return;
 
-      // 이전 소리 정리
-      if (soundObject) {
-        try {
-          await soundObject.unloadAsync();
-        } catch {}
-        soundObject = null;
-      }
+    Vibration.vibrate(100);
 
-      // 오디오 모드 설정
+    if (soundObject) {
       try {
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          playsInSilentModeIOS: true,
-          staysActiveInBackground: false,
-          shouldDuckAndroid: true,
-        });
-      } catch (e) {
-        console.warn('[NotificationSound] Audio mode error:', e);
-      }
+        await soundObject.unloadAsync();
+      } catch {}
+      soundObject = null;
+    }
 
-      // 볼륨 로드
-      await loadNotificationVolume();
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        playsInSilentModeIOS: true,
+        staysActiveInBackground: false,
+        shouldDuckAndroid: true,
+      });
+    } catch (e) {
+      if (__DEV__) console.warn('[NotificationSound] Audio mode error:', e);
+    }
 
-      // 소리 재생 시도 (폴백 URL 포함)
-      let loaded = false;
-      for (const url of SOUND_URLS) {
-        try {
-          const { sound } = await Audio.Sound.createAsync(
-            { uri: url },
-            { shouldPlay: true, volume: currentVolume }
-          );
-          soundObject = sound;
-          loaded = true;
-          console.log('[NotificationSound] Playing sound at volume:', currentVolume);
+    const volume = volumeOverride !== undefined
+      ? Math.max(0, Math.min(1, volumeOverride))
+      : (await loadNotificationVolume());
 
-          // 재생 완료 후 정리
-          sound.setOnPlaybackStatusUpdate((status: any) => {
-            if (status.isLoaded && status.didJustFinish) {
-              sound.unloadAsync().catch(() => {});
-              soundObject = null;
-            }
-          });
-          break;
-        } catch (e) {
-          console.warn('[NotificationSound] Failed to load:', url, e);
-        }
-      }
-
-      // 모든 URL 실패 시 추가 진동
-      if (!loaded) {
-        console.warn('[NotificationSound] All sound URLs failed, using vibration');
-        Vibration.vibrate([0, 100, 50, 100]);
-      }
+    const asset = getBundledAsset(resolved);
+    const loaded = await playFromAsset(asset, volume);
+    if (!loaded) {
+      Vibration.vibrate([0, 100, 50, 100]);
     }
   } catch (e) {
-    console.warn('[NotificationSound] Error:', e);
-    // 실패 시 진동으로 폴백
+    if (__DEV__) console.warn('[NotificationSound] Error:', e);
     try { Vibration.vibrate(200); } catch {}
   }
 }

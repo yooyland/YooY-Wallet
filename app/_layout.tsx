@@ -19,6 +19,7 @@ import { setAppStartTime, logAppStartupTime } from '@/lib/perfTimer';
 setAppStartTime();
 
 import { LoadingOverlay } from '@/components/loading-overlay';
+import AppUpdateGate from '@/src/components/AppUpdateGate';
 import { REMOTE_EXPLORERS_URL } from '@/config/app';
 import { loadExplorersFromRemote } from '@/config/explorers';
 import { PreferencesProvider, usePreferences } from '@/contexts/PreferencesContext';
@@ -51,6 +52,15 @@ export default function RootLayout() {
     (async () => {
       try {
         await ScreenCapture.allowScreenCaptureAsync();
+      } catch {}
+    })();
+  }, []);
+
+  // 앱 시작 시 채팅 클라이언트 캐시 정리 (고스트 방 방지, DB와 동기화)
+  useEffect(() => {
+    (async () => {
+      try {
+        await AsyncStorage.multiRemove(['chatCache', 'roomCache', 'messageCache']);
       } catch {}
     })();
   }, []);
@@ -172,19 +182,8 @@ export default function RootLayout() {
     return () => { try { sub.remove(); } catch {} };
   }, []);
 
-  // 전역 키보드 높이 감지 → 안드로이드 포함 모든 화면에서 가림 방지
-  const [keyboardHeight, setKeyboardHeight] = React.useState(0);
-  React.useEffect(() => {
-    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const onShow = (e: any) => {
-      try { setKeyboardHeight(Platform.OS === 'ios' ? (e?.endCoordinates?.height || 0) : (e?.endCoordinates?.height || 0)); } catch { setKeyboardHeight(0); }
-    };
-    const onHide = () => setKeyboardHeight(0);
-    const s1 = Keyboard.addListener(showEvt as any, onShow);
-    const s2 = Keyboard.addListener(hideEvt as any, onHide);
-    return () => { try { s1.remove(); } catch {} try { s2.remove(); } catch {} };
-  }, []);
+  // 전역 키보드 높이 감지 제거: Android는 windowSoftInputMode=adjustResize에 맡기고,
+  // iOS는 KeyboardAvoidingView(padding)만 사용한다. 잔여 bottom padding으로 인한 검은 영역 방지.
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
@@ -197,17 +196,17 @@ export default function RootLayout() {
                   <WalletConnectProvider>
                   <AppErrorBoundary>
                   <NotificationSync />
+                  <AppUpdateGate />
                   <LoadingOverlay visible={!isReady} message="Preparing a golden experience..." />
-                  {/* 전역 키보드 회피: 안드로이드 height, iOS padding */}
+                  {/* 전역 키보드 회피: Android는 adjustResize, iOS만 padding 사용 */}
                   <KeyboardAvoidingView
                     style={{ flex: 1 }}
-                    // Android는 windowSoftInputMode=resize 사용, iOS만 padding 적용
                     behavior={Platform.OS === 'ios' ? 'padding' : undefined}
                     // iOS에서만 상단바 높이만큼 오프셋
                     keyboardVerticalOffset={Platform.OS === 'ios' ? ( (needSafePadding ? insets.top : 0) + 56 ) : 0}
                   >
                     {/* 대시보드 이외 모든 페이지에 안전영역 패딩 적용 */}
-                    <View style={{ flex: 1, paddingTop: needSafePadding ? insets.top : 0, paddingBottom: (needSafePadding ? insets.bottom : 0) + (Platform.OS === 'ios' ? 0 : keyboardHeight), backgroundColor: '#0C0C0C' }}>
+                    <View style={{ flex: 1, paddingTop: needSafePadding ? insets.top : 0, paddingBottom: (needSafePadding ? insets.bottom : 0), backgroundColor: '#0C0C0C' }}>
                   <Stack screenOptions={{ headerShown: false }}>
                     <Stack.Screen name="(auth)" />
                     <Stack.Screen name="(onboarding)" />

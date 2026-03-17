@@ -3,6 +3,15 @@
 
 export type MediaKind = 'image'|'video'|'file'|'link'|'qr';
 
+/** 확장자로 "핸드폰 기본 앱으로 열기" 대상 여부 (미리보기 팝업 대신 외부 앱 사용) */
+const OPEN_EXTERNALLY_EXT = /\.(pdf|docx?|doc|xlsx?|xls|pptx?|ppt|zip|rar|7z|apk|ipa)(?:\?|#|$)/i;
+
+export function shouldOpenFileExternally(urlOrPath: string): boolean {
+  if (!urlOrPath) return false;
+  const lower = String(urlOrPath).toLowerCase().split('?')[0].split('#')[0];
+  return OPEN_EXTERNALLY_EXT.test(lower);
+}
+
 export function detectType(u: string): MediaKind {
   if (!u) return 'file';
   const src = u.toLowerCase();
@@ -114,13 +123,25 @@ export async function reverseGeocode(lat: number, lng: number): Promise<string> 
         // 우선: 한국 주소 최적화(도로명 우선)
         if (country && /대한민국|Korea/i.test(country)) {
           // 일반적으로 state=서울특별시/경기도, sublocal1=구, sublocal2=동
+          let stateKo = state || '';
+          // '서울특별시' → '서울' 로 단순화
+          if (stateKo === '서울특별시') stateKo = '서울';
           const gu = sublocal1 || admin2; // 강남구 등
           const dong = sublocal2 || neighbourhood || admin3;
           const road = route || '';
-          const roadLine = `${road}${streetNum ? ' ' + streetNum : ''}`.trim();
-          // 형식: 시/도 구 동 도로명 번지 (건물명)
-          const region = [state, gu, dong].filter(Boolean).join(' ');
-          const head = [region, roadLine].filter(Boolean).join(' ').trim();
+          const roadLine = `${road}${streetNum ? ' ' + streetNum : ''}`.trim(); // 테헤란로 323
+          // 도로명이 있으면: "서울 강남구 테헤란로 323 (건물명)" 형식 사용
+          if (roadLine) {
+            const headParts = [stateKo, gu, roadLine].filter(Boolean);
+            const head = headParts.join(' ').trim();
+            const withBuilding = [head, building].filter(Boolean).join(' ').trim();
+            if (withBuilding) return withBuilding;
+            if (head) return head;
+          }
+          // 도로명이 없으면: 시/도 구 동 + 번지/건물
+          const region = [stateKo, gu, dong].filter(Boolean).join(' ');
+          const numLine = streetNum ? `${streetNum}` : '';
+          const head = [region, numLine].filter(Boolean).join(' ').trim();
           const withBuilding = [head, building].filter(Boolean).join(' ').trim();
           if (withBuilding) return withBuilding;
         }

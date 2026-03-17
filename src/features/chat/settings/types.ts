@@ -29,11 +29,25 @@ export interface PermissionSettings {
   blacklistUserIds: string[];
 }
 
+export type NotificationSoundType =
+  | 'gold'      // YooY Land default
+  | 'simple'
+  | 'urgent'
+  | 'dm_message'
+  | 'coin_reward'
+  | 'mention'
+  | 'system_notice'
+  | 'warning'
+  | 'system_default'  // device native
+  | 'silent';
+
 export interface NotificationSettings {
   enabled: boolean;
   keywordAlerts: string[];
   mentionAlertEnabled: boolean;
-  mode?: 'sound' | 'vibrate' | 'mute'; // 알림 방식
+  mode?: 'sound' | 'vibrate' | 'mute';
+  notificationVolume?: 'low' | 'medium' | 'high' | 'max';
+  notificationSound?: NotificationSoundType;
 }
 
 export interface ThemeSettings {
@@ -104,6 +118,8 @@ export function createDefaultRoomSettings(params: { roomId: string; roomType: Ro
       keywordAlerts: [],
       mentionAlertEnabled: true,
       mode: 'sound',
+      notificationVolume: 'medium',
+      notificationSound: 'gold',
     },
     theme: {
       theme: 'default',

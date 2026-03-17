@@ -29,11 +29,12 @@ Write-Host "Using versionCode: $vc  |  versionName: $VerName"
 
 $env:ANDROID_VERSION_CODE = $vc
 $env:ANDROID_VERSION_NAME = $VerName
+# Release build must always use NODE_ENV=production (bundle minify, no console, speed).
 $env:NODE_ENV = "production"
 
 Push-Location $android
 ./gradlew.bat --no-daemon --stop | Out-Null
-./gradlew.bat clean :app:bundleRelease --no-daemon --no-build-cache --warning-mode all
+./gradlew.bat clean :app:bundleRelease --no-daemon --no-build-cache --no-parallel --warning-mode all
 Pop-Location
 
 $src = Join-Path $android "app\build\outputs\bundle\release\app-release.aab"

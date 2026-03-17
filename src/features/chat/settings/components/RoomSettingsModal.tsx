@@ -52,7 +52,7 @@ export default function RoomSettingsModal(props: RoomSettingsModalProps) {
         <View style={{ marginTop:60, width:320, maxWidth:'94%', backgroundColor:'#0F0F0F', borderWidth:1, borderColor:'#2A2A2A', borderRadius:12, overflow:'hidden' }}>
           <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', paddingHorizontal:12, paddingVertical:10, borderBottomWidth:1, borderBottomColor:'#1E1E1E' }}>
             <Text style={{ color:'#F6F6F6', fontWeight:'800' }}>방 설정</Text>
-            <TouchableOpacity onPress={onClose}><Text style={{ color:'#CFCFCF' }}>닫기</Text></TouchableOpacity>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top:12, bottom:12, left:12, right:12 }}><Text style={{ color:'#CFCFCF' }}>닫기</Text></TouchableOpacity>
           </View>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal:10, paddingVertical:8 }}>
@@ -79,11 +79,11 @@ export default function RoomSettingsModal(props: RoomSettingsModalProps) {
           </KeyboardAvoidingView>
           {/* 하단 고정: 저장/나가기 버튼 (모든 탭 공통) */}
           <View style={{ flexDirection:'row', gap:10, paddingHorizontal:12, paddingVertical:10, borderTopWidth:1, borderTopColor:'#1E1E1E', backgroundColor:'#0F0F0F' }}>
-            <TouchableOpacity onPress={props.onSave} style={{ paddingHorizontal:12, paddingVertical:8, borderWidth:1, borderColor:'#FFD700', borderRadius:10 }}>
+            <TouchableOpacity onPress={props.onSave} hitSlop={{ top:12, bottom:12, left:12, right:12 }} style={{ paddingHorizontal:16, paddingVertical:10, borderWidth:1, borderColor:'#FFD700', borderRadius:10 }}>
               <Text style={{ color:'#FFD700', fontWeight:'800' }}>저장</Text>
             </TouchableOpacity>
             <View style={{ flex:1 }} />
-            <TouchableOpacity onPress={props.onLeave} style={{ paddingHorizontal:12, paddingVertical:8, borderWidth:1, borderColor:'#7A1F1F', borderRadius:10 }}>
+            <TouchableOpacity onPress={props.onLeave} hitSlop={{ top:12, bottom:12, left:12, right:12 }} style={{ paddingHorizontal:16, paddingVertical:10, borderWidth:1, borderColor:'#7A1F1F', borderRadius:10 }}>
               <Text style={{ color:'#FF6B6B' }}>나가기</Text>
             </TouchableOpacity>
           </View>
