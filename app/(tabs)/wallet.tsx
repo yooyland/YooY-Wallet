@@ -6989,7 +6989,7 @@ export default function WalletScreen() {
                                   ecl="H"
                                 />
                                 {QR_CENTER_LOGO && (
-                                  <View style={styles.qrCenterLogoAbsWrap}>
+                                  <View style={styles.qrCenterLogoAbsWrap} pointerEvents="none">
                                     <View style={styles.qrCenterLogoAbs}>
                                       <Image 
                                         source={require('@/assets/images/side_logo.png')} 
@@ -7016,7 +7016,7 @@ export default function WalletScreen() {
                               resizeMode="contain" 
                             />
                             {QR_CENTER_LOGO && (
-                              <View style={styles.qrCenterLogoAbsWrap}>
+                              <View style={styles.qrCenterLogoAbsWrap} pointerEvents="none">
                                 <View style={styles.qrCenterLogoAbs}>
                                   <Image 
                                     source={require('@/assets/images/side_logo.png')} 
@@ -9325,7 +9325,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     zIndex: 10,
     elevation: 10,
-    pointerEvents: 'none',
   },
   qrCenterLogoAbs: {
     position: 'absolute',

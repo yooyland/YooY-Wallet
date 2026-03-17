@@ -3,12 +3,12 @@ import { Modal, View, Text, TouchableOpacity, ScrollView, KeyboardAvoidingView, 
 import type { RoomSettings, RoomType } from '../types';
 import BasicTab from '../tabs/BasicTab';
 import MembersTab from '../tabs/MembersTab';
-import PermissionTab from '../tabs/PermissionTab';
 import NotificationTab from '../tabs/NotificationTab';
-import ThemeTab from '../tabs/ThemeTab';
+import ChatTab from '../tabs/ChatTab';
+import ManagementTab from '../tabs/ManagementTab';
 import TTLTab from '../tabs/TTLTab';
 
-type TabKey = 'basic' | 'members' | 'permission' | 'notification' | 'theme' | 'ttl';
+type TabKey = 'basic' | 'members' | 'notification' | 'chat' | 'manage' | 'ttl';
 
 export interface RoomSettingsModalProps {
   visible: boolean;
@@ -20,6 +20,8 @@ export interface RoomSettingsModalProps {
   onSave: () => Promise<void>;
   onLeave: () => Promise<void>;
   onInvite: () => Promise<void>;
+  onResetForMe?: () => Promise<void> | void;
+  onExportChat?: () => Promise<void> | void;
   initialTab?: 'basic' | 'members' | 'permission' | 'notification' | 'theme' | 'ttl';
 }
 
@@ -37,13 +39,13 @@ export default function RoomSettingsModal(props: RoomSettingsModalProps) {
     return () => { try { sh.remove(); hd.remove(); } catch {} };
   }, []);
 
-  // 순서: 기본, 멤버, 권한, 알림, 테마 (TTL은 별도 모달)
+  // 순서: 기본, 멤버, 알림, 채팅, 관리 (TTL은 별도 모달)
   const pills: { key: TabKey; label: string; show: boolean }[] = [
     { key: 'basic', label: '기본', show: true },
     { key: 'members', label: '멤버', show: true },
-    { key: 'permission', label: '권한', show: true },
     { key: 'notification', label: '알림', show: true },
-    { key: 'theme', label: '테마', show: true },
+    { key: 'chat', label: '채팅', show: true },
+    { key: 'manage', label: '관리', show: true },
   ];
 
   return (
@@ -72,19 +74,57 @@ export default function RoomSettingsModal(props: RoomSettingsModalProps) {
             >
               {tab==='basic' && (<BasicTab {...props} />)}
               {tab==='members' && (<MembersTab {...props} />)}
-              {tab==='permission' && (<PermissionTab {...props} />)}
               {tab==='notification' && (<NotificationTab {...props} />)}
-              {tab==='theme' && (<ThemeTab {...props} />)}
+              {tab==='chat' && (<ChatTab {...props} />)}
+              {tab==='manage' && (<ManagementTab {...props} />)}
             </ScrollView>
           </KeyboardAvoidingView>
-          {/* 하단 고정: 저장/나가기 버튼 (모든 탭 공통) */}
-          <View style={{ flexDirection:'row', gap:10, paddingHorizontal:12, paddingVertical:10, borderTopWidth:1, borderTopColor:'#1E1E1E', backgroundColor:'#0F0F0F' }}>
-            <TouchableOpacity onPress={props.onSave} hitSlop={{ top:12, bottom:12, left:12, right:12 }} style={{ paddingHorizontal:16, paddingVertical:10, borderWidth:1, borderColor:'#FFD700', borderRadius:10 }}>
+          {/* 하단 고정: 저장 / 나가기 버튼 (모든 탭 공통, 같은 줄) */}
+          <View
+            style={{
+              flexDirection:'row',
+              alignItems:'center',
+              justifyContent:'space-between',
+              gap:10,
+              paddingHorizontal:12,
+              paddingVertical:10,
+              borderTopWidth:1,
+              borderTopColor:'#1E1E1E',
+              backgroundColor:'#0F0F0F',
+            }}
+          >
+            <TouchableOpacity
+              onPress={props.onSave}
+              hitSlop={{ top:12, bottom:12, left:12, right:12 }}
+              style={{
+                flex:1,
+                paddingHorizontal:16,
+                paddingVertical:10,
+                borderWidth:1,
+                borderColor:'#FFD700',
+                borderRadius:10,
+                alignItems:'center',
+                justifyContent:'center',
+              }}
+            >
               <Text style={{ color:'#FFD700', fontWeight:'800' }}>저장</Text>
             </TouchableOpacity>
-            <View style={{ flex:1 }} />
-            <TouchableOpacity onPress={props.onLeave} hitSlop={{ top:12, bottom:12, left:12, right:12 }} style={{ paddingHorizontal:16, paddingVertical:10, borderWidth:1, borderColor:'#7A1F1F', borderRadius:10 }}>
-              <Text style={{ color:'#FF6B6B' }}>나가기</Text>
+            <TouchableOpacity
+              onPress={props.onLeave}
+              hitSlop={{ top:12, bottom:12, left:12, right:12 }}
+              style={{
+                flex:1,
+                paddingHorizontal:16,
+                paddingVertical:10,
+                borderWidth:1,
+                borderColor:'#7A1F1F',
+                borderRadius:10,
+                alignItems:'center',
+                justifyContent:'center',
+                backgroundColor:'rgba(122,31,31,0.12)',
+              }}
+            >
+              <Text style={{ color:'#FF6B6B', fontWeight:'800' }}>나가기</Text>
             </TouchableOpacity>
           </View>
         </View>

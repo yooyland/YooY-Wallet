@@ -495,7 +495,16 @@ gradle.taskGraph.whenReady { graph ->
                 versionProps.setProperty('VERSION_NAME', "${major}.${minor}.${patch}")
             }
             versionPropsFile.withOutputStream { os -> versionProps.store(os, null) }
-            println "android: Auto-bumped next version -> ${versionProps.getProperty('VERSION_CODE')}/${versionProps.getProperty('VERSION_NAME')}"
+            // Avoid confusion: this is NOT the current release version, it's the next default value stored for a future build.
+            def nextCode = versionProps.getProperty('VERSION_CODE')
+            def nextName = versionProps.getProperty('VERSION_NAME')
+            def nextMsg = "android: next default version prepared (for future builds) -> ${nextCode}/${nextName}"
+            // If env provided explicit versions, suppress the next-version line (release version is already logged above).
+            if (envVersionCode == null && envVersionName == null) {
+                println nextMsg
+            } else {
+                println "android: next default version prepared (suppressed: env release version in use)"
+            }
         } catch (Throwable ignored) {
             println "android: Auto version bump skipped (${ignored?.message})"
         }

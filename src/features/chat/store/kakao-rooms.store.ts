@@ -42,10 +42,14 @@ export interface KakaoMessage {
   id: string;
   roomId: string;
   senderId: string;
+  /** strict: message text (replaces legacy content) */
+  text?: string;
+  /** back-compat: legacy text field still used in some renderers */
   content: string;
   createdAt: number;
   readBy: string[];
   type?: 'text' | 'image' | 'video' | 'file' | 'location' | 'link' | 'system' | 'album';
+  status?: 'sending' | 'uploaded' | 'ready' | 'failed';
   /** Back-compat: legacy field name used by existing renderer */
   imageUrl?: string;
   /** Normalized: primary remote/local URL for this message (same value as imageUrl for media) */
@@ -56,6 +60,7 @@ export interface KakaoMessage {
   filename?: string;
   /** Normalized mime type (optional, but preferred). */
   mimeType?: string;
+  location?: { lat: number; lng: number; address: string };
   albumUrls?: string[]; // type === 'album'일 때 다중 이미지 URL 목록
   replyToId?: string;
   // 누가 어떤 이모지를 선택했는지: userId -> emoji
@@ -246,6 +251,8 @@ interface KakaoRoomsActions {
   closeChatForUser: (roomId: string, userId: string) => Promise<void> | void;
   // 내 화면에서만 채팅방 초기화 (로컬 메시지/숨김정보 제거)
   resetRoomForUser: (roomId: string, userId: string) => void;
+  // 대화 내보내기 (txt 생성 후 공유)
+  exportRoomHistoryForUser: (roomId: string, userId: string, opts?: { limit?: number }) => Promise<void>;
   // 사용자가 방에서 나가기: 방장이면 방을 아카이브 처리, 일반 멤버면 멤버 목록에서 제거
   leaveRoom: (roomId: string, userId: string) => Promise<void>;
   // 1:1 DM 방을 기존 방 우선으로 열고 없으면 생성
@@ -557,17 +564,21 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
                         })();
                         const rawType = v.type || 'text';
                         const rawUrl = v.url || v.imageUrl || undefined;
+                        const rawStatus = v.status || (rawUrl ? 'ready' : 'ready');
                         incoming.push({
                           id: v.id || d.id,
                           roomId,
                           senderId: v.senderId,
-                          content: v.content || '',
+                          text: v.text ?? v.content ?? '',
+                          content: v.text ?? v.content ?? '',
                           type: rawType,
+                          status: rawStatus,
                           imageUrl: rawUrl,
                           url: rawUrl,
                           thumbnailUrl: v.thumbnailUrl || undefined,
                           filename: v.filename || undefined,
                           mimeType: v.mimeType || undefined,
+                          location: v.location || undefined,
                           albumUrls: Array.isArray(v.albumUrls) ? v.albumUrls : undefined,
                           replyToId: v.replyToId || undefined,
                           createdAt: createdMs || Date.now(),
@@ -602,17 +613,21 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
                       })();
                       const rawType = v.type || 'text';
                       const rawUrl = v.url || v.imageUrl || undefined;
+                      const rawStatus = v.status || (rawUrl ? 'ready' : 'ready');
                       const msg = {
                         id: v.id || d.id,
                         roomId,
                         senderId: v.senderId,
-                        content: v.content || '',
+                        text: v.text ?? v.content ?? '',
+                        content: v.text ?? v.content ?? '',
                         type: rawType,
+                        status: rawStatus,
                         imageUrl: rawUrl,
                         url: rawUrl,
                         thumbnailUrl: v.thumbnailUrl || undefined,
                         filename: v.filename || undefined,
                         mimeType: v.mimeType || undefined,
+                        location: v.location || undefined,
                         albumUrls: Array.isArray(v.albumUrls) ? v.albumUrls : undefined,
                         replyToId: v.replyToId || undefined,
                         createdAt: createdMs || Date.now(),
@@ -695,19 +710,30 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
         const normalizedMime = (meta as any)?.mimeType || guessMimeType(String(type), String((meta as any)?.filename || content || normalizedUrl || ''));
         const normalizedFilename = (meta as any)?.filename || guessFilename(content, normalizedUrl);
         const normalizedThumb = (meta as any)?.thumbnailUrl || undefined;
+        const normalizedText = String((meta as any)?.text ?? content ?? '');
+        const normalizedLocation = (meta as any)?.location ? {
+          lat: Number((meta as any).location.lat),
+          lng: Number((meta as any).location.lng),
+          address: String((meta as any).location.address || normalizedText || ''),
+        } : undefined;
+        const isMedia = (type === 'image' || type === 'video' || type === 'file');
+        const initialStatus: KakaoMessage['status'] = isMedia ? 'sending' : 'ready';
         const msg: KakaoMessage = {
           id: uuidv4(),
           roomId,
           senderId,
-          content,
+          text: normalizedText,
+          content: normalizedText,
           createdAt: Date.now(),
           readBy: [senderId],
           type,
+          status: initialStatus,
           imageUrl: normalizedUrl,
           url: normalizedUrl,
           thumbnailUrl: normalizedThumb,
           filename: normalizedFilename,
           mimeType: normalizedMime,
+          location: normalizedLocation,
           albumUrls: (type === 'album' && Array.isArray(albumUrls) && albumUrls.length) ? albumUrls : undefined,
           replyToId,
           reactionsByUser: {},
@@ -721,7 +747,7 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
           }
           const updatedRooms = s.rooms.map(r => r.id === roomId ? {
             ...r,
-            lastMessage: content,
+            lastMessage: normalizedText,
             lastMessageAt: msg.createdAt,
           } : r);
           return {
@@ -771,7 +797,17 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
                     try {
                       // eslint-disable-next-line @typescript-eslint/no-var-requires
                       const FileSystem = require('expo-file-system');
-                      const b64 = await FileSystem.readAsStringAsync(localUri, { encoding: 'base64' });
+                      // content:// 는 일부 기기에서 직접 readAsStringAsync가 실패할 수 있어 cache로 복사 후 읽는다.
+                      let readUri = String(localUri);
+                      try {
+                        if (/^content:\/\//i.test(readUri) && FileSystem?.cacheDirectory) {
+                          const safeExt = ext || (extHint || 'bin');
+                          const dest = `${FileSystem.cacheDirectory}yy_chat_${Date.now()}_${msg.id}.${safeExt}`;
+                          await FileSystem.copyAsync({ from: readUri, to: dest });
+                          readUri = dest;
+                        }
+                      } catch {}
+                      const b64 = await FileSystem.readAsStringAsync(readUri, { encoding: 'base64' });
                       const mimeGuess = ext === 'mp4' ? 'video/mp4' : (ext === 'png' || ext === 'jpg' || ext === 'jpeg' ? `image/${ext === 'png' ? 'png' : 'jpeg'}` : 'application/octet-stream');
                       const dataUrl = `data:${mimeGuess};base64,${b64}`;
                       await uploadString(r, dataUrl, 'data_url');
@@ -838,53 +874,82 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
                 return { imageUrl: finalUrl, albumUrls: finalAlbum };
               } catch { return { imageUrl: null, albumUrls: null }; }
             };
-            // 업로드가 완료되어 최종 URL이 준비된 상태에서만 Firestore에 기록한다.
-            // (수신자 측 "업로드 지연"/무한 로딩의 원인: url/imageUrl=null 상태의 메시지가 먼저 전달됨)
+            // 실제 실행 경로 추적: "sending -> ready/failed" 전이를 Firestore + 로컬 모두에 강제한다.
+            // 수신자에게는 status가 전달되며, 프리뷰는 status==='ready'에서만 허용된다.
             void (async () => {
-              const safe = await preparePayload();
+              // 릴리즈 빌드에서도 추적할 수 있도록 항상 로그를 남긴다.
+              const log = (...a: any[]) => { try { console.log('[YY_CHAT_FLOW]', ...a); } catch {} };
+              const isMediaType = (type === 'image' || type === 'video' || type === 'file');
+
+              // 1) 먼저 "sending" 문서를 남긴다(상대방도 업로드 진행 상태를 동일하게 봄)
+              try {
+                if (isMediaType) {
+                  await setDoc(mref, {
+                    id: msg.id,
+                    roomId,
+                    senderId,
+                    type,
+                    status: 'sending',
+                    text: normalizedText || null,
+                    content: normalizedText || null,
+                    filename: normalizedFilename || null,
+                    mimeType: normalizedMime || null,
+                    thumbnailUrl: normalizedThumb || null,
+                    imageUrl: null,
+                    url: null,
+                    createdAt: serverTimestamp(),
+                  } as any, { merge: true });
+                  log('firestore.write sending', { id: msg.id, type, filename: normalizedFilename, mimeType: normalizedMime });
+                }
+              } catch (e: any) {
+                log('firestore.write sending failed', String(e?.message || e));
+              }
+
+              // 2) 업로드 수행
+              log('upload.start', { id: msg.id, type, local: String(imageUrl || '')?.slice(0, 120) });
+              const safe = await preparePayload().catch((e: any) => { log('upload.exception', String(e?.message || e)); return { imageUrl: null, albumUrls: null } as any; });
               const finalUrl = safe?.imageUrl || null;
-              const finalAlbum = (type === 'album') ? (safe?.albumUrls || []) : null;
-              // 업로드 실패 시에는 서버에 "불완전한 미디어"를 남기지 않음 (수신자 무한 로딩 방지)
-              if ((type === 'image' || type === 'video' || type === 'file') && !finalUrl) return;
-              if (type === 'album' && (!Array.isArray(finalAlbum) || finalAlbum.length === 0)) return;
+              log('upload.finish', { id: msg.id, type, finalUrl: finalUrl ? String(finalUrl).slice(0, 120) : null });
+
+              // 3) 업로드 성공/실패에 따른 전이
+              if (!finalUrl) {
+                // failed 로 전이(로컬+서버). 수신자 무한 스피너 방지.
+                try {
+                  set((s) => {
+                    const list = s.messages[roomId] || [];
+                    const next = list.map((m) => m.id === msg.id ? { ...m, status: 'failed' } : m);
+                    return { messages: { ...s.messages, [roomId]: next } } as any;
+                  });
+                } catch {}
+                try {
+                  await setDoc(mref, { status: 'failed', updatedAt: serverTimestamp() } as any, { merge: true });
+                } catch {}
+                log('status.failed', { id: msg.id, type });
+                return;
+              }
+
+              // ready 로 전이(서버+로컬)
               try {
                 await setDoc(mref, {
-                  id: msg.id,
-                  roomId,
-                  senderId,
-                  content,
-                  type,
-                  filename: normalizedFilename || null,
-                  mimeType: normalizedMime || null,
-                  thumbnailUrl: normalizedThumb || null,
+                  status: 'ready',
                   imageUrl: finalUrl,
                   url: finalUrl,
-                  albumUrls: finalAlbum,
-                  replyToId: replyToId || null,
-                  createdAt: serverTimestamp(),
+                  updatedAt: serverTimestamp(),
                 } as any, { merge: true });
-              } catch {}
-              // 로컬 메시지도 업로드된 최종 URL로 동기화
+                log('status.ready firestore', { id: msg.id, url: String(finalUrl).slice(0, 120) });
+              } catch (e: any) {
+                log('status.ready firestore failed', String(e?.message || e));
+              }
               try {
                 set((s) => {
                   const list = s.messages[roomId] || [];
                   const next = list.map((m) => {
                     if (m.id !== msg.id) return m;
-                    const patched: any = { ...m };
-                    if (type === 'album') {
-                      patched.albumUrls = Array.isArray(finalAlbum) ? finalAlbum : [];
-                      patched.type = 'album';
-                    } else {
-                      if (finalUrl) { patched.imageUrl = finalUrl; patched.url = finalUrl; }
-                      patched.type = type;
-                    }
-                    patched.filename = normalizedFilename || patched.filename;
-                    patched.mimeType = normalizedMime || patched.mimeType;
-                    patched.thumbnailUrl = normalizedThumb || patched.thumbnailUrl;
-                    return patched as typeof m;
+                    return { ...m, status: 'ready', imageUrl: finalUrl, url: finalUrl } as any;
                   });
                   return { messages: { ...s.messages, [roomId]: next } } as any;
                 });
+                log('status.ready local', { id: msg.id });
               } catch {}
             })();
           } catch {}
@@ -1358,11 +1423,141 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
 
       // 내 화면에서만 채팅방 초기화
       resetRoomForUser: (roomId: string, userId: string) => {
-        // 서버에는 영향 주지 않음. 로컬 메시지/숨김 정보만 초기화
+        // 서버에는 영향 주지 않음(다른 참가자 메시지/방 유지).
+        // 내 계정만 "처음 들어온 것처럼" 보이도록:
+        // - 로컬 캐시/숨김/타이핑/설정 초기화
+        // - 내 unread/read 상태 초기화(best-effort)
+        // - joinedRooms에 clearedAt 저장하여 이후 렌더에서 이전 메시지를 숨길 수 있도록 한다.
+        const now = Date.now();
+        // 로컬 상태 정리
+        try {
+          // 구독도 끊어 리스너/상태를 새로 시작하게 함
+          const subs = get().roomSubs || {};
+          if (subs[roomId]) {
+            try { subs[roomId](); } catch {}
+            delete subs[roomId];
+            set({ roomSubs: { ...subs } });
+          }
+        } catch {}
         set((s) => ({
+          currentRoomId: s.currentRoomId === roomId ? undefined : s.currentRoomId,
           messages: { ...(s.messages || {}), [roomId]: [] },
           hiddenByRoom: { ...(s.hiddenByRoom || {}), [roomId]: {} as any },
+          typing: { ...(s.typing || {}), [roomId]: {} as any },
+          roomSettings: Object.fromEntries(Object.entries(s.roomSettings || {}).filter(([rid]) => rid !== roomId)) as any,
+          rooms: (s.rooms || []).map((r:any) => r.id === roomId ? { ...r, unreadCount: 0 } : r),
         }) as any);
+        // 서버에 내 상태만 리셋(다른 유저 영향 없음)
+        void (async () => {
+          try {
+            const { setDoc, doc, serverTimestamp } = await import('firebase/firestore');
+            // roomMembers: unread/lastReadAt 초기화
+            try {
+              await setDoc(doc(firestore, 'rooms', roomId, 'members', userId), { unread: 0, lastReadAt: serverTimestamp() } as any, { merge: true });
+            } catch {}
+            // userRooms(joinedRooms): unread + clearedAt
+            try {
+              await setDoc(doc(firestore, 'users', userId, 'joinedRooms', roomId), { unread: 0, clearedAt: now, lastReadAt: now } as any, { merge: true });
+            } catch {}
+          } catch {}
+        })();
+      },
+
+      exportRoomHistoryForUser: async (roomId: string, userId: string, opts?: { limit?: number }) => {
+        const limitN = Math.max(50, Math.min(5000, Number(opts?.limit || 1000)));
+        try {
+          const { getDocs, query, collection, orderBy, limit } = await import('firebase/firestore');
+          const q = query(collection(firestore, 'rooms', roomId, 'messages'), orderBy('createdAt', 'asc'), limit(limitN));
+          const snap = await getDocs(q);
+          const rows: any[] = [];
+          snap.forEach((d:any) => {
+            const v:any = d.data() || {};
+            const createdMs = (() => {
+              try {
+                if (typeof v.createdAt?.toMillis === 'function') return v.createdAt.toMillis();
+                if (typeof v.createdAt === 'number') return v.createdAt;
+                if (typeof v.createdAt?.seconds === 'number') return v.createdAt.seconds * 1000;
+              } catch {}
+              return 0;
+            })();
+            rows.push({
+              id: v.id || d.id,
+              senderId: String(v.senderId || ''),
+              type: String(v.type || 'text'),
+              text: String(v.text ?? v.content ?? ''),
+              url: String(v.url || v.imageUrl || ''),
+              filename: String(v.filename || ''),
+              createdAt: createdMs || Date.now(),
+              location: v.location || null,
+            });
+          });
+          // 이름 매핑(로컬 프로필 스토어)
+          const resolveName = (uid: string) => {
+            try {
+              const store = require('@/src/features/chat/store/chat-profile.store');
+              const p = store.useChatProfileStore.getState().getProfile(uid);
+              const n = String(p?.chatName || p?.displayName || p?.username || '').trim();
+              return n || uid;
+            } catch { return uid; }
+          };
+          const fmt = (ms: number) => {
+            try {
+              const d = new Date(ms);
+              const pad = (n:number)=> String(n).padStart(2,'0');
+              return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            } catch { return ''; }
+          };
+          const lines = rows.map((m) => {
+            const who = resolveName(m.senderId);
+            const ts = fmt(Number(m.createdAt||0));
+            const type = String(m.type||'text');
+            const marker =
+              type === 'image' ? '[image]' :
+              type === 'video' ? '[video]' :
+              type === 'file' ? '[file]' :
+              type === 'location' ? '[location]' :
+              type === 'link' ? '[link]' :
+              '';
+            if (type === 'location' && m.location?.address) {
+              return `[${ts}] ${who}: ${marker} ${String(m.location.address)}`;
+            }
+            if ((type === 'image' || type === 'video' || type === 'file') && (m.filename || m.url)) {
+              const name = m.filename ? ` ${m.filename}` : '';
+              const url = m.url ? ` ${m.url}` : '';
+              return `[${ts}] ${who}: ${marker}${name}${url}`.trim();
+            }
+            return `[${ts}] ${who}: ${marker ? marker + ' ' : ''}${String(m.text||'')}`.trim();
+          });
+          const content = lines.join('\n');
+
+          // 파일 생성 후 공유 (모바일 안전)
+          try {
+            const FS = require('expo-file-system');
+            const Sharing = (() => { try { return require('expo-sharing'); } catch { return null; } })();
+            const safeTitle = (() => {
+              try {
+                const r = (get().rooms || []).find((x:any) => x.id === roomId);
+                const t = String(r?.title || 'chat').replace(/[\\/:*?"<>|]/g,'_').trim();
+                return t || 'chat';
+              } catch { return 'chat'; }
+            })();
+            const now = new Date();
+            const pad = (n:number)=> String(n).padStart(2,'0');
+            const dateStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+            const fileName = `${safeTitle}_${dateStr}.txt`;
+            const dir = FS.cacheDirectory || FS.documentDirectory;
+            const path = `${dir}${fileName}`;
+            await FS.writeAsStringAsync(path, content, { encoding: FS.EncodingType.UTF8 });
+            if (Sharing?.isAvailableAsync && (await Sharing.isAvailableAsync())) {
+              await Sharing.shareAsync(path, { mimeType: 'text/plain', dialogTitle: '대화 내보내기' });
+              return;
+            }
+            try {
+              const Share = require('react-native').Share;
+              await Share.share({ message: content, title: fileName });
+            } catch {}
+          } catch {}
+        } catch {}
       },
 
       // 방 나가기: 방장이면 방을 아카이브 처리하고, 일반 멤버면 내 리스트에서 제거

@@ -1,8 +1,8 @@
 import React from 'react';
-import { View, Text, TextInput, Switch, TouchableOpacity } from 'react-native';
+import { View, Text, TextInput, Switch, TouchableOpacity, Alert } from 'react-native';
 import type { RoomSettingsModalProps } from '../components/RoomSettingsModal';
 
-export default function PermissionTab({ settings, onChange }: RoomSettingsModalProps) {
+export default function PermissionTab({ settings, onChange, onResetForMe, onExportChat }: RoomSettingsModalProps) {
   const p = settings.permissions;
   const [pwd, setPwd] = React.useState(p.lockPassword||'');
 
@@ -43,10 +43,23 @@ export default function PermissionTab({ settings, onChange }: RoomSettingsModalP
 
       <Text style={{ color:'#9BA1A6', fontSize:12, marginTop:16 }}>데이터</Text>
       <View style={{ flexDirection:'row', gap:8, marginTop:6 }}>
-        <TouchableOpacity style={{ paddingHorizontal:12, paddingVertical:8, borderRadius:8, borderWidth:1, borderColor:'#2A2A2A' }}>
+        <TouchableOpacity
+          onPress={() => {
+            try {
+              Alert.alert('채팅방 초기화', '이 방을 나만 초기화할까요?\n(다른 참가자에게는 영향이 없습니다)', [
+                { text: '취소', style: 'cancel' },
+                { text: '초기화', style: 'destructive', onPress: () => { try { onResetForMe?.(); } catch {} } },
+              ]);
+            } catch { try { onResetForMe?.(); } catch {} }
+          }}
+          style={{ paddingHorizontal:12, paddingVertical:8, borderRadius:8, borderWidth:1, borderColor:'#2A2A2A' }}
+        >
           <Text style={{ color:'#CFCFCF' }}>채팅방 초기화</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={{ paddingHorizontal:12, paddingVertical:8, borderRadius:8, borderWidth:1, borderColor:'#2A2A2A' }}>
+        <TouchableOpacity
+          onPress={() => { try { onExportChat?.(); } catch {} }}
+          style={{ paddingHorizontal:12, paddingVertical:8, borderRadius:8, borderWidth:1, borderColor:'#2A2A2A' }}
+        >
           <Text style={{ color:'#CFCFCF' }}>대화 내보내기</Text>
         </TouchableOpacity>
       </View>

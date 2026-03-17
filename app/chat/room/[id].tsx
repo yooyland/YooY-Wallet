@@ -1,7 +1,7 @@
 // @ts-nocheck
 /* eslint-disable */
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, TextInput, KeyboardAvoidingView, Platform, Image, Alert, Switch, ImageBackground, Keyboard, Modal, InteractionManager, Share, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, TextInput, Platform, Image, Alert, Switch, ImageBackground, Keyboard, Modal, InteractionManager, Share, ActivityIndicator } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import * as ScreenCapture from 'expo-screen-capture';
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
@@ -939,6 +939,7 @@ function RoomInner() {
         mimeType: a?.mimeType,
         fileName: a?.fileName,
       }));
+      try { if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[YY_CHAT_FLOW]', 'pickMedia', { mode, count: assets.length, first: assets[0]?.uri?.slice?.(0,120) }); } catch {}
       // 이미지: 여러 장이면 앨범 또는 개별 이미지로 전송, 1장이면 단일 이미지
       if (mode !== 'video') {
         const images = assets.filter(a => !String(a.type||'').includes('video'));
@@ -946,6 +947,7 @@ function RoomInner() {
         if (images.length >= 1) {
           for (const a0 of images) {
             if (!a0?.uri) continue;
+            try { if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[YY_CHAT_FLOW]', 'send image', { uri: String(a0.uri).slice(0,120), mime: a0.mimeType, name: a0.fileName }); } catch {}
             sendMessage(roomId, uid, a0.fileName || '', 'image', String(a0.uri), undefined, undefined, undefined, { mimeType: a0.mimeType || 'image/jpeg', filename: a0.fileName });
           }
         }
@@ -953,6 +955,7 @@ function RoomInner() {
       // 비디오: 선택된(또는 강제) 비디오 각각 전송
       const videos = assets.filter(a => String(a.type||'').includes('video') || mode==='video');
       for (const v of videos) {
+        try { if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[YY_CHAT_FLOW]', 'send video', { uri: String(v?.uri||'').slice(0,120), mime: v.mimeType, name: v.fileName }); } catch {}
         if (v?.uri) sendMessage(roomId, uid, v.fileName || '[video]', 'video', String(v.uri), undefined, undefined, undefined, { mimeType: v.mimeType || 'video/mp4', filename: v.fileName || '[video]' });
       }
     } catch {}
@@ -1006,10 +1009,18 @@ function RoomInner() {
             const { reverseGeocode } = require('@/src/features/chat/lib/media');
             pretty = await reverseGeocode(Number(lat), Number(lng));
           } catch {}
-        } catch {}
+        }
         const addrLine = (pretty || `${lat}, ${lng}`).trim();
         // location 타입으로 단일 메시지로 저장 (송신/수신 동일 렌더링)
-        try { sendMessage(roomId, uid, addrLine, 'location', url, undefined, undefined, undefined, { mimeType: 'application/vnd.yooyland.location', filename: 'location' }); } catch {}
+        try {
+          sendMessage(roomId, uid, addrLine, 'location', url, undefined, undefined, undefined, {
+            mimeType: 'application/vnd.yooyland.location',
+            filename: 'location',
+            location: { lat: Number(lat), lng: Number(lng), address: addrLine },
+            text: addrLine,
+            url,
+          } as any);
+        } catch {}
       }
     } catch {}
     setAttachOpen(false);
@@ -1425,6 +1436,40 @@ function RoomInner() {
           if (type === 'image') {
             // imageUrl이 있으면 이미지 표시, 없으면 업로드 중 로딩 표시
             const mediaUrl = String(item?.url || item?.imageUrl || '');
+            const status = String(item?.status || 'ready');
+            try {
+              console.log('[YY_CHAT_FLOW]', 'render.image.bubble', {
+                id: String(item?.id || ''),
+                status,
+                url: mediaUrl.slice(0, 160),
+              });
+            } catch {}
+            if (status !== 'ready') {
+              const isFailed = status === 'failed';
+              return (
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  onPress={() => {
+                    try {
+                      Alert.alert(isFailed ? '업로드 실패' : '업로드 중', isFailed ? '업로드에 실패했습니다.' : '업로드가 완료되면 확인할 수 있습니다.');
+                    } catch {}
+                  }}
+                  style={{ width: 220, height: 160, borderRadius: 10, backgroundColor: '#2A2A2A', justifyContent: 'center', alignItems: 'center' }}
+                >
+                  {isFailed ? (
+                    <>
+                      <Text style={{ color: '#FF6B6B', fontSize: 14 }}>업로드 실패</Text>
+                      <Text style={{ color: '#888', marginTop: 8, fontSize: 12 }}>다시 시도는 곧 추가됩니다</Text>
+                    </>
+                  ) : (
+                    <>
+                      <ActivityIndicator size="large" color="#FFD700" />
+                      <Text style={{ color: '#888', marginTop: 8, fontSize: 12 }}>업로드 중...</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              );
+            }
             if (mediaUrl) {
               const ImageBubble = () => {
                 const [imgLoading, setImgLoading] = React.useState(true);
@@ -1504,12 +1549,20 @@ function RoomInner() {
             const mediaUrl = String(item?.url || item?.imageUrl || '');
             const hasUrl = !!mediaUrl;
             const thumbUri = hasUrl ? mediaUrl : '';
+            const status = String(item?.status || 'ready');
+            try {
+              console.log('[YY_CHAT_FLOW]', 'render.video.bubble', {
+                id: String(item?.id || ''),
+                status,
+                url: mediaUrl.slice(0, 160),
+              });
+            } catch {}
             return (
               <TouchableOpacity
                 activeOpacity={0.9}
                 onPress={() => {
                   try {
-                    if (!hasUrl) { Alert.alert('영상 준비 중', '영상 업로드가 완료되면 자동으로 재생할 수 있습니다.'); return; }
+                    if (status !== 'ready' || !hasUrl) { Alert.alert('영상 준비 중', status === 'failed' ? '업로드에 실패했습니다.' : '업로드가 완료되면 재생할 수 있습니다.'); return; }
                     setViewerList([]); setViewerMsgId(String(item?.id||'')); setViewerUrl(mediaUrl); setViewerKind('video'); setViewerOpen(true);
                   } catch {}
                 }}
@@ -1527,7 +1580,12 @@ function RoomInner() {
           }
           if (type === 'location') {
             const mapUrl = String(item?.url || item?.imageUrl || '');
-            const label = String(item?.content || '').trim();
+            const label = String(
+              (item as any)?.location?.address
+              || (item as any)?.text
+              || (item as any)?.content
+              || ''
+            ).trim();
             return (
               <View style={{ width: 260 }}>
                 <TouchableOpacity
@@ -2095,6 +2153,18 @@ function RoomInner() {
           settings={modalSettings}
           onChange={onModalChange}
           initialTab={settingsInitialTab}
+          onResetForMe={async () => {
+            try {
+              (useKakaoRoomsStore as any).getState().resetRoomForUser?.(roomId, uid);
+              // 리셋 후 즉시 재입장처럼 동작: 최신 메시지부터 다시 구독
+              try { enterRoom(roomId); } catch {}
+            } catch {}
+          }}
+          onExportChat={async () => {
+            try {
+              await (useKakaoRoomsStore as any).getState().exportRoomHistoryForUser?.(roomId, uid, { limit: 2000 });
+            } catch {}
+          }}
           onSave={async()=>{
             // OPTIMIZED: Close modal immediately for instant feedback, save in background
             const s = modalSettings;
@@ -2199,12 +2269,7 @@ function RoomInner() {
         />
       )}
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        enabled
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={0}
-      >
+      <View style={{ flex: 1 }}>
       <FlashList
         ref={listRef}
         data={filteredMessages}
@@ -2240,7 +2305,7 @@ function RoomInner() {
           return `idx-${index}`;
         }}
         renderItem={renderItem}
-        contentContainerStyle={[styles.messagesContent, { paddingBottom: 96 + Math.max(insets.bottom, 6) }]}
+        contentContainerStyle={[styles.messagesContent, { paddingBottom: 112 + Math.max(insets.bottom, 12) }]}
         ListHeaderComponent={hasMoreMessages && messages.length >= 30 ? (
           <TouchableOpacity
             onPress={handleLoadOlder}
@@ -2305,7 +2370,7 @@ function RoomInner() {
           styles={styles}
           composerFontSize={bodyFont}
         />
-      </KeyboardAvoidingView>
+      </View>
 
       {/* 메시지 액션 시트 (카톡 스타일) */}
       <Modal transparent visible={msgMenuOpen} animationType="fade" onRequestClose={closeMsgMenu}>
