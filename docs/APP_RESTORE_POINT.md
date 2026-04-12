@@ -2,7 +2,7 @@
 
 이 문서는 **요청 시점**의 앱 동작·구조를 복원 참고용으로 남깁니다. 실제 코드 스냅샷은 Git **태그** `restore-point/app-2026-04-11`이 가리키는 커밋을 사용하세요.
 
-**스냅샷 커밋:** `1249812` — `chore(restore-point): APP snapshot 2026-04-11 (excludes .env/.env.prod from commit)`
+**태그가 가리키는 커밋:** `6ed5908` — 스냅샷 본문은 `1249812` (`chore(restore-point): APP snapshot…`) + 복원 문서 보강.
 
 ## 복원 방법
 
