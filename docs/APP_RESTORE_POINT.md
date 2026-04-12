@@ -2,7 +2,11 @@
 
 이 문서는 **요청 시점**의 앱 동작·구조를 복원 참고용으로 남깁니다. 실제 코드 스냅샷은 Git **태그** `restore-point/app-2026-04-11`이 가리키는 커밋을 사용하세요.
 
-**태그가 가리키는 커밋:** `86f17c7` — 앱 대량 변경은 `1249812` (`chore(restore-point): APP snapshot…`), 그 위에 복원 문서 정리 커밋이 이어집니다.
+**태그가 가리키는 커밋:** 아래 명령으로 확인하세요. (스냅샷 본문은 `1249812` `chore(restore-point): APP snapshot…` 이후 문서 정리 커밋이 이어진 HEAD입니다.)
+
+```bash
+git rev-parse restore-point/app-2026-04-11^{commit}
+```
 
 ## 복원 방법
 
