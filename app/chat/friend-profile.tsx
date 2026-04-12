@@ -6,20 +6,22 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useChatProfileStore } from '@/src/features/chat/store/chat-profile.store';
 import { useLocalSearchParams, router } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useEffect, useMemo, useState, Suspense } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useMediaStore, mediaSelectors, mediaIdForUri } from '@/src/features/chat/store/media.store';
 import { Image, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, Linking, Alert } from 'react-native';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useKakaoRoomsStore } from '@/src/features/chat/store/kakao-rooms.store';
 import { useNotificationStore } from '@/src/features/chat/store/notification.store';
 import { firebaseAuth, firebaseStorage, firestore, ensureAuthedUid } from '@/lib/firebase';
-import { isAdmin } from '@/constants/admins';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { ref as storageRef, uploadString, getDownloadURL } from 'firebase/storage';
 // Revert: ChatTopBar 사용 취소
 import { useFollowStore } from '@/src/features/chat/store/follow.store';
-const ChatViewer = React.lazy(() => import('@/src/features/chat/components/ChatViewer'));
 import { detectType as mediaDetectType } from '@/src/features/chat/lib/media';
+import { MediaPreviewModalV2 } from '@/src/features/chatv2/components/MediaPreviewModalV2';
+import type { ChatMessageV2 } from '@/src/features/chatv2/core/messageSchema';
+import { getOrCreateDmRoomIdForUsersV2 } from '@/src/features/chatv2/services/dmEntryService';
+import { resolveChatDisplayNameFromUserDoc } from '@/src/features/chatv2/core/chatDisplayName';
 
 // expo-image가 없을 때를 대비한 폴백
 let EImage: any = null;
@@ -68,15 +70,48 @@ async function normalizeThumbUri(raw: string): Promise<string> {
     return '';
   } catch { return ''; }
 }
+
+/** 그리드/보물창고 동일 키 — 쿼리스트링 차이로 중복 저장 방지 */
+function normalizeUriKey(u: string): string {
+  try {
+    const url = new URL(String(u));
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return String(u || '');
+  }
+}
+
+function inferStoreMediaType(uri: string, kindHint?: string): 'image' | 'video' | 'file' | 'link' {
+  const k = String(kindHint || '').toLowerCase();
+  if (k === 'video') return 'video';
+  if (k === 'file') return 'file';
+  if (k === 'link') return 'link';
+  if (k === 'qr') return 'image';
+  try {
+    const d = String(mediaDetectType(uri) || '').toLowerCase();
+    if (d === 'video') return 'video';
+    if (d === 'file') return 'file';
+    if (d === 'link') return 'link';
+  } catch {}
+  return 'image';
+}
+
 export default function FriendProfileScreen() {
   const { language } = usePreferences();
-  const params = useLocalSearchParams<{ id?: string; name?: string; avatar?: string }>();
+  const params = useLocalSearchParams<{ id?: string; userId?: string; name?: string; avatar?: string }>();
   const store = useChatProfileStore();
   const selfUid = firebaseAuth.currentUser?.uid || store.currentProfile?.userId || '';
-  const resolvedId = (params.id === 'me' || params.id === 'self') ? String(selfUid) : String(params.id || selfUid);
+  const rawPeer = String(params.id || params.userId || '').trim();
+  const resolvedId = (params.id === 'me' || params.id === 'self') ? String(selfUid) : String(rawPeer || selfUid);
   const friendId = resolvedId;
-  const initialName = params.name || store.getProfile(resolvedId)?.displayName || '친구';
-  const [friendName, setFriendName] = useState(String(initialName));
+  const paramName = String(params.name || '').trim();
+  const paramAvatar = String(params.avatar || '').trim();
+  const storeProfEarly = store.getProfile(resolvedId);
+  const [friendName, setFriendName] = useState(() =>
+    String(paramName || storeProfEarly?.chatName || storeProfEarly?.displayName || '').trim()
+  );
   const [gridItems, setGridItems] = useState<Array<{ uri: string; public?: boolean; createdAt?: number; type?: 'image'|'video'|'file'|'link'|'qr'|'other' }>>([]);
   const [isBlocked, setIsBlocked] = useState(false);
   const [activeTab, setActiveTab] = useState<'grid' | 'tagged'>('grid');
@@ -90,11 +125,43 @@ export default function FriendProfileScreen() {
   const [followersOpen, setFollowersOpen] = useState(false);
   const [targetFollowersCount, setTargetFollowersCount] = useState(0);
   const [targetFollowingCount, setTargetFollowingCount] = useState(0);
-  // 공용 이미지 뷰어 상태
+  // 공용 미리보기 상태 (chatv2 미리보기와 동일 컴포넌트 사용)
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewUri, setPreviewUri] = useState<string | null>(null);
-  const [previewKind, setPreviewKind] = useState<any>('image');
   const [previewIndex, setPreviewIndex] = useState<number>(-1);
+  const toPreviewMsg = React.useCallback((uriRaw: string, typeRaw?: string, idx = 0): ChatMessageV2 => {
+    const uri = String(uriRaw || '').trim();
+    const lowerNoQ = uri.toLowerCase().split('?')[0];
+    let t = String(typeRaw || '').toLowerCase().trim();
+    if (!t) {
+      try { t = String(mediaDetectType(uri) || '').toLowerCase(); } catch { t = ''; }
+    }
+    if (t === 'qr') t = 'image';
+    if (t === 'link') t = 'url';
+    if (t !== 'image' && t !== 'video' && t !== 'file' && t !== 'audio' && t !== 'url') t = 'image';
+    return {
+      id: `profile-preview-${idx}-${mediaIdForUri(uri)}`,
+      roomId: `profile:${friendId}`,
+      senderId: String(friendId || 'me'),
+      type: t as any,
+      status: 'sent',
+      text: t === 'url' ? uri : '',
+      url: uri,
+      attachment: {
+        id: `att-${mediaIdForUri(uri)}`,
+        type: (t === 'url' ? 'file' : t) as any,
+        originalName: '',
+        remoteUrl: uri,
+      },
+      createdAt: Date.now() + idx,
+      updatedAt: Date.now() + idx,
+    } as ChatMessageV2;
+  }, [friendId]);
+
+  const gridPreviewChain = useMemo(
+    () => (gridItems || []).map((it, idx) => toPreviewMsg(String(it?.uri || ''), String(it?.type || ''), idx)),
+    [gridItems, toPreviewMsg]
+  );
+
   // 그리드 다중 선택 상태
   const [gridSelecting, setGridSelecting] = useState(false);
   const [gridSelected, setGridSelected] = useState<Set<string>>(new Set());
@@ -177,6 +244,63 @@ export default function FriendProfileScreen() {
   useEffect(() => {
     if (serverProfile) setFriendProfile(serverProfile);
   }, [serverProfile]);
+
+  /** 채팅에서 넘긴 프사(HTTPS) — Firestore 스냅샷 전에 즉시 반영 */
+  useEffect(() => {
+    if (!paramAvatar || isSelf) return;
+    setFriendProfile((prev) => {
+      const cur = String(prev?.avatar || '').trim();
+      if (cur && /^https?:\/\//i.test(cur)) return prev;
+      return { ...(prev || {}), userId: String(friendId), avatar: paramAvatar };
+    });
+  }, [paramAvatar, friendId, isSelf]);
+
+  /** 로컬에서 지정한 별명(AsyncStorage) */
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r1 = await AsyncStorage.getItem(`u:${selfUid}:friend:${friendId}:name`);
+        if (r1?.trim()) {
+          if (alive) setFriendName(r1.trim());
+          return;
+        }
+        const raw = await AsyncStorage.getItem(`u:${selfUid}:friends.nameOverrides`);
+        const map: Record<string, string> = raw ? JSON.parse(raw) : {};
+        const n = String(map[String(friendId)] || '').trim();
+        if (n) {
+          if (alive) setFriendName(n);
+          return;
+        }
+        if (alive && paramName) setFriendName(paramName);
+      } catch {}
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [friendId, selfUid, paramName]);
+
+  /** 카드에 보이는 이름: 별명 > 해시/대화명 규칙(resolve) > 라우트 힌트 > uid */
+  const cardDisplayName = useMemo(() => {
+    const custom = String(friendName || '').trim();
+    if (custom && custom !== '친구') return custom;
+    const fromProf = friendProfile
+      ? resolveChatDisplayNameFromUserDoc(String(friendId || ''), friendProfile as Record<string, unknown>).trim()
+      : '';
+    return fromProf || paramName || String(friendId || '친구');
+  }, [friendName, friendProfile, paramName, friendId]);
+
+  useEffect(() => {
+    if (!friendProfile) return;
+    const fromSnap = resolveChatDisplayNameFromUserDoc(String(friendId || ''), friendProfile as Record<string, unknown>).trim();
+    if (!fromSnap) return;
+    setFriendName((prev) => {
+      const p = String(prev || '').trim();
+      if (p && p !== '친구') return prev;
+      return fromSnap;
+    });
+  }, [friendProfile, friendId]);
+
   // 보물창고는 본인 전용: 상대 프로필 열면 강제로 grid 유지
   useEffect(() => {
     if (!isSelf && activeTab !== 'grid') setActiveTab('grid');
@@ -202,9 +326,8 @@ export default function FriendProfileScreen() {
         const idsT = (state.byLocation.treasure || []) as string[];
         const listG = idsG.map(id => state.items[id]).filter(Boolean) as any[];
         const listT = idsT.map(id => state.items[id]).filter(Boolean) as any[];
-        const normalize = (u:string) => { try { const url = new URL(String(u)); url.search=''; url.hash=''; return url.toString(); } catch { return String(u||''); } };
         const treasureSet = new Set<string>();
-        listT.forEach((it:any)=> { const u = String(it?.uriHttp || it?.uriData || ''); const k = normalize(u); if (k) treasureSet.add(k); });
+        listT.forEach((it:any)=> { const u = String(it?.uriHttp || it?.uriData || ''); const k = normalizeUriKey(u); if (k) treasureSet.add(k); });
         if (listG.length > 0) {
           const seen = new Set<string>();
           const uniq: Array<{ uri: string; public?: boolean; createdAt?: number }> = [];
@@ -213,7 +336,7 @@ export default function FriendProfileScreen() {
             .sort((a:any,b:any)=> (b.createdAt??0)-(a.createdAt??0))
             .forEach((it:any) => {
               const u = String(it.uriHttp || it.uriData || '');
-              const key = normalize(u);
+              const key = normalizeUriKey(u);
               if (!u || !key || treasureSet.has(key) || seen.has(key)) return; // treasure에 있으면 제외
               seen.add(key);
               const t = String(it?.type||'') as any;
@@ -221,8 +344,11 @@ export default function FriendProfileScreen() {
               const finalType = (type==='qr')? 'qr' : type;
               uniq.push({ uri: u, public: true, createdAt: it.createdAt, type: finalType });
             });
-          setGridItems(uniq);
-          return;
+          // 스토어에 갤러리 id는 있으나 uri가 비어 있거나 전부 제외된 경우 AsyncStorage 폴백
+          if (uniq.length > 0) {
+            setGridItems(uniq);
+            return;
+          }
         }
       }
 
@@ -239,18 +365,18 @@ export default function FriendProfileScreen() {
             AsyncStorage.getItem(keyT),
           ]);
           const treasureUris = new Set<string>();
-          try { const t = rawT ? JSON.parse(rawT) : []; (t||[]).forEach((it:any)=>{ if (it?.uri) { const k = normalize(String(it.uri)); if (k) treasureUris.add(k); } }); } catch {}
+          try { const t = rawT ? JSON.parse(rawT) : []; (t||[]).forEach((it:any)=>{ if (it?.uri) { const k = normalizeUriKey(String(it.uri)); if (k) treasureUris.add(k); } }); } catch {}
           const acc: Array<{ uri:string; createdAt?:number; public?:boolean; type?: any }> = [];
           const load = (raw?: string | null) => {
             if (!raw) return; try { const arr = JSON.parse(raw); if (Array.isArray(arr)) {
-              arr.forEach((v:any)=>{ const uri = typeof v==='string'? v : v?.uri; if (!uri) return; const isPublic = (typeof v==='string') ? true : (v?.public !== false); const k = normalize(String(uri)); if (!isPublic || !k || treasureUris.has(k)) return; const t = (typeof v==='string'? undefined : v?.type); const ty = (t==='image'||t==='video'||t==='file'||t==='link') ? t : mediaDetectType(String(uri)); acc.push({ uri, createdAt: (typeof v==='string'?0:(v?.createdAt??0)), public: true, type: (ty==='qr'?'qr':ty) }); });
+              arr.forEach((v:any)=>{ const uri = typeof v==='string'? v : v?.uri; if (!uri) return; const isPublic = (typeof v==='string') ? true : (v?.public !== false); const k = normalizeUriKey(String(uri)); if (!isPublic || !k || treasureUris.has(k)) return; const t = (typeof v==='string'? undefined : v?.type); const ty = (t==='image'||t==='video'||t==='file'||t==='link') ? t : mediaDetectType(String(uri)); acc.push({ uri, createdAt: (typeof v==='string'?0:(v?.createdAt??0)), public: true, type: (ty==='qr'?'qr':ty) }); });
             } } catch {}
           };
           load(rawG); load(rawGlobal);
           const seen = new Set<string>();
           const uniq: Array<{ uri: string; public?: boolean; createdAt?: number }> = [];
           acc.sort((a,b)=> (b.createdAt??0)-(a.createdAt??0)).forEach((it)=>{
-            const key = normalize(it.uri); if (!key || seen.has(key)) return; seen.add(key); uniq.push({ uri: it.uri, public: true, createdAt: it.createdAt });
+            const key = normalizeUriKey(it.uri); if (!key || seen.has(key)) return; seen.add(key); uniq.push({ uri: it.uri, public: true, createdAt: it.createdAt });
           });
           // detect type for each uniq if missing
           const withType = uniq.map((x)=> ({ ...x, type: x.type || (():any=>{ try { return mediaDetectType(String(x.uri)); } catch { return 'image' as any; } })() }));
@@ -268,6 +394,44 @@ export default function FriendProfileScreen() {
     const unsub = useMediaStore.subscribe(() => rebuildGrid());
     return () => { try { unsub(); } catch {} };
   }, [rebuildGrid]);
+
+  /** 그리드(공개) → 보물창고(비공개) — 나만 보기 */
+  const moveGridSelectionToTreasure = React.useCallback(async () => {
+    if (!isSelf) return;
+    const sel = Array.from(gridSelected);
+    if (!sel.length) return;
+    const store = useMediaStore.getState();
+    for (const rawUri of sel) {
+      const id = mediaIdForUri(rawUri);
+      const existing = store.items[id];
+      const meta = gridItems.find((g) => normalizeUriKey(String(g.uri)) === normalizeUriKey(String(rawUri)));
+      const ty = inferStoreMediaType(String(rawUri), meta?.type);
+      store.addOrUpdate({
+        id,
+        uriHttp: /^https?:/i.test(rawUri) ? rawUri : existing?.uriHttp,
+        uriData: !/^https?:/i.test(rawUri) ? rawUri : existing?.uriData,
+        name: existing?.name,
+        visibility: 'private',
+        location: 'treasure',
+        protect: true,
+        type: ty,
+        createdAt: existing?.createdAt ?? Date.now(),
+      });
+    }
+    try {
+      const raw = await AsyncStorage.getItem(galleryKey);
+      const list: any[] = raw ? JSON.parse(raw) : [];
+      const next = list.filter((it: any) => {
+        const u = typeof it === 'string' ? it : it?.uri;
+        if (!u) return true;
+        return !sel.some((s) => normalizeUriKey(String(s)) === normalizeUriKey(String(u)));
+      });
+      await AsyncStorage.setItem(galleryKey, JSON.stringify(next));
+    } catch {}
+    clearGridSel();
+    rebuildGrid();
+    Alert.alert('보물창고', '선택한 항목을 비공개(보물창고)로 옮겼습니다.');
+  }, [isSelf, gridSelected, gridItems, galleryKey, clearGridSel, rebuildGrid]);
 
   // 팔로우 스토어 초기화(실시간 구독)
   const initFollow = useFollowStore((s)=> s.initialize);
@@ -382,8 +546,17 @@ export default function FriendProfileScreen() {
     } catch {}
   };
 
-  const handleStartChat = () => {
-    try { router.push({ pathname: '/chat/create-room', params: { userId: String(friendId), name: String(friendName) } as any }); } catch {}
+  const handleStartChat = async () => {
+    try {
+      const me = firebaseAuth.currentUser?.uid || '';
+      if (!me || !friendId) return;
+      const roomId = await getOrCreateDmRoomIdForUsersV2(firestore as any, me, String(friendId));
+      router.push({ pathname: '/chatv2/room', params: { id: roomId } } as any);
+    } catch (e: any) {
+      try {
+        Alert.alert('안내', String(e?.message || e || '대화방을 열 수 없습니다.'));
+      } catch {}
+    }
   };
 
   const ensureDmRoom = async (): Promise<string | null> => {
@@ -485,7 +658,8 @@ export default function FriendProfileScreen() {
             userId: String(friendId),
             displayName: d.displayName || '',
             chatName: d.chatName || d.displayName || '',
-            useHashInChat: false,
+            nickname: d.nickname || '',
+            useHashInChat: d.useHashInChat === true,
             avatar,
             status: 'online',
             createdAt: Date.now(),
@@ -724,23 +898,7 @@ export default function FriendProfileScreen() {
                 })();
                 const onPress = () => {
                   if (gridSelecting) { toggleGridSel(it.uri); return; }
-                  try {
-                    let k: any = kind;
-                    const raw = String(it.uri||'');
-                    const lowerNoQ = raw.toLowerCase().split('?')[0];
-                    if (k === 'file' && /\.pdf$/.test(lowerNoQ)) k = 'pdf';
-                    if (k === 'link') {
-                      try {
-                        const uo = new URL(raw);
-                        const h = uo.host.toLowerCase();
-                        if (h.includes('youtu.be') || h.endsWith('youtube.com')) k = 'youtube';
-                        else if (h.includes('maps.google')) k = 'map';
-                        else k = 'web';
-                      } catch { k = 'web'; }
-                    }
-                    if (k === 'qr') k = 'image';
-                    setPreviewUri(String(it.uri)); setPreviewKind(k as any); setPreviewOpen(true);
-                  } catch {}
+                  try { setPreviewIndex(idx); setPreviewOpen(true); } catch {}
                 };
                 return (
                 <View key={it.uri} style={[styles.gridCell, { flexBasis: '25%', maxWidth: '25%' }]}>
@@ -783,6 +941,11 @@ export default function FriendProfileScreen() {
               <Text style={styles.chipMiniText}>삭제</Text>
             </TouchableOpacity>
           )}
+          {isSelf && (
+            <TouchableOpacity style={[styles.bulkBtn, styles.chipMini]} onPress={() => { void moveGridSelectionToTreasure(); }}>
+              <Text style={styles.chipMiniText}>비공개</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity style={[styles.bulkBtn, styles.chipMini]} onPress={()=>{ try { const first = Array.from(gridSelected)[0]; if (first) { const kind = mediaDetectType(String(first)); const store = require('@/src/features/chat/store/forward-modal.store'); (store as any).useForwardModalStore.getState().open({ imageUrl:String(first), name: kind||'media' }); } } catch {} }}>
             <Text style={styles.chipMiniText}>보내기</Text>
           </TouchableOpacity>
@@ -820,29 +983,32 @@ export default function FriendProfileScreen() {
         </View>
       </Modal>
 
-      {/* 공통 ChatViewer 사용: 웹/네이티브 공통 */}
-      {previewOpen && (
-        <Suspense fallback={null}>
-        <ChatViewer
-          visible={true}
-          url={String(previewUri)}
-          kind={(previewKind==='link'?'web':previewKind) as any}
-          onClose={()=> setPreviewOpen(false)}
-          onOpen={()=> { try { if (previewUri) Linking.openURL(String(previewUri)); } catch {} }}
-          onSave={()=> { try { if (previewUri) { const a=document.createElement('a'); a.href=String(previewUri); a.download='media'; document.body.appendChild(a); a.click(); a.remove(); } } catch {} }}
-          onForward={()=> { try { const store = require('@/src/features/chat/store/forward-modal.store'); setPreviewOpen(false); setTimeout(()=>{ try { store.useForwardModalStore.getState().open({ imageUrl: String(previewUri||''), name: 'media' }); } catch {} }, 0); } catch {} }}
-      onPrev={previewIndex>0 ? (()=>{ try { const i = Math.max(0, previewIndex-1); const it = gridItems[i]; let k: any = (it.type as any) || (mediaDetectType(String(it.uri)) as any); const raw=String(it.uri||''); const lowerNoQ=raw.toLowerCase().split('?')[0]; if (k==='file' && /\.pdf$/.test(lowerNoQ)) k='pdf'; if (k==='link') { try { const uo=new URL(raw); const h=uo.host.toLowerCase(); if (h.includes('youtu.be')||h.endsWith('youtube.com')) k='youtube'; else if (h.includes('maps.google')) k='map'; else k='web'; } catch { k='web'; } } if (k==='qr') k='image'; setPreviewIndex(i); setPreviewUri(String(it.uri)); setPreviewKind(k); } catch {} }) : undefined}
-      onNext={(previewIndex>=0 && previewIndex<gridItems.length-1) ? (()=>{ try { const i = Math.min(gridItems.length-1, previewIndex+1); const it = gridItems[i]; let k: any = (it.type as any) || (mediaDetectType(String(it.uri)) as any); const raw=String(it.uri||''); const lowerNoQ=raw.toLowerCase().split('?')[0]; if (k==='file' && /\.pdf$/.test(lowerNoQ)) k='pdf'; if (k==='link') { try { const uo=new URL(raw); const h=uo.host.toLowerCase(); if (h.includes('youtu.be')||h.endsWith('youtube.com')) k='youtube'; else if (h.includes('maps.google')) k='map'; else k='web'; } catch { k='web'; } } if (k==='qr') k='image'; setPreviewIndex(i); setPreviewUri(String(it.uri)); setPreviewKind(k); } catch {} }) : undefined}
-        />
-        </Suspense>
-      )}
+      <MediaPreviewModalV2
+        visible={previewOpen}
+        msg={previewIndex >= 0 ? (gridPreviewChain[previewIndex] || null) : null}
+        previewChain={gridPreviewChain}
+        previewIndex={Math.max(0, previewIndex)}
+        onPreviewIndexChange={setPreviewIndex}
+        onClose={() => setPreviewOpen(false)}
+        onForward={async (m) => {
+          try {
+            const u = String((m as any)?.url || '');
+            if (!u) return;
+            const store = require('@/src/features/chat/store/forward-modal.store');
+            setPreviewOpen(false);
+            setTimeout(() => {
+              try { store.useForwardModalStore.getState().open({ imageUrl: u, name: 'media' }); } catch {}
+            }, 0);
+          } catch {}
+        }}
+      />
     </ThemedView>
   );
 }
 
 function TreasurePreviewBridge() {
   const [open, setOpen] = useState(false);
-  const [list, setList] = useState<Array<{ uri: string; type?: string }>>([]);
+  const [list, setList] = useState<Array<{ uri: string; type?: string; roomId?: string; senderId?: string }>>([]);
   const [index, setIndex] = useState<number>(0);
   useEffect(() => {
     (globalThis as any).__treasureOpen = (payload: any, legacyKind?: string) => {
@@ -864,36 +1030,47 @@ function TreasurePreviewBridge() {
     };
     return () => { try { delete (globalThis as any).__treasureOpen; } catch {} };
   }, []);
-  if (!open) return null;
-  const cur = list[index] || null;
-  const uri = String(cur?.uri || '');
-  let kindRaw = String(cur?.type || 'image');
-  try {
-    const raw = String(uri||'');
-    const lowerNoQ = raw.toLowerCase().split('?')[0];
-    if (kindRaw === 'file' && /\.pdf$/.test(lowerNoQ)) kindRaw = 'pdf';
-    if (kindRaw === 'link') {
-      try { const uo=new URL(raw); const h = uo.host.toLowerCase(); if (h.includes('youtu.be') || h.endsWith('youtube.com')) kindRaw='youtube'; else if (h.includes('maps.google')) kindRaw = 'map'; else kindRaw = 'web'; } catch { kindRaw = 'web'; }
-    }
-    if (kindRaw === 'qr') kindRaw = 'image';
-  } catch {}
-  const kind = kindRaw as any;
-  const canPrev = index > 0;
-  const canNext = index < (list.length - 1);
+  const toMsg = (it: { uri: string; type?: string; roomId?: string; senderId?: string }, i: number): ChatMessageV2 => {
+    const uri = String(it?.uri || '').trim();
+    let t = String(it?.type || '').toLowerCase().trim();
+    if (!t) t = 'image';
+    if (t === 'qr') t = 'image';
+    if (t === 'link') t = 'url';
+    if (t !== 'image' && t !== 'video' && t !== 'file' && t !== 'audio' && t !== 'url') t = 'image';
+    return {
+      id: `treasure-preview-${i}-${mediaIdForUri(uri)}`,
+      roomId: String(it?.roomId || 'treasure'),
+      senderId: String(it?.senderId || 'me'),
+      type: t as any,
+      status: 'sent',
+      text: t === 'url' ? uri : '',
+      url: uri,
+      attachment: { id: `att-${mediaIdForUri(uri)}`, type: (t === 'url' ? 'file' : t) as any, originalName: '', remoteUrl: uri },
+      createdAt: Date.now() + i,
+      updatedAt: Date.now() + i,
+    } as ChatMessageV2;
+  };
+  const chain = (list || []).map((it, i) => toMsg(it, i));
   return (
-    <Suspense fallback={null}>
-    <ChatViewer
-      visible={true}
-      url={uri}
-      kind={kind}
+    <MediaPreviewModalV2
+      visible={open}
+      msg={chain[index] || null}
+      previewChain={chain}
+      previewIndex={Math.max(0, index)}
+      onPreviewIndexChange={setIndex}
       onClose={() => setOpen(false)}
-      onOpen={() => { try { if (uri) Linking.openURL(String(uri)); } catch {} }}
-      onSave={() => { try { if (uri) { const a=document.createElement('a'); a.href=String(uri); a.download='treasure'; document.body.appendChild(a); a.click(); a.remove(); } } catch {} }}
-      onForward={() => { try { const store = require('@/src/features/chat/store/forward-modal.store'); setOpen(false); setTimeout(()=>{ try { store.useForwardModalStore.getState().open({ imageUrl: String(uri||''), name: 'media' }); } catch {} }, 0); } catch {} }}
-      onPrev={canPrev ? (() => setIndex(i => Math.max(0, i-1))) : undefined}
-      onNext={canNext ? (() => setIndex(i => Math.min(list.length-1, i+1))) : undefined}
+      onForward={async (m) => {
+        try {
+          const u = String((m as any)?.url || '');
+          if (!u) return;
+          const store = require('@/src/features/chat/store/forward-modal.store');
+          setOpen(false);
+          setTimeout(() => {
+            try { store.useForwardModalStore.getState().open({ imageUrl: u, name: 'media' }); } catch {}
+          }, 0);
+        } catch {}
+      }}
     />
-    </Suspense>
   );
 }
 
@@ -918,18 +1095,13 @@ function TreasureBox({ friendId, friendName }: { friendId: string, friendName: s
   const [items, setItems] = useState<any[]>([]);
   const [filter, setFilter] = useState<'all'|'image'|'video'|'file'|'link'|'qr'|'other'>('all');
   const [privateOnly, setPrivateOnly] = useState<boolean>(false);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
+  /** 인덱스가 아니라 URI 키로 선택 (필터·AsyncStorage 인덱스 불일치 방지) */
+  const [treasureSelUris, setTreasureSelUris] = useState<Set<string>>(new Set());
+  const [treasureSelecting, setTreasureSelecting] = useState(false);
   const [broken, setBroken] = useState<Record<number, boolean>>({});
-  // 로컬 미리보기(글로벌 브릿지 실패 대비 폴백)
-  const [tOpen, setTOpen] = useState(false);
-  const [tUri, setTUri] = useState<string | null>(null);
-  const [tIdx, setTIdx] = useState<number>(0);
-  const [tKind, setTKind] = useState<'image'|'video'|'file'|'link'|'qr'|'other'|'web'|'youtube'|'map'|'pdf'>('image');
   const me = firebaseAuth.currentUser?.uid || (useChatProfileStore.getState().currentProfile?.userId || 'anonymous');
-  const email = (firebaseAuth.currentUser?.email || '').toLowerCase();
-  // 관리자 식별: 중앙 화이트리스트 + 익명은 관리자 아님
-  const isAdminUser = !!email && !firebaseAuth.currentUser?.isAnonymous && isAdmin(email);
-  const isOwnerOrAdmin = String(me) === String(friendId) || isAdminUser;
+  /** 보물창고 편집·삭제는 본인만 */
+  const isOwnerOrAdmin = String(me) === String(friendId);
   // 링크/파일 썸네일 & 제목 메타 (보물창고 전용)
   const linkMetaRef = React.useRef<Record<string, { title?: string; image?: string; host?: string }>>({});
   const [linkMetaTick, setLinkMetaTick] = useState(0);
@@ -1071,16 +1243,37 @@ function TreasureBox({ friendId, friendName }: { friendId: string, friendName: s
     return c;
   }, [items]);
 
-  const toggleSel = (i: number) => setSelected(prev => { const n = new Set(prev); n.has(i)? n.delete(i): n.add(i); return n; });
+  const toggleTreasureSel = (uri: string) => {
+    const k = normalizeUriKey(uri);
+    setTreasureSelUris((prev) => {
+      const n = new Set(prev);
+      if (n.has(k)) n.delete(k);
+      else n.add(k);
+      return n;
+    });
+  };
   const removeSel = async () => {
     const key = `u:${friendId}:treasure.items`;
-    const next = items.filter((_,i)=>!selected.has(i));
-    setItems(next); setSelected(new Set());
-    try { await AsyncStorage.setItem(key, JSON.stringify(next)); } catch {}
+    const selKeys = Array.from(treasureSelUris);
+    if (!selKeys.length) return;
+    const next = items.filter((it: any) => !selKeys.includes(normalizeUriKey(String(it?.uri || ''))));
+    const ids = selKeys.map((k) => {
+      const it = items.find((x: any) => normalizeUriKey(String(x?.uri || '')) === k);
+      return mediaIdForUri(String(it?.uri || k));
+    });
+    setItems(next);
+    setTreasureSelUris(new Set());
+    setTreasureSelecting(false);
+    try {
+      await AsyncStorage.setItem(key, JSON.stringify(next));
+    } catch {}
+    try {
+      useMediaStore.getState().remove(ids);
+    } catch {}
   };
   const shareSel = async () => {
     try {
-      const first = items.find((_,i)=>selected.has(i));
+      const first = items.find((it: any) => treasureSelUris.has(normalizeUriKey(String(it?.uri || ''))));
       if (!first) return;
       const url = first.url || first.uri || '';
       if ((navigator as any).share && url) (navigator as any).share({ url });
@@ -1090,44 +1283,81 @@ function TreasureBox({ friendId, friendName }: { friendId: string, friendName: s
     try {
       const keyT = `u:${friendId}:treasure.items`;
       const keyG = `u:${friendId}:chat.media.items`;
+      const selKeys = Array.from(treasureSelUris);
+      if (!selKeys.length) return;
+      const toPublish = items.filter((it: any) => selKeys.includes(normalizeUriKey(String(it?.uri || ''))));
+      for (const it of toPublish) {
+        const uri = String(it?.uri || '').trim();
+        if (!uri) continue;
+        const id = mediaIdForUri(uri);
+        const ty = inferStoreMediaType(uri, it?.type);
+        const st = useMediaStore.getState();
+        if (st.items[id]) {
+          st.restoreToGallery([id]);
+        } else {
+          const isHttp = /^https?:/i.test(uri);
+          const isData = /^data:/i.test(uri);
+          const isLocal = /^(file|content):/i.test(uri);
+          st.addOrUpdate({
+            id,
+            uriHttp: isHttp || isLocal ? uri : undefined,
+            uriData: isData ? uri : undefined,
+            name: it.name,
+            visibility: 'public',
+            location: 'gallery',
+            protect: false,
+            type: ty,
+            createdAt: it.createdAt || Date.now(),
+          });
+        }
+      }
       const rawT = await AsyncStorage.getItem(keyT);
       const rawG = await AsyncStorage.getItem(keyG);
       const listT: any[] = rawT ? JSON.parse(rawT) : [];
       const listG: any[] = rawG ? JSON.parse(rawG) : [];
-      const keepTreasure = listT.filter((_:any,i:number)=> !selected.has(i));
-      const toPublish = listT.filter((_:any,i:number)=> selected.has(i));
-      const exists = new Set(listG.map((x:any)=> String(x?.uri)));
-      const addEntries = toPublish
-        .filter((it:any)=> !!it?.uri)
-        .map((it:any)=> {
-          const raw = String(it.uri);
-          let ty = String(it?.type||'');
-          if (!['image','video','file','link','qr'].includes(ty)) {
-            try { ty = mediaDetectType(raw) as any; } catch { ty = 'image'; }
+      const setSel = new Set(selKeys);
+      const keepTreasure = listT.filter((row: any) => {
+        const u = typeof row === 'string' ? row : row?.uri;
+        return !setSel.has(normalizeUriKey(String(u || '')));
+      });
+      const exists = new Set(listG.map((x: any) => normalizeUriKey(String(typeof x === 'string' ? x : x?.uri || ''))));
+      const addEntries = toPublish.map((row: any) => {
+        const raw = String(row.uri);
+        let ty = String(row?.type || '');
+        if (!['image', 'video', 'file', 'link', 'qr'].includes(ty)) {
+          try {
+            ty = mediaDetectType(raw) as any;
+          } catch {
+            ty = 'image';
           }
-          // 유튜브는 video로 강제 보정
-          if (ty==='link') {
-            try { const u=new URL(raw); const h=u.host.toLowerCase(); if (/(^|\.)youtube\.com$/.test(h)||/(^|\.)youtu\.be$/.test(h)) ty='video'; } catch {}
-          }
-          return ({ uri: it.uri, type: ty, public: true, name: it.name, protect: it.protect, createdAt: Date.now() });
-        });
-      const nextG = [...addEntries.filter(e=>!exists.has(String(e.uri))), ...listG];
-      await AsyncStorage.multiSet([[keyT, JSON.stringify(keepTreasure)], [keyG, JSON.stringify(nextG)]]);
-      setItems(keepTreasure); setSelected(new Set());
-      // SSOT 갱신
-      try {
-        const ids = toPublish.map((it:any)=> mediaIdForUri(String(it?.uri||'')));
-        const store = useMediaStore.getState();
-        ids.forEach((id:string)=> store.addOrUpdate({ id, visibility:'public', location:'gallery' }));
-      } catch {}
-      Alert.alert('완료','선택한 항목을 공개로 전환했습니다.');
+        }
+        if (ty === 'qr') ty = 'image';
+        if (ty === 'link') {
+          try {
+            const u = new URL(raw);
+            const h = u.host.toLowerCase();
+            if (/(^|\.)youtube\.com$/.test(h) || /(^|\.)youtu\.be$/.test(h)) ty = 'video';
+          } catch {}
+        }
+        return { uri: row.uri, type: ty, public: true, name: row.name, createdAt: Date.now() };
+      });
+      const nextG = [...addEntries.filter((e) => !exists.has(normalizeUriKey(String(e.uri)))), ...listG];
+      await AsyncStorage.multiSet([
+        [keyT, JSON.stringify(keepTreasure)],
+        [keyG, JSON.stringify(nextG)],
+      ]);
+      const afterPublish = items.filter((it: any) => !selKeys.includes(normalizeUriKey(String(it?.uri || ''))));
+      setItems(afterPublish);
+      setTreasureSelUris(new Set());
+      setTreasureSelecting(false);
+      Alert.alert('완료', '선택한 항목을 공개(그리드)로 옮겼습니다.');
     } catch {
-      Alert.alert('오류','공개 전환에 실패했습니다.');
+      Alert.alert('오류', '공개 전환에 실패했습니다.');
     }
   };
   const setAsProfile = async () => {
     try {
-      const first = items.find((_,i)=>selected.has(i));
+      const first = items.find((it: any) => treasureSelUris.has(normalizeUriKey(String(it?.uri || ''))));
       if (first && first.type==='image' && first.uri) {
         const uid = firebaseAuth.currentUser?.uid || 'anonymous';
         let final = String(first.uri);
@@ -1148,7 +1378,8 @@ function TreasureBox({ friendId, friendName }: { friendId: string, friendName: s
           await AsyncStorage.setItem(`u:${me}:chat.profile.lastAvatar`, final);
         } catch {}
       }
-      setSelected(new Set());
+      setTreasureSelUris(new Set());
+      setTreasureSelecting(false);
     } catch {}
   };
   return (
@@ -1256,22 +1487,63 @@ function TreasureBox({ friendId, friendName }: { friendId: string, friendName: s
                 if (k==='video') return deriveName(String(it.uri));
                 return '';
               })();
+              const uriKey = normalizeUriKey(String(it?.uri || ''));
               const onRemove = async () => {
                 try {
                   const keyT = `u:${friendId}:treasure.items`;
-                  const list = [...items];
-                  const globalIndex = items.findIndex((x)=> x === it);
-                  if (globalIndex >= 0) {
-                    list.splice(globalIndex,1);
-                    setItems(list);
-                    try { await AsyncStorage.setItem(keyT, JSON.stringify(list)); } catch {}
-                  }
+                  const uri = String(it?.uri || '');
+                  const id = mediaIdForUri(uri);
+                  const list = items.filter((x: any) => normalizeUriKey(String(x?.uri || '')) !== uriKey);
+                  setItems(list);
+                  try {
+                    await AsyncStorage.setItem(keyT, JSON.stringify(list));
+                  } catch {}
+                  try {
+                    useMediaStore.getState().remove([id]);
+                  } catch {}
                 } catch {}
               };
               nodes.push(
-                <View key={`${it.type}-${idx}`} style={[styles.gridCell, { flexBasis: '25%', maxWidth: '25%' }]}>
-                  <TouchableOpacity onLongPress={() => { setSelected(new Set([idx])); }} onPress={() => { try { setSelected(new Set()); (globalThis as any).__treasureOpen?.({ list: filtered, index: idx }); } catch {} try { setTIdx(idx); setTUri(String(it.uri)); setTKind(kindOf(it)); setTOpen(true); } catch {} }} style={[styles.gridItem, selected.has(idx) && { borderWidth: 1, borderColor: '#FFD700' }] }>
+                <View key={`${uriKey}-${idx}`} style={[styles.gridCell, { flexBasis: '25%', maxWidth: '25%' }]}>
+                  <TouchableOpacity
+                    onLongPress={() => {
+                      setTreasureSelecting(true);
+                      toggleTreasureSel(String(it.uri));
+                    }}
+                    onPress={() => {
+                      if (treasureSelecting) {
+                        toggleTreasureSel(String(it.uri));
+                        return;
+                      }
+                      setTreasureSelUris(new Set());
+                      try {
+                        (globalThis as any).__treasureOpen?.({ list: filteredWithPrivacy, index: idx });
+                      } catch {}
+                    }}
+                    style={[styles.gridItem, treasureSelUris.has(uriKey) && { borderWidth: 1, borderColor: '#FFD700' }]}
+                  >
                     {renderThumb()}
+                    {treasureSelecting ? (
+                      <View
+                        style={{
+                          position: 'absolute',
+                          left: 4,
+                          top: 4,
+                          width: 18,
+                          height: 18,
+                          borderRadius: 9,
+                          borderWidth: 1,
+                          borderColor: '#FFD700',
+                          backgroundColor: treasureSelUris.has(uriKey) ? '#FFD700' : 'transparent',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        {treasureSelUris.has(uriKey) ? (
+                          <Text style={{ color: '#111', fontSize: 10, fontWeight: '800' }}>✓</Text>
+                        ) : null}
+                      </View>
+                    ) : null}
                     {/* 잠금 배지 */}
                     {!!title && (
                       <View style={{ position:'absolute', left:6, right:28, bottom:6 }}>
@@ -1295,27 +1567,21 @@ function TreasureBox({ friendId, friendName }: { friendId: string, friendName: s
           })()}
         </View>
       )}
-      {/* 로컬 폴백 미리보기 */}
-      {tOpen && (
-        <Suspense fallback={null}>
-          <ChatViewer
-            visible={true}
-            url={String(tUri||'')}
-            kind={(tKind==='link'?'web':tKind) as any}
-            onClose={() => setTOpen(false)}
-            onOpen={() => { try { if (tUri) Linking.openURL(String(tUri)); } catch {} }}
-            onPrev={tIdx>0 ? (()=>{ const i=Math.max(0,tIdx-1); setTIdx(i); try{ setTUri(String(filtered[i]?.uri||'')); setTKind(kindOf(filtered[i])); }catch{} }) : undefined}
-            onNext={tIdx<filtered.length-1 ? (()=>{ const i=Math.min(filtered.length-1,tIdx+1); setTIdx(i); try{ setTUri(String(filtered[i]?.uri||'')); setTKind(kindOf(filtered[i])); }catch{} }) : undefined}
-          />
-        </Suspense>
-      )}
       {/* 하단 고정 툴바 */}
-      {selected.size>0 && (
+      {treasureSelUris.size > 0 && (
         <FixedBottomBar>
           <TouchableOpacity onPress={removeSel} style={[styles.chipMini, { flex:1, marginRight:6 }]}><Text style={styles.chipMiniText}>삭제</Text></TouchableOpacity>
           <TouchableOpacity onPress={publishSel} style={[styles.chipMini, { flex:1, marginRight:6 }]}><Text style={styles.chipMiniText}>공개</Text></TouchableOpacity>
           <TouchableOpacity onPress={shareSel} style={[styles.chipMini, { flex:1, marginRight:6 }]}><Text style={styles.chipMiniText}>보내기</Text></TouchableOpacity>
-          <TouchableOpacity onPress={()=> setSelected(new Set())} style={[styles.chipMini, { flex:1 }]}><Text style={styles.chipMiniText}>취소</Text></TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => {
+              setTreasureSelUris(new Set());
+              setTreasureSelecting(false);
+            }}
+            style={[styles.chipMini, { flex:1 }]}
+          >
+            <Text style={styles.chipMiniText}>취소</Text>
+          </TouchableOpacity>
         </FixedBottomBar>
       )}
     </>

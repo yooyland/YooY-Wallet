@@ -9,15 +9,25 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { t } from '@/i18n';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Modal, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { useMergedWalletAssets } from '@/contexts/MergedWalletAssetsContext';
+import { useTransactionStore } from '@/src/stores/transaction.store';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://api-test.yooyland.com';
 const isDevelopment = !process.env.EXPO_PUBLIC_API_BASE_URL || /localhost|127\.0\.0\.1/i.test(process.env.EXPO_PUBLIC_API_BASE_URL || '');
 
+/**
+ * 정식 거래 오픈 후 `.env`에 `EXPO_PUBLIC_MARKET_LIVE_TRADING=1` 설정 시에만 실주문 API·잔액 검증 사용.
+ * 미설정(기본) = 모의거래만: 보유/모니터 잔액에 반영하지 않음.
+ */
+const MARKET_LIVE_TRADING_ENABLED = String(process.env.EXPO_PUBLIC_MARKET_LIVE_TRADING || '').trim() === '1';
+
 export default function MarketTab() {
   const router = useRouter();
   const { currentUser, accessToken } = useAuth();
+  const { mergedAssets } = useMergedWalletAssets();
+  const addTxStore = useTransactionStore((s) => s.addTransaction);
   const { language } = usePreferences();
   const locale = language === 'ko' ? 'ko-KR' : language === 'ja' ? 'ja-JP' : language === 'zh' ? 'zh-CN' : 'en-US';
   const [coins, setCoins] = useState<any[]>([]);
@@ -52,22 +62,35 @@ export default function MarketTab() {
   
   // 결제방식 상태
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<'basic' | 'stablecoin' | 'yoy'>('basic');
-  // 결제코인별 비중/보유량
-  const [paymentMethods, setPaymentMethods] = useState<Array<{coin:'USDT'|'USDC'|'BUSD'|'DAI'|'YOY', percentage:number, amount:number}>>([
-    { coin: 'USDT', percentage: 60, amount: 533 },
-    { coin: 'USDC', percentage: 0, amount: 120 },
-    { coin: 'BUSD', percentage: 0, amount: 0 },
-    { coin: 'DAI',  percentage: 0, amount: 0 },
-    { coin: 'YOY',  percentage: 40, amount: 20000000 },
-  ]);
   const [usdtPercentage, setUsdtPercentage] = useState(60);
   const [yoyPercentage, setYoyPercentage] = useState(40);
-  // 스테이블코인 보유 (합산 적용)
-  const [usdtBalance, setUsdtBalance] = useState(533);
-  const [usdcBalance, setUsdcBalance] = useState(120);
-  const [busdBalance, setBusdBalance] = useState(0);
-  const [daiBalance, setDaiBalance] = useState(0);
-  const [yoyBalance, setYoyBalance] = useState(20000000);
+  /** 대시보드·지갑과 동일 mergedAssets 기준 보유 */
+  const mergedBySymbol = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const row of mergedAssets || []) {
+      const s = String((row as any).symbol || '')
+        .toUpperCase()
+        .trim();
+      if (!s) continue;
+      m[s] = Number((row as any).amount) || 0;
+    }
+    return m;
+  }, [mergedAssets]);
+  const usdcBalance = mergedBySymbol.USDC || 0;
+  const busdBalance = mergedBySymbol.BUSD || 0;
+  const daiBalance = mergedBySymbol.DAI || 0;
+  const yoyBalance = mergedBySymbol.YOY || 0;
+  /** USDT·USDC·BUSD·DAI 1:1 USD 페그 가정 합산(슬라이더·한도용) */
+  const stableBalanceUsdtEq = useMemo(() => {
+    let t = 0;
+    for (const s of ['USDT', 'USDC', 'BUSD', 'DAI'] as const) t += mergedBySymbol[s] || 0;
+    return t;
+  }, [mergedBySymbol]);
+  const usdtBalance = stableBalanceUsdtEq;
+  const baseCoinBalance = useMemo(() => {
+    if (selectedOrderCoin === 'Coin') return 0;
+    return mergedBySymbol[String(selectedOrderCoin).toUpperCase()] || 0;
+  }, [mergedBySymbol, selectedOrderCoin]);
   const [paymentAmount, setPaymentAmount] = useState(0);
   const [usedByCoin, setUsedByCoin] = useState<Record<string, number>>({});
   const usedUsdt = usedByCoin['USDT'] || 0; // USDT(eqv) 총사용은 사용처에서 eqv로 표기, 여기선 USDT 사용량 표시
@@ -79,6 +102,7 @@ export default function MarketTab() {
   const [overByCoin, setOverByCoin] = useState<Record<string, boolean>>({});
   const usdtOver = !!(overByCoin['USDT'] || overByCoin['USDC'] || overByCoin['BUSD'] || overByCoin['DAI']);
   const yoyOver = !!overByCoin['YOY'];
+  const [sellQtyOver, setSellQtyOver] = useState(false);
   const [orderFilter, setOrderFilter] = useState<'all'|'buy'|'sell'>('all');
   const [orderSearch, setOrderSearch] = useState('');
   const [orderSortKey, setOrderSortKey] = useState<'time'|'price'|'quantity'>('time');
@@ -144,6 +168,15 @@ export default function MarketTab() {
   };
   // 숫자 포맷 유틸 (천단위 구분, 소수점은 천단위 없음, 최소 4자리 유지)
   const unformatNumber = (v: string) => v.replace(/,/g, '').replace(/[^0-9.]/g, '');
+  const formatPriceInputThousands = (raw: string) => {
+    const cleaned = unformatNumber(raw).replace(/\.(?=.*\.)/g, '');
+    if (!cleaned) return '';
+    const [intPart = '', decPart] = cleaned.split('.');
+    const intFmt = intPart ? Number(intPart).toLocaleString('en-US') : '';
+    if (cleaned.endsWith('.')) return intFmt ? `${intFmt}.` : '0.';
+    if (decPart !== undefined) return `${intFmt || '0'}.${decPart}`;
+    return intFmt;
+  };
   const formatWithThousands = (raw: string) => {
     if (!raw) return '';
     // 하나의 소수점만 허용
@@ -448,43 +481,77 @@ export default function MarketTab() {
     setOrderPrice(formatForDisplay(price));
   };
 
-  // 결제금액/사용 수량 계산
+  // 결제금액/사용 수량 계산 (실거래 시에만 잔액 한도·초과 표시)
   useEffect(() => {
     const priceNum = parseFloat((orderPrice || '0').toString().replace(/,/g, ''));
     const quantityNum = parseFloat(orderQuantity || '0');
     if (!isFinite(priceNum) || !isFinite(quantityNum)) {
       setPaymentAmount(0);
-      setUsedUsdt(0);
-      setUsedYoy(0);
+      setUsedByCoin({ USDT: 0, YOY: 0 });
+      setMaxQuantityCap(0);
+      setOverByCoin({ USDT: false, YOY: false });
+      setSellQtyOver(false);
       return;
     }
 
-    const subtotalInMarket = priceNum * quantityNum; // 선택된 통화 기준 결제 총액
+    const subtotalInMarket = priceNum * quantityNum;
     setPaymentAmount(subtotalInMarket);
 
+    if (!MARKET_LIVE_TRADING_ENABLED) {
+      try {
+        const baseCurrency = priceCurrency as any;
+        const usdtRateInMarket = getCoinPriceByCurrency('USDT', baseCurrency) || 0;
+        const yoyRateInMarket = getCoinPriceByCurrency('YOY', baseCurrency) || 0;
+        if (orderType === 'sell') {
+          setUsedByCoin({ USDT: 0, YOY: 0 });
+          setOverByCoin({ USDT: false, YOY: false });
+          setMaxQuantityCap(priceNum > 0 ? Number.MAX_SAFE_INTEGER / Math.max(priceNum, 1e-18) : 1e18);
+          setSellQtyOver(false);
+          return;
+        }
+        setSellQtyOver(false);
+        const yoyLegValue = subtotalInMarket * (yoyPercentage / 100);
+        const yoyUsed = yoyRateInMarket > 0 ? yoyLegValue / yoyRateInMarket : 0;
+        const usdtLegValue = subtotalInMarket * (usdtPercentage / 100);
+        const usdtUseQty = usdtRateInMarket > 0 ? usdtLegValue / usdtRateInMarket : 0;
+        setUsedByCoin({ USDT: usdtUseQty, YOY: yoyUsed });
+        setOverByCoin({ USDT: false, YOY: false });
+        setMaxQuantityCap(priceNum > 0 ? Number.MAX_SAFE_INTEGER / Math.max(priceNum, 1e-18) : 1e18);
+      } catch {
+        setUsedByCoin({ USDT: 0, YOY: 0 });
+        setMaxQuantityCap(1e18);
+        setOverByCoin({ USDT: false, YOY: false });
+        setSellQtyOver(false);
+      }
+      return;
+    }
+
     try {
-      // 환율 기준은 "가격"이 표시되는 통화(priceCurrency)와 일치해야 함
       const baseCurrency = priceCurrency as any;
-      const usdtRateInMarket = getCoinPriceByCurrency('USDT', baseCurrency) || 0; // 1 USDT = ? 선택통화
-      const usdcRateInMarket = getCoinPriceByCurrency('USDC', baseCurrency) || usdtRateInMarket;
-      const busdRateInMarket = getCoinPriceByCurrency('BUSD', baseCurrency) || usdtRateInMarket;
-      const daiRateInMarket  = getCoinPriceByCurrency('DAI',  baseCurrency) || usdtRateInMarket;
-      const yoyRateInMarket = getCoinPriceByCurrency('YOY', baseCurrency) || 0;   // 1 YOY = ? 선택통화
+      const usdtRateInMarket = getCoinPriceByCurrency('USDT', baseCurrency) || 0;
+      const yoyRateInMarket = getCoinPriceByCurrency('YOY', baseCurrency) || 0;
+
+      if (orderType === 'sell') {
+        setUsedByCoin({ USDT: 0, YOY: 0 });
+        setOverByCoin({ USDT: false, YOY: false });
+        setMaxQuantityCap(baseCoinBalance);
+        setSellQtyOver(quantityNum > baseCoinBalance + 1e-12);
+        return;
+      }
+      setSellQtyOver(false);
 
       const yoyLegValue = subtotalInMarket * (yoyPercentage / 100);
       const yoyUsed = yoyRateInMarket > 0 ? yoyLegValue / yoyRateInMarket : 0;
 
-      // 2분기(USDT/YOY) 기준 초과 계산: USDT 사용량이 보유량 초과 시 레드
       const usdtLegValue = subtotalInMarket * (usdtPercentage / 100);
       const usdtUseQty = usdtRateInMarket > 0 ? usdtLegValue / usdtRateInMarket : 0;
       const usdtOverNow = usdtUseQty > usdtBalance + 1e-9;
 
       setUsedByCoin({ USDT: usdtUseQty, YOY: yoyUsed });
       setOverByCoin({ USDT: usdtOverNow, YOY: yoyUsed > yoyBalance + 1e-9 });
-      // Max 계산용 상한(잔액 기준 주문 가능 최대 합계)
       const caps: number[] = [];
       if (usdtPercentage > 0 && usdtRateInMarket > 0) {
-        const stableCap = (usdtBalance * usdtRateInMarket) / Math.max(1e-9, (usdtPercentage / 100));
+        const stableCap = (usdtBalance * usdtRateInMarket) / Math.max(1e-9, usdtPercentage / 100);
         caps.push(stableCap);
       }
       if (yoyPercentage > 0 && yoyRateInMarket > 0) {
@@ -493,13 +560,23 @@ export default function MarketTab() {
       const allowableSubtotal = caps.length ? Math.min(...caps) : 0;
       setMaxQuantityCap(priceNum > 0 ? allowableSubtotal / priceNum : 0);
     } catch {
-      setUsedUsdt(0);
-      setUsedYoy(0);
+      setUsedByCoin({ USDT: 0, YOY: 0 });
       setMaxQuantityCap(0);
-      setUsdtOver(false);
-      setYoyOver(false);
+      setOverByCoin({ USDT: false, YOY: false });
+      setSellQtyOver(false);
     }
-  }, [orderPrice, orderQuantity, selectedOrderMarket, usdtPercentage, yoyPercentage]);
+  }, [
+    orderPrice,
+    orderQuantity,
+    selectedOrderMarket,
+    usdtPercentage,
+    yoyPercentage,
+    orderType,
+    priceCurrency,
+    usdtBalance,
+    yoyBalance,
+    baseCoinBalance,
+  ]);
 
   const normalizePercents = (a: number, b: number) => {
     const sum = a + b;
@@ -613,10 +690,13 @@ export default function MarketTab() {
     }
   };
 
+  /** 스토어 심사·API 미연동 시 모의 체결; 운영 API는 토큰 있을 때만 */
+  const preferPaperExecution =
+    process.env.EXPO_PUBLIC_MARKET_PAPER_TRADING === '1' || isDevelopment || !accessToken;
+
   const handleOrder = async () => {
     if (isOrdering) return;
-    
-    // 마켓/코인이 기본값인 경우 안내
+
     if (selectedOrderMarket === 'Market' || selectedOrderCoin === 'Coin') {
       Alert.alert(t('notice', language) || 'Notice', t('pleaseSelectMarketAndCoin', language));
       return;
@@ -627,18 +707,66 @@ export default function MarketTab() {
       return;
     }
 
+    const priceNum = parseFloat((orderPrice || '0').toString().replace(/,/g, ''));
+    const quantityNum = parseFloat(orderQuantity || '0');
+    if (!isFinite(priceNum) || priceNum <= 0 || !isFinite(quantityNum) || quantityNum <= 0) {
+      Alert.alert(t('error', language), language === 'ko' ? '가격과 수량을 확인해 주세요.' : 'Check price and quantity.');
+      return;
+    }
+
+    if (MARKET_LIVE_TRADING_ENABLED) {
+      if (orderType === 'buy') {
+        if (usdtOver || yoyOver) {
+          Alert.alert(
+            t('error', language),
+            language === 'ko' ? '결제에 사용할 잔액이 부족합니다.' : 'Insufficient balance for this order.',
+          );
+          return;
+        }
+      } else if (quantityNum > baseCoinBalance + 1e-12) {
+        Alert.alert(
+          t('error', language),
+          language === 'ko' ? '매도 수량이 보유량을 초과합니다.' : 'Sell quantity exceeds your balance.',
+        );
+        return;
+      }
+    }
+
     setIsOrdering(true);
 
     try {
       const symbol = `${selectedOrderMarket}-${selectedOrderCoin}`;
-      const priceNum = parseFloat((orderPrice || '0').toString().replace(/,/g, ''));
-      const quantityNum = parseFloat(orderQuantity || '0');
+      const uid = currentUser?.uid;
 
-      // 개발 환경 모킹
-      if (isDevelopment) {
-        await new Promise(r => setTimeout(r, 1200));
+      if (!MARKET_LIVE_TRADING_ENABLED || preferPaperExecution) {
+        if (!uid) {
+          setIsOrdering(false);
+          Alert.alert(t('loginRequired', language), t('loginRequired', language));
+          return;
+        }
+        const baseSym = String(selectedOrderCoin).toUpperCase();
+
+        await new Promise((r) => setTimeout(r, 450));
+        addTxStore({
+          type: 'trade',
+          success: true,
+          symbol: baseSym,
+          amount: quantityNum,
+          change: orderType === 'buy' ? quantityNum : -quantityNum,
+          description:
+            language === 'ko'
+              ? `모의${orderType === 'buy' ? ' 매수' : ' 매도'} ${symbol} @ ${priceNum} × ${quantityNum}`
+              : `Paper ${orderType} ${symbol} @ ${priceNum} × ${quantityNum}`,
+          source: 'market',
+          category: 'paper',
+        });
         setIsOrdering(false);
-        Alert.alert(t('done', language), `MOCK ${orderType.toUpperCase()} ${symbol}\n${t('price', language)}: ${priceNum.toLocaleString()}\n${t('quantity', language)}: ${quantityNum}`);
+        Alert.alert(
+          t('done', language),
+          language === 'ko'
+            ? `모의거래로 기록되었습니다. (실제 보유에는 반영되지 않습니다.)\n${symbol}\n${orderType === 'buy' ? '매수' : '매도'} ${quantityNum} ${baseSym}`
+            : `Simulated fill (does not change real balances).\n${symbol}\n${orderType} ${quantityNum} ${baseSym}`,
+        );
         setOrderQuantity('');
         return;
       }
@@ -653,7 +781,7 @@ export default function MarketTab() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
+          Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
           symbol,
@@ -710,6 +838,21 @@ export default function MarketTab() {
         avatarUri={avatarUri}
         profileUpdated={profileUpdated}
       />
+
+      {!MARKET_LIVE_TRADING_ENABLED ? (
+        <View style={styles.paperTradingBanner}>
+          <ThemedText style={styles.paperTradingBannerTitle}>
+            {language === 'ko' ? '모의거래' : language === 'ja' ? 'デモ取引' : 'Paper trading'}
+          </ThemedText>
+          <ThemedText style={styles.paperTradingBannerSub}>
+            {language === 'ko'
+              ? '정식 거래소 연동 전 연습 화면입니다. 실제 보유 자산·잔액에는 반영되지 않습니다.'
+              : language === 'ja'
+                ? '本番取引前の練習です。実際の残高には反映されません。'
+                : 'Practice only until live trading. Does not change your real balances.'}
+          </ThemedText>
+        </View>
+      ) : null}
 
       {/* 메인 제목탭 */}
       <View style={styles.mainTabsContainer}>
@@ -1033,11 +1176,22 @@ export default function MarketTab() {
             <View style={styles.priceDisplayContainer}>
               <View style={[styles.priceDisplayRow, { alignItems:'center' }]}>
                 <ThemedText style={[styles.sectionTitle, styles.inlineSectionTitle]}>{t('price', language)}</ThemedText>
-                <View style={[styles.priceDisplayField,{flexDirection:'row', alignItems:'center', justifyContent:'space-between'}]}>
-                  <ThemedText style={styles.priceDisplayText}>
-                    {getSymbolForCurrency(priceCurrency)} {orderPrice}
-                  </ThemedText>
-                  <TouchableOpacity onPress={handleCurrentPrice}>
+                <View
+                  style={[
+                    styles.priceDisplayField,
+                    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+                  ]}
+                >
+                  <ThemedText style={[styles.priceDisplayText, { marginRight: 4 }]}>{getSymbolForCurrency(priceCurrency)}</ThemedText>
+                  <TextInput
+                    style={[styles.quantityInputField, { flex: 1, marginBottom: 0, paddingVertical: 10 }]}
+                    placeholder={language === 'ko' ? '가격 입력' : 'Price'}
+                    placeholderTextColor="#666"
+                    value={orderPrice}
+                    onChangeText={(t) => setOrderPrice(formatPriceInputThousands(t))}
+                    keyboardType="decimal-pad"
+                  />
+                  <TouchableOpacity onPress={handleCurrentPrice} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                     <ThemedText style={styles.refreshButtonText}>↻</ThemedText>
                   </TouchableOpacity>
                 </View>
@@ -1124,7 +1278,10 @@ export default function MarketTab() {
               <View style={[styles.quantityInputRow, { alignItems:'center' }]}>
                 <ThemedText style={[styles.sectionTitle, styles.inlineSectionTitle]}>{t('quantity', language)}</ThemedText>
                 <TextInput
-                  style={styles.quantityInputField}
+                  style={[
+                    styles.quantityInputField,
+                    orderType === 'sell' && sellQtyOver ? { borderColor: '#c44', borderWidth: 2 } : null,
+                  ]}
                   placeholder={t('enterOrderQty', language)}
                   placeholderTextColor="#666"
                   value={orderQuantity}
@@ -1133,9 +1290,27 @@ export default function MarketTab() {
                 />
                 <ThemedText style={styles.quantityUnit}>{selectedOrderCoin}</ThemedText>
               </View>
+              {orderType === 'sell' && selectedOrderCoin !== 'Coin' ? (
+                <ThemedText
+                  style={{
+                    marginTop: 6,
+                    fontSize: 13,
+                    color: sellQtyOver ? '#ff6b6b' : '#AAA',
+                  }}
+                >
+                  {!MARKET_LIVE_TRADING_ENABLED
+                    ? language === 'ko'
+                      ? `참고용 실제 보유 ${selectedOrderCoin}: ${formatAmount(baseCoinBalance, 8)} (모의 매도 수량은 자유 입력)`
+                      : `Your ${selectedOrderCoin} (reference): ${formatAmount(baseCoinBalance, 8)} — simulated sell qty is free-form`
+                    : language === 'ko'
+                      ? `보유 ${selectedOrderCoin}: ${formatAmount(baseCoinBalance, 8)}`
+                      : `Available ${selectedOrderCoin}: ${formatAmount(baseCoinBalance, 8)}`}
+                </ThemedText>
+              ) : null}
             </View>
 
-            {/* 결제방식: 제목 포함 1줄 */}
+            {/* 결제방식: 매수 시에만 (매도는 기준 자산 수량만 사용) */}
+            {orderType === 'buy' ? (
             <View style={styles.paymentMethodContainer}>
               <View style={[styles.paymentMethodTabs, { alignItems:'center' }]}>
                 <ThemedText style={[styles.sectionTitle, styles.inlineSectionTitle]}>{t('paymentMethod', language)}</ThemedText>
@@ -1178,11 +1353,14 @@ export default function MarketTab() {
                 </TouchableOpacity>
               </View>
             </View>
+            ) : null}
 
             {/* USDT 슬라이더 (스테이블 합계) */}
-            {selectedPaymentMethod !== 'yoy' && (
+            {orderType === 'buy' && selectedPaymentMethod !== 'yoy' && (
             <View style={styles.paymentSliderContainer}>
-              <ThemedText style={styles.paymentSliderLabel}>USDT</ThemedText>
+              <ThemedText style={styles.paymentSliderLabel}>
+                {language === 'ko' ? 'USDT (스테이블 합산)' : 'USDT (stable sum)'}
+              </ThemedText>
               <View style={styles.sliderContainer}
                 onStartShouldSetResponder={() => true}
                 onResponderGrant={(e) => {
@@ -1203,7 +1381,7 @@ export default function MarketTab() {
                   <View style={[styles.sliderFill, { width: `${usdtPercentage}%` }]} />
                   <View style={[styles.sliderThumb, { left: `${usdtPercentage}%` }]} />
                 </View>
-                <ThemedText style={styles.sliderPercentage}>{Math.round(usdtPercentage)}%</ThemedText>
+                <ThemedText style={styles.sliderPercentage}>{`${Math.round(usdtPercentage)}%`}</ThemedText>
                 {usdtOver ? (
                   <TouchableOpacity style={styles.maxButton} onPress={() => handleSetMaxPct('USDT')}>
                     <ThemedText style={styles.maxButtonText}>{t('maximum', language) || 'MAX'}</ThemedText>
@@ -1212,13 +1390,15 @@ export default function MarketTab() {
               </View>
               <View style={styles.paymentInfoRow}>
                 <ThemedText style={styles.paymentInfoText}>{t('used', language)}: {formatAmount(usedUsdt, 2)} USDT(eqv.)</ThemedText>
-                <ThemedText style={styles.holdingText}>{t('available2', language)}: {usdtBalance.toLocaleString()} USDT</ThemedText>
+                <ThemedText style={styles.holdingText}>
+                  {t('available2', language)}: {formatAmount(usdtBalance, 4)} USDT(eqv.)
+                </ThemedText>
               </View>
             </View>
             )}
 
             {/* YOY 골든바: 스테이블 코인 아래에 위치 */}
-            {selectedPaymentMethod !== 'stablecoin' && (
+            {orderType === 'buy' && selectedPaymentMethod !== 'stablecoin' && (
             <View style={styles.paymentSliderContainer}>
               <ThemedText style={styles.paymentSliderLabel}>YOY</ThemedText>
               <View style={styles.sliderContainer}
@@ -1241,7 +1421,7 @@ export default function MarketTab() {
                   <View style={[styles.sliderFill, { width: `${yoyPercentage}%` }]} />
                   <View style={[styles.sliderThumb, { left: `${yoyPercentage}%` }]} />
                 </View>
-                <ThemedText style={styles.sliderPercentage}>{yoyPercentage}%</ThemedText>
+                <ThemedText style={styles.sliderPercentage}>{`${Math.round(yoyPercentage)}%`}</ThemedText>
                 {yoyOver ? (
                   <TouchableOpacity style={styles.maxButton} onPress={() => handleSetMaxPct('YOY')}>
                     <ThemedText style={styles.maxButtonText}>{t('maximum', language) || 'MAX'}</ThemedText>
@@ -1250,7 +1430,9 @@ export default function MarketTab() {
               </View>
               <View style={styles.paymentInfoRow}>
                 <ThemedText style={styles.paymentInfoText}>{t('used', language)}: {formatAmount(usedYoy, 2)} YOY</ThemedText>
-                <ThemedText style={styles.holdingText}>{t('available2', language)}: {yoyBalance.toLocaleString()} YOY</ThemedText>
+                <ThemedText style={styles.holdingText}>
+                  {t('available2', language)}: {formatAmount(yoyBalance, 4)} YOY
+                </ThemedText>
               </View>
             </View>
             )}
@@ -2105,6 +2287,29 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
   
+  paperTradingBanner: {
+    marginHorizontal: 14,
+    marginTop: 4,
+    marginBottom: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D4AF37',
+    backgroundColor: '#1A1508',
+  },
+  paperTradingBannerTitle: {
+    color: '#D4AF37',
+    fontSize: 16,
+    fontWeight: '900',
+    marginBottom: 6,
+  },
+  paperTradingBannerSub: {
+    color: '#CCC',
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
   // B 형식 새로운 스타일들
   priceDisplayContainer: {
     marginBottom: 20,

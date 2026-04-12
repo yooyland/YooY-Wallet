@@ -171,7 +171,8 @@ export async function claimVoucher(input: {
               address: input.recipientAddress,
               email: input.recipientEmail || null,
               amount: amt,
-              at: serverTimestamp(),
+              // 배열 원소에는 serverTimestamp() 불가 — 클라이언트 시각 사용
+              at: Timestamp.now(),
             },
           ],
           status: (v.claimedCount + 1) >= limit ? 'exhausted' : 'active',
@@ -205,7 +206,7 @@ export async function claimVoucher(input: {
                 address: input.recipientAddress,
                 email: input.recipientEmail || null,
                 amount: per,
-                at: serverTimestamp(),
+                at: Timestamp.now(),
               },
             ],
             status: ((v.claimedCount + 1) >= limit || nextRemain <= 0) ? 'exhausted' : 'active',
@@ -224,7 +225,7 @@ export async function claimVoucher(input: {
                 address: input.recipientAddress,
                 email: input.recipientEmail || null,
                 amount: amt,
-                at: serverTimestamp(),
+                at: Timestamp.now(),
               },
             ],
             status: 'exhausted',
@@ -262,8 +263,21 @@ export function buildClaimUri(id: string): string {
 
 export function parseClaimUri(data: string): { id: string } | null {
   try {
-    const raw = String(data || '').trim();
+    let raw = String(data || '').trim();
     if (!raw) return null;
+    // 붙여넣기 시 스킴 누락: "//claim?id=..." → yooy://claim?id=...
+    if (/^\/\/claim\?/i.test(raw)) {
+      raw = 'yooy:' + raw;
+    }
+    // 0) RN/일부 환경에서 new URL('yooy://...') 실패 대비
+    const yooyM = raw.match(/^yooy:\/\/claim\?[^#]*\bid=([^&#]+)/i);
+    if (yooyM && yooyM[1]) {
+      try {
+        return { id: decodeURIComponent(yooyM[1].trim()) };
+      } catch {
+        return { id: yooyM[1].trim() };
+      }
+    }
     // 1) yooy://claim?id=...
     try {
       const u = new URL(raw);

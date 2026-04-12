@@ -5,6 +5,7 @@ import { Colors } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import { useMarket } from '@/contexts/MarketContext';
 import { useWallet } from '@/contexts/WalletContext';
+import { useMergedWalletAssets } from '@/contexts/MergedWalletAssetsContext';
 import { useMonitorStore } from '@/lib/monitorStore';
 import priceManager from '@/lib/priceManager';
 import { usePreferences } from '@/contexts/PreferencesContext';
@@ -20,7 +21,7 @@ import { useTodoStore } from '@/src/features/todo/todo.store';
 import * as ScreenCapture from 'expo-screen-capture';
 import * as Clipboard from 'expo-clipboard';
 import { loadMnemonic } from '@/src/wallet/secure';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import {
     Alert,
     Animated,
@@ -62,11 +63,11 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
   const { items: todoItems } = useTodoStore();
   const todoPendingCount = (todoItems || []).filter((i:any) => !i.completed).length;
 
-  // 총자산 계산: Dashboard/Wallet과 동일하게 valueUSD(SSOT) 합계 → 환율 변환(formatCurrency)
-  const balancesArray = useMonitorStore(s => s.balancesArray);
+  // 총자산: 온체인+내부 병합(mergedAssets) — 대시보드/지갑 탭과 동일 소스
+  const { mergedAssets } = useMergedWalletAssets();
   const totalUsd = (() => {
     try {
-      const arr = Array.isArray(balancesArray) ? balancesArray : [];
+      const arr = Array.isArray(mergedAssets) ? mergedAssets : [];
       return arr.reduce((sum, b: any) => {
         const v = Number(b?.valueUSD || 0);
         return sum + (Number.isFinite(v) ? v : 0);

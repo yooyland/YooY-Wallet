@@ -1,14 +1,11 @@
-import { IconSymbol } from '@/components/ui/icon-symbol';
 import { router } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { Image, StyleSheet, TouchableOpacity, View, Keyboard } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type Props = { active?: 'wallet' | 'payments' | 'market' | 'dashboard' | 'exchange' | 'todo' | 'chat' };
 
 export default function ChatBottomBar({ active = 'chat' }: Props) {
-  const insets = useSafeAreaInsets();
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   useEffect(() => {
     const subShow = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
@@ -18,8 +15,10 @@ export default function ChatBottomBar({ active = 'chat' }: Props) {
       subHide.remove();
     };
   }, []);
+  if (keyboardVisible) return null;
+
   return (
-    <View style={[styles.bottomBar, { bottom: 0, paddingBottom: 0, display: keyboardVisible ? 'none' : 'flex' }]}>
+    <View style={[styles.bottomBar, { bottom: 0, paddingBottom: 0 }]}>
       {/* wallet */}
       <TouchableOpacity style={styles.bottomBarItem} onPress={() => router.push('/(tabs)/wallet')}>
         <View style={[styles.iconWrap, active==='wallet' && styles.iconWrapActive]}>
@@ -60,8 +59,8 @@ export default function ChatBottomBar({ active = 'chat' }: Props) {
           <MaterialIcons name="checklist" size={24} color={active==='todo' ? '#FFD700' : '#666666'} />
         </View>
       </TouchableOpacity>
-      {/* chat (friends) */}
-      <TouchableOpacity style={styles.bottomBarItem} onPress={() => router.push('/chat/friends')}>
+      {/* chat (default -> v2) */}
+      <TouchableOpacity style={styles.bottomBarItem} onPress={() => router.push('/chatv2')}>
         <View style={[styles.iconWrap, active==='chat' && styles.iconWrapActive]}>
           <Ionicons name="chatbubble-ellipses" size={24} color={active==='chat' ? '#FFD700' : '#666666'} />
         </View>

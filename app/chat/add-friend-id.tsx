@@ -4,8 +4,8 @@ import { ThemedView } from '@/components/themed-view';
 import { router, Stack } from 'expo-router';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { t } from '@/i18n';
-import React, { useEffect, useMemo, useState } from 'react';
-import { Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Alert, Image, Linking, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { firebaseAuth, firestore } from '@/lib/firebase';
 import { addDoc, collection, doc, getDoc, getDocs, limit, query, setDoc, where } from 'firebase/firestore';
@@ -186,9 +186,16 @@ export default function AddFriendIdScreen() {
             const key = 'local.friends';
             const raw = await AsyncStorage.getItem(key);
             const list: any[] = raw ? JSON.parse(raw) : [];
-            const pseudoId = `invite-${user.email || user.phone || kw}`;
+            const pseudoId = `invite-${user.email || user.phone || keyword.trim()}`;
             const next = list.filter((x) => x.id !== pseudoId);
-            next.unshift({ id: pseudoId, name: user.displayName || user.email || user.phone || String(kw), status: 'invited', phone: user.phone, email: user.email, addedAt: now });
+            next.unshift({
+              id: pseudoId,
+              name: user.displayName || user.email || user.phone || keyword.trim() || 'invite',
+              status: 'invited',
+              phone: user.phone,
+              email: user.email,
+              addedAt: now,
+            });
             await AsyncStorage.setItem(key, JSON.stringify(next));
           } catch {}
           // 이메일이 있으면 기본 메일/공유 시트로 링크 전송 유도
@@ -207,7 +214,13 @@ export default function AddFriendIdScreen() {
             } catch {}
           }
           alert('초대를 생성했습니다. 이메일/공유로 링크를 전송해 주세요.');
-          try { router.push('/chat/friends'); } catch {}
+          try {
+            router.replace('/chatv2/friends' as any);
+          } catch {
+            try {
+              router.back();
+            } catch {}
+          }
           return;
         } catch {
           alert('초대 생성에 실패했습니다. 다시 시도해 주세요.');
@@ -217,13 +230,18 @@ export default function AddFriendIdScreen() {
 
       const ref = doc(firestore, 'users', me, 'friends', targetId);
       const now = Date.now();
-      await setDoc(ref, {
-        displayName: user.displayName || '',
-        email: user.email || null,
-        phone: user.phone || null,
-        status: 'linked',
-        createdAt: now,
-      }, { merge: true });
+      await setDoc(
+        ref,
+        {
+          userId: targetId,
+          displayName: user.displayName || '',
+          email: user.email || null,
+          phone: user.phone || null,
+          status: 'linked',
+          createdAt: now,
+        },
+        { merge: true },
+      );
       // 로컬 캐시에도 즉시 반영(친구 상태 linked)
       try {
         const key = 'local.friends';
@@ -235,7 +253,13 @@ export default function AddFriendIdScreen() {
       } catch {}
       setFriendIds((m) => ({ ...m, [targetId]: true }));
       alert('친구로 추가되었습니다.');
-      try { router.push('/chat/friends'); } catch {}
+      try {
+        router.replace('/chatv2/friends' as any);
+      } catch {
+        try {
+          router.back();
+        } catch {}
+      }
     } catch {
       alert('추가에 실패했습니다. 다시 시도해 주세요.');
     }

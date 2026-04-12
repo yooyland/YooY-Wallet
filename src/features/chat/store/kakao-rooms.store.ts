@@ -796,7 +796,7 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
                     // file:// or content:// (native) → base64로 업로드
                     try {
                       // eslint-disable-next-line @typescript-eslint/no-var-requires
-                      const FileSystem = require('expo-file-system');
+                      const FileSystem = require('expo-file-system/legacy');
                       // content:// 는 일부 기기에서 직접 readAsStringAsync가 실패할 수 있어 cache로 복사 후 읽는다.
                       let readUri = String(localUri);
                       try {
@@ -1532,7 +1532,7 @@ export const useKakaoRoomsStore = create<KakaoRoomsState & KakaoRoomsActions>()(
 
           // 파일 생성 후 공유 (모바일 안전)
           try {
-            const FS = require('expo-file-system');
+            const FS = require('expo-file-system/legacy');
             const Sharing = (() => { try { return require('expo-sharing'); } catch { return null; } })();
             const safeTitle = (() => {
               try {

@@ -30,7 +30,7 @@ export default function AppBottomBar({ active = 'home' }: Props) {
           <IconSymbol size={28} name="creditcard.fill" color={active==='payments' ? '#FFD700' : '#666666'} />
         </View>
       </TouchableOpacity>
-      <TouchableOpacity style={styles.bottomBarItem} onPress={() => router.push('/chat')}>
+      <TouchableOpacity style={styles.bottomBarItem} onPress={() => router.push('/chatv2')}>
         <View style={[styles.iconWrap, active==='chat' && styles.iconWrapActive]}>
           <Image 
             source={require('@/assets/images/chat-icon.png')}

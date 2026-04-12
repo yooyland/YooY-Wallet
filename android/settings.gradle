@@ -37,12 +37,3 @@ expoAutolinking.useExpoVersionCatalog()
 
 include ':app'
 includeBuild(expoAutolinking.reactNativeGradlePlugin)
-
-// Reanimated가 링크하는 libworklets.so는 실제 worklets 네이티브 빌드가 필요합니다.
-// (disabled 더미는 stub만 제공해 undefined symbol 에러 발생)
-def workletsNodeModules = new File(rootDir.parentFile, 'node_modules/react-native-worklets')
-include ':react-native-worklets'
-project(':react-native-worklets').projectDir = new File(workletsNodeModules, 'android')
-
-// expo-barcode-scanner: 이미지에서 QR 인식을 위해 네이티브 모듈을 활성화합니다.
-// (autolinking 기본 동작 유지)

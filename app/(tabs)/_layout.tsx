@@ -9,6 +9,7 @@ import { HapticTab } from '@/components/haptic-tab';
 import { useAuth } from '@/contexts/AuthContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ORDER_ENABLED, STAKING_ENABLED } from '@/lib/featureFlags';
+import { MergedWalletAssetsProvider } from '@/contexts/MergedWalletAssetsContext';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
@@ -46,30 +47,32 @@ export default function TabLayout() {
       if (key === 'market') return /\/\(tabs\)\/market/i.test(p);
       if (key === 'exchange') return /\/\(tabs\)\/exchange/i.test(p);
       if (key === 'todo') return /\/\(tabs\)\/todo/i.test(p);
-      if (key === 'chat') return /\/chat(\/|$)/i.test(p);
+      // v2 is default; old chat remains as fallback only
+      if (key === 'chat') return /\/chatv2(\/|$)/i.test(p);
       return false;
     };
     return (
       <View style={[styles.tabBarCustom, { bottom: 0, paddingBottom: 0, display: keyboardVisible ? 'none' : 'flex' }]}>
-        <Item active={isActive('wallet')} onPress={() => router.push('/(tabs)/wallet')}>
+        <Item active={isActive('wallet')} onPress={() => router.navigate('/(tabs)/wallet')}>
           <Ionicons name="wallet" size={22.4} color={isActive('wallet') ? activeColor : inactiveColor} />
         </Item>
-        <Item active={isActive('payments')} onPress={() => router.push('/(tabs)/payments')}>
+        <Item active={isActive('payments')} onPress={() => router.navigate('/(tabs)/payments')}>
           <MaterialIcons name="swap-horiz" size={22.4} color={isActive('payments') ? activeColor : inactiveColor} />
         </Item>
-        <Item active={isActive('market')} onPress={() => router.push('/(tabs)/market')}>
+        <Item active={isActive('market')} onPress={() => router.navigate('/(tabs)/market')}>
           <Ionicons name="trending-up" size={22.4} color={isActive('market') ? activeColor : inactiveColor} />
         </Item>
-        <Item active={isActive('dashboard')} onPress={() => router.push('/(tabs)/dashboard')}>
+        <Item active={isActive('dashboard')} onPress={() => router.navigate('/(tabs)/dashboard')}>
           <Image source={require('@/assets/images/YooY_simbol_1.png')} style={{ width: 29.1, height: 29.1 }} resizeMode="contain" />
         </Item>
-        <Item active={isActive('exchange')} onPress={() => router.push('/(tabs)/exchange')}>
+        <Item active={isActive('exchange')} onPress={() => router.navigate('/(tabs)/exchange')}>
           <MaterialIcons name="bar-chart" size={22.4} color={isActive('exchange') ? activeColor : inactiveColor} />
         </Item>
-        <Item active={isActive('todo')} onPress={() => router.push('/(tabs)/todo')}>
+        <Item active={isActive('todo')} onPress={() => router.navigate('/(tabs)/todo')}>
           <MaterialIcons name="checklist" size={22.4} color={isActive('todo') ? activeColor : inactiveColor} />
         </Item>
-        <Item active={isActive('chat')} onPress={() => router.push('/chat/friends')}>
+        {/* Default chat entry -> v2 */}
+        <Item active={isActive('chat')} onPress={() => router.navigate('/chatv2')}>
           <Ionicons name="chatbubble-ellipses" size={22.4} color={isActive('chat') ? activeColor : inactiveColor} />
         </Item>
       </View>
@@ -81,6 +84,7 @@ export default function TabLayout() {
   }
 
   return (
+    <MergedWalletAssetsProvider>
     <>
       <Tabs
         screenOptions={{
@@ -173,6 +177,7 @@ export default function TabLayout() {
       </Tabs>
       <GlobalBottomBar />
     </>
+    </MergedWalletAssetsProvider>
   );
 }
 

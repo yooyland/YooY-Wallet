@@ -30,6 +30,12 @@ service firebase.storage {
       allow write: if isSignedIn();
     }
 
+    // chatv2 방 커버/배경 (uploadRoomCoverPhotoV2 등)
+    match /chatv2/rooms/{roomId}/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
     // 기타 경로: 로그인 사용자만 읽기/쓰기
     match /{allPaths=**} {
       allow read, write: if isSignedIn();

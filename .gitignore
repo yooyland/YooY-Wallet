@@ -46,4 +46,6 @@ app-example
 android/.gradle/**
 android/**/build/**
 android/local.properties
+android/key.properties
+android/upload-keystore.jks
 android/.cxx/**

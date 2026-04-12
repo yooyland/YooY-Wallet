@@ -6,9 +6,7 @@ import {
   fetchMeAddresses,
   fetchMeBalances,
   fetchMeTransactions,
-  fetchBalances as fetchBalancesOnChain,
   balancesMapToArray,
-  formatUnitsToNumber,
   loadCachedMeBalances,
   saveCachedMeBalances,
 } from '@/lib/monitor';
@@ -25,11 +23,13 @@ type MonitorState = {
   transactions: any[];
   buyPriceMap: Record<string, number>; // symbol -> avg buy price USD
   lastSuccessAt: number | null;
+  lastAttemptAt: number | null;
   lastError: string | null;
+  lastErrorAt: number | null;
   syncing: boolean;
   timeline: Array<{ tag: string; at: number; data?: any }>;
   // actions
-  syncMe: (tag?: string) => Promise<void>;
+  syncMe: (tag?: string, opts?: { force?: boolean }) => Promise<void>;
 };
 
 let inflight: Promise<void> | null = null;
@@ -61,20 +61,22 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
   transactions: [],
   buyPriceMap: {},
   lastSuccessAt: null,
+  lastAttemptAt: null,
   lastError: null,
+  lastErrorAt: null,
   syncing: false,
   timeline: [],
-  syncMe: async (tag?: string) => {
+  syncMe: async (tag?: string, opts?: { force?: boolean }) => {
     if (inflight) return inflight;
     inflight = (async () => {
       perfStart('syncMe');
       const log = (...args: any[]) => console.log(tag || '[SYNC]', ...args);
       try {
-        set({ syncing: true });
+        set({ syncing: true, lastAttemptAt: Date.now() });
         // 0) 최근 동기화 TTL(30s) 내면 즉시 반환 (단, 잔액이 비어 있으면 항상 재요청해 온체인 반영 보장)
         const last = get().lastSuccessAt;
         const hasBalances = (get().balancesArray?.length ?? 0) > 0;
-        if (hasBalances && last && Date.now() - last < 30_000) {
+        if (!opts?.force && hasBalances && last && Date.now() - last < 30_000) {
           log('skip by TTL (30s)');
           set({ syncing: false });
           inflight = null;
@@ -92,8 +94,8 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
         try {
           const { useTransactionStore } = await import('@/src/stores/transaction.store');
           const txs = useTransactionStore.getState().getTransactions();
-          const positive = new Set(['daily_reward','event_reward','reward','manual_adjustment','airdrop','mint','staking','receive','claim']);
-          const negative = new Set(['penalty','fee','spend','payment','pay']);
+          const positive = new Set(['daily_reward','event_reward','reward','manual_adjustment','airdrop','mint','staking','receive','claim','gift_claim']);
+          const negative = new Set(['penalty','fee','spend','payment','pay','gift_reserve']);
           const skipOnChain = new Set(['deposit','withdrawal','transfer','trade']);
           const deltaBySymbol: Record<string, number> = {};
           for (const tx of txs) {
@@ -186,66 +188,21 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
         })();
         // 3) addresses
         const t0a = Date.now();
-        const addresses = await fetchMeAddresses(idt);
+        const addresses = await fetchMeAddresses(idt, { timeoutMs: 25_000 } as any);
         log('GET /me/addresses', { ms: Date.now() - t0a, addresses });
         // 4) balances: 서버 스냅샷(타임아웃 8~10s)
         const t0b = Date.now();
-        const balancesRes = await fetchMeBalances(idt, 1, 1, { timeoutMs: 10_000 } as any);
+        const balancesRes = await fetchMeBalances(idt, { timeoutMs: 25_000 } as any);
         const fetchMs = Date.now() - t0b;
-        const serverMeta = balancesRes?.meta || {};
-        const balances = (balancesRes?.balances || {}) as Record<string, string>;
+        const serverMeta = (balancesRes as any)?.meta || {};
+        const balances = (balancesRes as any)?.balances ? ((balancesRes as any).balances as Record<string, string>) : ((balancesRes as any) || {}) as Record<string, string>;
         log('GET /me/balances', { ms: fetchMs, serverMeta });
         set(state => ({ timeline: [...state.timeline, { tag: '[BAL]', at: Date.now(), data: { fetchMs, serverLatencyMs: serverMeta?.latencyMs, keysCount: Object.keys(balances||{}).length } }] }));
         if (uid && balances && Object.keys(balances).length > 0) {
           await saveCachedMeBalances(uid, balances);
         }
         let balancesArray = balancesMapToArray(balances || {}, null);
-        // 4.1) 온체인 잔액 병합: 서버에 온체인이 누락돼도 클라이언트에서 직접 조회해 반영 (온체인 우선)
-        // 여러 주소 소스에서 fallback: walletAddrLower, addresses 목록, AsyncStorage 저장 주소
-        let onChainAddr = walletAddrLower;
-        if (!onChainAddr && Array.isArray(addresses) && addresses.length > 0) {
-          onChainAddr = String(addresses[0]).toLowerCase();
-        }
-        if (!onChainAddr) {
-          try {
-            const saved = await AsyncStorage.getItem('wallet.lastKnownAddress');
-            if (saved && saved.trim()) onChainAddr = saved.trim().toLowerCase();
-          } catch {}
-        }
-        log('on-chain lookup addr:', onChainAddr || '(none)');
-        if (onChainAddr) {
-          try {
-            const onChainRaw = await fetchBalancesOnChain(onChainAddr);
-            log('on-chain raw:', onChainRaw);
-            const rawY = String(onChainRaw?.YOY ?? '0');
-            const rawE = String(onChainRaw?.ETH ?? '0');
-            const onChainYOY = rawY && Number(rawY) > 1e15 ? formatUnitsToNumber(rawY, 18) : Number(rawY || 0);
-            const onChainETH = rawE && Number(rawE) > 1e15 ? formatUnitsToNumber(rawE, 18) : Number(rawE || 0);
-            log('on-chain parsed:', { onChainYOY, onChainETH });
-            // 온체인 값이 유효하면 무조건 합산/대체 (기존 Math.max → 온체인 우선 합산)
-            const merge = [...balancesArray];
-            if (Number.isFinite(onChainETH) && onChainETH > 0) {
-              const idx = merge.findIndex(b => String(b.symbol).toUpperCase() === 'ETH');
-              if (idx >= 0) {
-                // 서버 값이 온체인보다 작으면 온체인으로 대체, 아니면 합산 (중복 방지 위해 max 사용)
-                merge[idx] = { ...merge[idx], amount: Math.max(merge[idx].amount, onChainETH) };
-              } else {
-                merge.push({ symbol: 'ETH', amount: onChainETH, valueUSD: 0, name: 'ETH', change24h: 0, change24hPct: 0 });
-              }
-            }
-            if (Number.isFinite(onChainYOY) && onChainYOY > 0) {
-              const idx = merge.findIndex(b => String(b.symbol).toUpperCase() === 'YOY');
-              if (idx >= 0) {
-                // 온체인 YOY가 있으면 최소한 그 값 이상으로 설정
-                merge[idx] = { ...merge[idx], amount: Math.max(merge[idx].amount, onChainYOY) };
-              } else {
-                merge.push({ symbol: 'YOY', amount: onChainYOY, valueUSD: 0, name: 'YOY', change24h: 0, change24hPct: 0 });
-              }
-            }
-            balancesArray = merge;
-            log('on-chain merged balances:', balancesArray.map(b => ({ s: b.symbol, a: b.amount })));
-          } catch (e) { log('on-chain merge error', String((e as any)?.message || e)); }
-        }
+        // 온체인 YOY/ETH는 홈 대시보드에서 RPC(balanceOf/getBalance)로만 합산(mergedAssets). 여기서 HTTP 온체인 병합 시 이중 합산됨.
         // 5) 가격 합치기: 즉시 현재 저장된 가격으로 1차 반영(대기 없음)
         try {
           balancesArray = balancesArray.map(b => {
@@ -268,8 +225,8 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
         try {
           const { useTransactionStore } = await import('@/src/stores/transaction.store');
           const txs = useTransactionStore.getState().getTransactions();
-          const positive = new Set(['daily_reward','event_reward','reward','manual_adjustment','airdrop','mint','staking','receive','claim']);
-          const negative = new Set(['penalty','fee','spend','payment','pay']);
+          const positive = new Set(['daily_reward','event_reward','reward','manual_adjustment','airdrop','mint','staking','receive','claim','gift_claim']);
+          const negative = new Set(['penalty','fee','spend','payment','pay','gift_reserve']);
           const skipOnChain = new Set(['deposit','withdrawal','transfer','trade']);
           const deltaBySymbol: Record<string, number> = {};
           for (const tx of txs) {
@@ -320,14 +277,14 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
         if (balancesArray.length > 0) set({ balancesMap: balances || {}, balancesArray });
         // 6) transactions (최대 50개로 제한, buyPrice 계산은 백그라운드)
         const t0c = Date.now();
-        const serverTxs = await fetchMeTransactions(idt, 1, 50);
+        const serverTxs = await fetchMeTransactions(idt, 1, 50, { timeoutMs: 25_000 } as any);
         log('GET /me/transactions', { ms: Date.now() - t0c, count: serverTxs?.length || 0 });
         // 6.1) 로컬(보상/비용 등) 거래를 서버 거래와 머지 (중복 제거)
         let mergedTxs: any[] = Array.isArray(serverTxs) ? [...serverTxs] : [];
         try {
           const { useTransactionStore } = await import('@/src/stores/transaction.store');
           const localTxs = useTransactionStore.getState().getTransactions();
-          const includeTypes = new Set(['daily_reward','event_reward','reward','manual_adjustment','airdrop','mint','penalty','fee','staking','gift']);
+          const includeTypes = new Set(['daily_reward','event_reward','reward','manual_adjustment','airdrop','mint','penalty','fee','staking','gift','gift_reserve','gift_claim']);
           // 서버 tx의 고유키: tx_hash(+log_index) 또는 timestamp+symbol+amount
           const seen = new Set<string>();
           for (const t of mergedTxs) {
@@ -431,11 +388,12 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
           transactions: Array.isArray(mergedTxs) ? mergedTxs : (Array.isArray(serverTxs) ? serverTxs : []),
           lastSuccessAt: Date.now(),
           lastError: null,
+          lastErrorAt: null,
         });
         set(state => ({ timeline: [...state.timeline, { tag: '[RENDER]', at: Date.now(), data: { renderMs: Date.now() - t_auth, balancesSummary: Object.keys(balances||{}) } }] }));
       } catch (e: any) {
         console.log(tag || '[SYNC]', 'error', String(e?.message || e));
-        set({ lastError: String(e?.message || e) });
+        set({ lastError: String(e?.message || e), lastErrorAt: Date.now() });
       } finally {
         set({ syncing: false });
         inflight = null;

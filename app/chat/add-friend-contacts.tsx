@@ -1,7 +1,7 @@
 import ChatBottomBar from '@/components/ChatBottomBar';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { router, Stack } from 'expo-router';
+import { router, useGlobalSearchParams, useLocalSearchParams } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
@@ -21,6 +21,9 @@ type PhoneContact = {
 
 export default function AddFriendContactsScreen() {
   const { language } = usePreferences();
+  const localParams = useLocalSearchParams<{ manual?: string }>();
+  const globalParams = useGlobalSearchParams<{ manual?: string }>();
+  const manualParam = String(localParams?.manual ?? globalParams?.manual ?? '');
   const [supported, setSupported] = useState(true);
   const [loading, setLoading] = useState(false);
   const [contacts, setContacts] = useState<PhoneContact[]>([]);
@@ -120,7 +123,19 @@ export default function AddFriendContactsScreen() {
     }
   }, []);
 
-  useEffect(() => { loadContacts(); }, [loadContacts]);
+  useEffect(() => {
+    loadContacts();
+  }, [loadContacts]);
+
+  /** 친구 탭「연락처 추가」: 전화번호 직접 입력 모달 즉시 표시 */
+  useEffect(() => {
+    const m = manualParam.toLowerCase();
+    if (m === '1' || m === 'true' || m === 'add') {
+      setAddPhone('');
+      setAddName('');
+      setAddVisible(true);
+    }
+  }, [manualParam]);
 
   // 백그라운드 동기화(화면 비활성화 중에도 시작)
   const startBackgroundSync = useCallback(() => {
@@ -217,7 +232,9 @@ export default function AddFriendContactsScreen() {
       if (Platform.OS === 'web') {
         const uid = firebaseAuth.currentUser?.uid;
         if (!uid) {
-          try { router.push('/chat/friends?t=' + Date.now()); } catch {}
+          try {
+            router.replace('/chatv2/friends' as any);
+          } catch {}
           return;
         }
         const usersRef = collection(firestore, 'users');
@@ -256,7 +273,9 @@ export default function AddFriendContactsScreen() {
         // 네이티브도 웹과 동일하게 Firestore 직접 처리 (클라우드 함수 의존 제거)
         const uid = firebaseAuth.currentUser?.uid;
         if (!uid) {
-          try { router.push('/chat/friends?t=' + Date.now()); } catch {}
+          try {
+            router.replace('/chatv2/friends' as any);
+          } catch {}
           return;
         }
         const usersRef = collection(firestore, 'users');
@@ -292,7 +311,9 @@ export default function AddFriendContactsScreen() {
           status = 'invited';
         }
       }
-      try { router.push('/chat/friends?t=' + Date.now()); } catch {}
+      try {
+        router.replace('/chatv2/friends' as any);
+      } catch {}
       if (status === 'linked') Alert.alert(t('addFriend', language), `${name} (+${digits}) ${t('linkedAsFriend', language)}`);
       else Alert.alert('초대됨', `${name} (+${digits})에게 초대를 생성했습니다.`);
     } catch (e) {
@@ -345,7 +366,9 @@ export default function AddFriendContactsScreen() {
         const uid = firebaseAuth.currentUser?.uid;
         if (!uid) {
           // 로그인 전이라도 로컬 목록은 즉시 반영되므로 목록으로 이동
-          try { router.push('/chat/friends?t=' + Date.now()); } catch {}
+          try {
+            router.replace('/chatv2/friends' as any);
+          } catch {}
           throw new Error('no-auth');
         }
         const normalized = phone.startsWith('+') ? phone : `+${phone}`;
@@ -432,7 +455,9 @@ export default function AddFriendContactsScreen() {
       } catch {}
 
       // 목록으로 즉시 이동 (웹/네이티브 공통)
-      try { router.push('/chat/friends?t=' + Date.now()); } catch {}
+      try {
+        router.replace('/chatv2/friends' as any);
+      } catch {}
 
       if (status === 'linked') {
         Alert.alert('친구 추가', `${name} (${phone}) 친구로 연결되었습니다.`);
@@ -565,7 +590,7 @@ export default function AddFriendContactsScreen() {
         t('bulkAddFriends', language),
         `연결 ${success}명, 초대 ${invited}명, 제외/실패 ${skipped}명`,
         [
-          { text: '확인', onPress: () => router.push('/chat/friends') }
+          { text: '확인', onPress: () => router.replace('/chatv2/friends' as any) }
         ]
       );
     } finally {
@@ -749,10 +774,18 @@ export default function AddFriendContactsScreen() {
         {addVisible && (
           <View style={styles.overlay} pointerEvents="auto">
             <View style={styles.card}>
-              <Text style={styles.cardTitle}>새 번호 추가</Text>
+              <Text style={styles.cardTitle}>전화번호로 친구 추가</Text>
               <View style={styles.field}>
                 <Text style={styles.label}>전화번호</Text>
-                <Text style={styles.value}>{addPhone}</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="01012345678 또는 +8210..."
+                  placeholderTextColor="#888"
+                  value={addPhone}
+                  onChangeText={setAddPhone}
+                  keyboardType="phone-pad"
+                  autoCorrect={false}
+                />
               </View>
               <View style={styles.field}>
                 <Text style={styles.label}>친구 이름</Text>

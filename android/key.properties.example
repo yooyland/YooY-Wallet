@@ -1,0 +1,6 @@
+# Copy to key.properties and fill in real values. Do not commit key.properties.
+# Keystore file must sit next to this folder: android/upload-keystore.jks
+storeFile=upload-keystore.jks
+storePassword=YOUR_STORE_PASSWORD
+keyAlias=upload
+keyPassword=YOUR_KEY_PASSWORD

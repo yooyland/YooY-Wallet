@@ -9,13 +9,23 @@ import { FlatList, StyleSheet, Text, TouchableOpacity, View, Image, Alert } from
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { firebaseAuth, firestore } from '@/lib/firebase';
 import { collection, doc, getDoc, getDocs, limit, query, serverTimestamp, setDoc, where } from 'firebase/firestore';
+import { useChatProfileStore } from '@/src/features/chat/store/chat-profile.store';
 
 type RecommendedUser = { uid: string; name: string; avatar?: string; email?: string; score?: number };
 
 const ADMIN_EMAILS = ['admin@yooyland.com','jch4389@gmail.com','landyooy@gmail.com'];
 
+function tokenizeProfileText(raw: string | null | undefined): string[] {
+  const s = String(raw || '')
+    .toLowerCase()
+    .replace(/[^\wㄱ-ㅎㅏ-ㅣ가-힣#@.\s_-]/gi, ' ');
+  const parts = s.split(/\s+/).filter((w) => w.length >= 2);
+  return Array.from(new Set(parts)).slice(0, 12);
+}
+
 export default function AddFriendRecommendedScreen() {
   const { language } = usePreferences();
+  const currentProfile = useChatProfileStore((s) => s.currentProfile);
   const [data, setData] = React.useState<RecommendedUser[]>([]);
   const [friendsSet, setFriendsSet] = React.useState<Record<string, boolean>>({});
   const [loading, setLoading] = React.useState(true);
@@ -54,30 +64,54 @@ export default function AddFriendRecommendedScreen() {
     } catch { return []; }
   }, []);
 
+  /** Firestore tags + 내 채팅 프로필(소개·상태·태그)에서 토큰을 모아 공통 관심사 기반 추천 */
   const fetchByTags = React.useCallback(async (): Promise<RecommendedUser[]> => {
     try {
-      // 내 태그 가져오기
-      let myTags: string[] = [];
+      const termSet = new Set<string>();
       try {
         const meDoc = await getDoc(doc(firestore, 'users', me));
         const d: any = meDoc.exists() ? meDoc.data() : {};
-        myTags = Array.isArray(d.tags) ? d.tags.map((t: any) => String(t).toLowerCase()) : [];
+        if (Array.isArray(d.tags)) {
+          d.tags.forEach((t: any) => termSet.add(String(t).toLowerCase().trim()));
+        }
+        tokenizeProfileText(d.bio).forEach((w) => termSet.add(w));
+        tokenizeProfileText(d.customStatus || d.statusMessage).forEach((w) => termSet.add(w));
       } catch {}
+      try {
+        if (currentProfile?.tags?.length) {
+          currentProfile.tags.forEach((t) => termSet.add(String(t).toLowerCase().trim()));
+        }
+        tokenizeProfileText(currentProfile?.bio).forEach((w) => termSet.add(w));
+        tokenizeProfileText(currentProfile?.customStatus).forEach((w) => termSet.add(w));
+        if (currentProfile?.chatName) {
+          tokenizeProfileText(currentProfile.chatName).forEach((w) => termSet.add(w));
+        }
+      } catch {}
+      const myTags = Array.from(termSet).filter(Boolean).slice(0, 10);
       if (myTags.length === 0) return [];
-      // 태그 매칭 사용자
       const q = query(collection(firestore, 'users'), where('tags', 'array-contains-any', myTags), limit(30));
       const snap = await getDocs(q);
       const arr: RecommendedUser[] = [];
-      snap.forEach(d => {
+      snap.forEach((d) => {
         if (d.id === me) return;
         const u: any = d.data() || {};
         const tags: string[] = Array.isArray(u.tags) ? u.tags.map((t: any) => String(t).toLowerCase()) : [];
-        const overlap = myTags.filter(t => tags.includes(t)).length;
-        arr.push({ uid: d.id, name: u.chatName || u.displayName || u.name || u.email || d.id, avatar: u.avatar || u.photoURL, email: u.email, score: overlap });
+        const bioWords = tokenizeProfileText(u.bio);
+        let score = myTags.filter((t) => tags.includes(t)).length;
+        score += bioWords.filter((w) => myTags.includes(w)).length;
+        arr.push({
+          uid: d.id,
+          name: u.chatName || u.displayName || u.name || u.email || d.id,
+          avatar: u.avatar || u.photoURL,
+          email: u.email,
+          score,
+        });
       });
       return arr;
-    } catch { return []; }
-  }, [me]);
+    } catch {
+      return [];
+    }
+  }, [me, currentProfile?.tags, currentProfile?.bio, currentProfile?.customStatus, currentProfile?.chatName]);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -97,15 +131,44 @@ export default function AddFriendRecommendedScreen() {
     setLoading(false);
   }, [fetchAdmins, fetchByTags, loadFriends, me]);
 
-  React.useEffect(() => { void load(); }, [load]);
+  React.useEffect(() => {
+    try {
+      useChatProfileStore.getState().initialize?.();
+    } catch {}
+  }, []);
+  React.useEffect(() => {
+    void load();
+  }, [load]);
 
   const onAddFriend = useCallback(async (u: RecommendedUser) => {
     try {
       if (!me || !u?.uid) return;
-      //친구 양방향 등록
+      if (u.email && ADMIN_EMAILS.includes(u.email) && u.uid.includes('@')) {
+        Alert.alert(t('error', language), '이 항목은 앱 가입 계정이 아닙니다. ID 검색으로 추가해 주세요.');
+        return;
+      }
       await Promise.all([
-        setDoc(doc(firestore, 'users', me, 'friends', u.uid), { createdAt: serverTimestamp(), status: 'friend' }, { merge: true }),
-        setDoc(doc(firestore, 'users', u.uid, 'friends', me), { createdAt: serverTimestamp(), status: 'friend' }, { merge: true }),
+        setDoc(
+          doc(firestore, 'users', me, 'friends', u.uid),
+          {
+            userId: u.uid,
+            displayName: u.name,
+            email: u.email || null,
+            status: 'linked',
+            createdAt: serverTimestamp(),
+          },
+          { merge: true },
+        ),
+        setDoc(
+          doc(firestore, 'users', u.uid, 'friends', me),
+          {
+            userId: me,
+            displayName: firebaseAuth.currentUser?.displayName || '',
+            status: 'linked',
+            createdAt: serverTimestamp(),
+          },
+          { merge: true },
+        ),
       ]);
       Alert.alert(t('addFriend', language), `${u.name} ${t('addedAsFriend', language)}`);
       setFriendsSet((s) => ({ ...s, [u.uid]: true }));

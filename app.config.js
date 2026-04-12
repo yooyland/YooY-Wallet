@@ -5,25 +5,30 @@ const fs = require('fs');
 const path = require('path');
 
 try {
+  // 순서대로 로드 후 override — 마지막 파일이 우선. env/.env.dev에 Maps 키가 있고 루트 .env에 Firebase만 있어도 둘 다 반영됨.
   const candidates = [
     path.resolve(__dirname, 'env/.env.dev'),
     path.resolve(__dirname, 'env/.env'),
+    path.resolve(__dirname, '.env.stg'),
     path.resolve(__dirname, '.env.dev'),
+    path.resolve(__dirname, '.env.prod'),
     path.resolve(__dirname, '.env'),
   ];
-  const hit = candidates.find((p) => fs.existsSync(p));
-  if (hit) {
-    require('dotenv').config({ path: hit, override: true });
-  } else {
-    require('dotenv').config();
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      require('dotenv').config({ path: p, override: true });
+    }
   }
 } catch {}
 
 module.exports = ({ config }) => ({
   ...config,
-  scheme: 'yooy',
+  version: '1.0.004',
+  // 여러 스킴 허용(구버전 초대 링크 호환 + 테스트 빌드 스킴)
+  scheme: ['yooy', 'appyooyland', 'yooyland'],
   android: {
     ...(config.android || {}),
+    versionCode: 2026033101,
     // Proguard 등 네이티브 빌드 설정은 expo-build-properties 플러그인에서 처리
   },
   // 상태바/스플래시 배경을 블랙으로 통일 (경고 제거 + 가독성)

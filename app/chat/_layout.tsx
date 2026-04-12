@@ -1,14 +1,9 @@
-import { Stack } from 'expo-router';
+import { Redirect } from 'expo-router';
 import React from 'react';
-import ForwardModal from '@/src/features/chat/components/ForwardModal';
 
 export default function ChatLayout() {
-  return (
-    <>
-      <Stack screenOptions={{ headerShown: false }} />
-      <ForwardModal />
-    </>
-  );
+  // Legacy chat routes are hard-blocked: always keep users on v2.
+  return <Redirect href="/chatv2/rooms" />;
 }
 
 

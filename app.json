@@ -2,13 +2,13 @@
   "expo": {
     "name": "App-YooYLand",
     "slug": "App-YooYLand",
-    "version": "1.0.0",
+    "version": "1.0.004",
     "orientation": "portrait",
     "icon": "./assets/images/yoy_app_icon.png",
     "scheme": "appyooyland",
     "userInterfaceStyle": "automatic",
     "jsEngine": "hermes",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.yooyland.wallet",
@@ -36,15 +36,19 @@
           "backgroundColor": "#000000"
         }
       },
-      // versionCode is controlled by android/app/build.gradle (env-aware). Keep this as a fallback only.
-      "versionCode": 1,
+      "versionCode": 2026033101,
       "edgeToEdgeEnabled": true,
       "softwareKeyboardLayoutMode": "resize",
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.CAMERA",
-        "android.permission.READ_CONTACTS",
-        "android.permission.READ_MEDIA_IMAGES"
+        "android.permission.READ_CONTACTS"
+      ],
+      "blockedPermissions": [
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
       ],
       "package": "com.yooyland.wallet",
       "intentFilters": [
@@ -54,7 +58,9 @@
           "category": ["BROWSABLE", "DEFAULT"],
           "data": [
             { "scheme": "yooy" },
-            { "scheme": "appyooyland" }
+            { "scheme": "appyooyland" },
+            { "scheme": "yooyland" },
+            { "scheme": "https", "host": "yooy.land", "pathPrefix": "/chatv2/join" }
           ]
         }
       ]
@@ -73,6 +79,7 @@
       "barStyle": "light-content"
     },
     "plugins": [
+      "./plugins/withStripBroadMediaReadPermissions",
       "expo-router",
       [
         "expo-splash-screen",
@@ -93,11 +100,11 @@
         "expo-build-properties",
         {
           "android": {
-            "compileSdkVersion": 35,
+            "compileSdkVersion": 36,
             "targetSdkVersion": 35,
             "minSdkVersion": 24,
             "kotlinVersion": "2.0.21",
-            "newArchEnabled": false
+            "newArchEnabled": true
           }
         }
       ]

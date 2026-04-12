@@ -27,7 +27,7 @@ async function getIdTokenStrict(): Promise<string> {
   return t;
 }
 
-async function fetchMonitorJsonAuth(path: string, opts?: { method?: string; body?: any; token?: string; timeoutMs?: number }): Promise<any> {
+async function fetchMonitorJsonAuth(path: string, opts?: { method?: string; body?: any; token?: string; timeoutMs?: number; retryOnAbort?: boolean }): Promise<any> {
   const base = await getEthMonitorHttp();
   const token = opts?.token ?? (await getIdTokenStrict());
   const url = `${base}${path}`;
@@ -39,18 +39,36 @@ async function fetchMonitorJsonAuth(path: string, opts?: { method?: string; body
     } as any,
   };
   if (opts?.body != null) (init as any).body = JSON.stringify(opts.body);
-  try {
+  const attempt = async (timeoutMs: number) => {
     const t0 = Date.now();
     const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), Math.max(1000, opts?.timeoutMs ?? 10000));
-    console.log('[monitor][request]', url, init.method, 'timeoutMs=', opts?.timeoutMs ?? 10000);
-    const res = await fetch(url, { ...init, signal: controller.signal });
-    clearTimeout(tid);
-    const text = await res.text();
-    console.log('[monitor][response]', url, 'status=', res.status, 'ms=', Date.now() - t0, 'head=', text.slice(0, 200));
-    try { return JSON.parse(text); } catch { return {}; }
+    const tid = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
+    try {
+      console.log('[monitor][request]', url, init.method, 'timeoutMs=', timeoutMs);
+      const res = await fetch(url, { ...init, signal: controller.signal });
+      const text = await res.text();
+      console.log('[monitor][response]', url, 'status=', res.status, 'ms=', Date.now() - t0, 'head=', text.slice(0, 200));
+      try { return JSON.parse(text); } catch { return {}; }
+    } finally {
+      clearTimeout(tid);
+    }
+  };
+
+  const baseTimeout = Math.max(1000, opts?.timeoutMs ?? 10_000);
+  try {
+    return await attempt(baseTimeout);
   } catch (e: any) {
-    console.log('[monitor][error]', url, String(e?.message || e));
+    const msg = String(e?.message || e);
+    console.log('[monitor][error]', url, msg);
+    // 안드로이드에서 간헐적으로 10초 내 Abort/Network failure가 발생할 수 있어 1회 재시도
+    const canRetry = (opts?.retryOnAbort ?? true) && (msg.toLowerCase().includes('aborted') || msg.toLowerCase().includes('network request failed'));
+    if (canRetry) {
+      try {
+        return await attempt(Math.max(baseTimeout, 25_000));
+      } catch (e2: any) {
+        console.log('[monitor][error][retry]', url, String(e2?.message || e2));
+      }
+    }
     return {};
   }
 }
@@ -67,11 +85,46 @@ export async function enrollAddress(address: string, userId?: string): Promise<v
 }
 
 export async function fetchBalances(address: string): Promise<Record<string, string>> {
-  const base = await getEthMonitorHttp();
-  const res = await fetch(`${base}/balances/${address}`);
-  if (!res.ok) return {};
-  const j = await res.json().catch(() => ({}));
-  return (j?.balances || {}) as Record<string, string>;
+  try {
+    const raw = String(address || '').trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(raw)) return {};
+    const addr = raw.toLowerCase();
+    const base = await getEthMonitorHttp();
+    const path = `/balances/${encodeURIComponent(addr)}`;
+
+    const fetchOnce = async (timeoutMs: number): Promise<Record<string, string>> => {
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), Math.max(8000, timeoutMs));
+      try {
+        const url = `${base}${path}`;
+        const res = await fetch(url, { signal: controller.signal });
+        const text = await res.text();
+        if (!res.ok) {
+          try { console.warn('[fetchBalances] http', res.status, text.slice(0, 160)); } catch {}
+          return {};
+        }
+        let j: any = {};
+        try { j = JSON.parse(text); } catch { return {}; }
+        return (j?.balances || {}) as Record<string, string>;
+      } finally {
+        clearTimeout(tid);
+      }
+    };
+
+    try {
+      return await fetchOnce(22_000);
+    } catch (e) {
+      try { console.warn('[fetchBalances] retry after', String((e as any)?.message || e)); } catch {}
+      try {
+        return await fetchOnce(40_000);
+      } catch (e2) {
+        try { console.warn('[fetchBalances] give up', String((e2 as any)?.message || e2)); } catch {}
+        return {};
+      }
+    }
+  } catch {
+    return {};
+  }
 }
 
 export async function fetchTransactions(address: string, page = 1, limit = 100): Promise<MonitorTx[]> {
@@ -130,18 +183,18 @@ export async function ensureMeAddressLinked(address: string, idToken: string): P
   }
 }
 
-export async function fetchMeBalances(idToken: string): Promise<Record<string, string>> {
-  const j = await fetchMonitorJsonAuth(`/me/balances`, { token: idToken });
+export async function fetchMeBalances(idToken: string, opts?: { timeoutMs?: number }): Promise<Record<string, string>> {
+  const j = await fetchMonitorJsonAuth(`/me/balances`, { token: idToken, timeoutMs: opts?.timeoutMs, retryOnAbort: true });
   return (j?.balances || {}) as Record<string, string>;
 }
 
-export async function fetchMeTransactions(idToken: string, page = 1, limit = 100): Promise<MonitorTx[]> {
-  const j = await fetchMonitorJsonAuth(`/me/transactions?page=${page}&limit=${limit}`, { token: idToken });
+export async function fetchMeTransactions(idToken: string, page = 1, limit = 100, opts?: { timeoutMs?: number }): Promise<MonitorTx[]> {
+  const j = await fetchMonitorJsonAuth(`/me/transactions?page=${page}&limit=${limit}`, { token: idToken, timeoutMs: opts?.timeoutMs, retryOnAbort: true });
   return Array.isArray(j?.transactions) ? (j.transactions as MonitorTx[]) : [];
 }
 
-export async function fetchMeAddresses(idToken: string): Promise<string[]> {
-  const j = await fetchMonitorJsonAuth(`/me/addresses`, { token: idToken });
+export async function fetchMeAddresses(idToken: string, opts?: { timeoutMs?: number }): Promise<string[]> {
+  const j = await fetchMonitorJsonAuth(`/me/addresses`, { token: idToken, timeoutMs: opts?.timeoutMs, retryOnAbort: true });
   return Array.isArray(j?.addresses) ? (j.addresses as string[]) : [];
 }
 

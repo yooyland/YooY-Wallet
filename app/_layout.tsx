@@ -28,10 +28,12 @@ import { useFonts } from 'expo-font';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Modal, Text, TouchableOpacity, View } from 'react-native';
 import { ensureAuthedUid, firebaseAuth, firestore } from '@/lib/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import { openInternalAppLink, PENDING_DEEPLINK_KEY } from '@/src/features/chatv2/core/openInternalAppLink';
 import { useNotificationStore } from '@/src/features/chat/store/notification.store';
 import * as SecureStore from 'expo-secure-store';
 import * as ExpoLinking from 'expo-linking';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as ScreenCapture from 'expo-screen-capture';
 
 export const unstable_settings = {
@@ -46,6 +48,16 @@ export default function RootLayout() {
   const insets = insetsFromCtx || { top: 0, bottom: 0, left: 0, right: 0 };
   const pathname = usePathname();
   const needSafePadding = !/\/\(tabs\)\/dashboard(?:\/|$)/i.test(String(pathname || ''));
+
+  // Hard-block legacy chat tree (/chat/*): always keep user on v2.
+  useEffect(() => {
+    try {
+      const p = String(pathname || '');
+      if (/^\/chat(\/|$)/i.test(p)) {
+        router.replace('/chatv2/rooms');
+      }
+    } catch {}
+  }, [pathname]);
   
   // 앱 시작 시 스크린 캡처 허용 (이전에 막힌 상태가 남아있을 수 있음)
   useEffect(() => {
@@ -61,6 +73,19 @@ export default function RootLayout() {
     (async () => {
       try {
         await AsyncStorage.multiRemove(['chatCache', 'roomCache', 'messageCache']);
+      } catch {}
+    })();
+  }, []);
+
+  // Force chat engine version to v2 globally.
+  useEffect(() => {
+    (async () => {
+      try {
+        await AsyncStorage.setItem('chatVersion', 'v2');
+        await AsyncStorage.setItem('chatEngine', 'v2');
+      } catch {}
+      try {
+        (globalThis as any).__YY_CHAT_VERSION__ = 'v2';
       } catch {}
     })();
   }, []);
@@ -133,11 +158,14 @@ export default function RootLayout() {
     logAppStartupTime('_layout useEffect complete');
   }, []);
 
-  // 딥링크 처리: yooy://pay, yooy://gift, yooy://card, yooy://invite
+  // 딥링크: 채팅 초대(https/yooy/yooyland) + 기프트 claim + 기존 pay/gift/card/invite
   useEffect(() => {
     const handle = async (url: string | null | undefined) => {
       try {
         if (!url) return;
+        const internal = await openInternalAppLink(String(url));
+        if (internal) return;
+
         const parsed = ExpoLinking.parse(url);
         const path = String((parsed as any)?.path || (parsed as any)?.hostname || '').toLowerCase();
         const qp: any = (parsed as any)?.queryParams || {};
@@ -159,27 +187,41 @@ export default function RootLayout() {
           return;
         }
 
-        // 3) yooy://card?uid=... → 명함(친구 추가) 화면
-        if (path.includes('card') && (qp?.uid || qp?.id)) {
-          const cardData = JSON.stringify({ uid: qp.uid || qp.id || '', name: qp.name || '' });
-          await AsyncStorage.setItem('@deeplink_card', cardData);
-          router.push({ pathname: '/chat/add-friend-qr', params: { deeplink: 'card' } });
+        // 3) yooy://card?... → 명함(친구 추가) 화면
+        if (path.includes('card')) {
+          const raw = url;
+          await AsyncStorage.setItem('@deeplink_card_raw', String(raw));
+          router.push({ pathname: '/chatv2/qr', params: { deeplink: 'card' } });
           return;
         }
 
         // 4) yooy://invite?room=ROOM_ID&code=XXXX → 채팅방 이동
         if (path.includes('invite') && qp?.room) {
           const roomId = String(qp.room);
-          router.push({ pathname: `/chat/room/${roomId}` });
+          router.push({ pathname: '/chatv2/room', params: { id: roomId } } as any);
           return;
         }
       } catch (e) { console.warn('[DeepLink] error:', e); }
     };
     (async () => {
-      try { handle(await ExpoLinking.getInitialURL()); } catch {}
+      try { await handle(await ExpoLinking.getInitialURL()); } catch {}
     })();
-    const sub = ExpoLinking.addEventListener('url', (e: any) => { try { handle(e?.url); } catch {} });
-    return () => { try { sub.remove(); } catch {} };
+    const sub = ExpoLinking.addEventListener('url', (e: any) => {
+      void handle(e?.url);
+    });
+    const unsubAuth = onAuthStateChanged(firebaseAuth, async (user) => {
+      try {
+        if (!user || (user as any).isAnonymous) return;
+        const pending = await AsyncStorage.getItem(PENDING_DEEPLINK_KEY);
+        if (!pending) return;
+        await AsyncStorage.removeItem(PENDING_DEEPLINK_KEY);
+        await handle(pending);
+      } catch {}
+    });
+    return () => {
+      try { sub.remove(); } catch {}
+      try { unsubAuth(); } catch {}
+    };
   }, []);
 
   // 전역 키보드 높이 감지 제거: Android는 windowSoftInputMode=adjustResize에 맡기고,
@@ -349,12 +391,11 @@ function NotificationSync() {
 
 // 인증 게이트: 정상 로그인(accessToken) 없으면 로그인 화면으로 유도
 function RequireAuthGate() {
-  const { isAuthenticated } = require('@/contexts/AuthContext') as typeof import('@/contexts/AuthContext');
-  const auth = (isAuthenticated && typeof isAuthenticated === 'boolean') ? null : null; // placeholder to satisfy bundler
-  const { isAuthenticated: authed } = require('@/contexts/AuthContext').useAuth();
+  const { isAuthenticated: authed, isLoading: authLoading } = require('@/contexts/AuthContext').useAuth();
   const p = usePathname();
   useEffect(() => {
     try {
+      if (authLoading) return;
       const path = String(p || '');
       // expo-router의 usePathname()은 그룹명 (auth)을 포함하지 않는 경우가 있어,
       // 로그인/회원가입/비번찾기 화면은 모두 auth로 간주해 게이트 리다이렉트를 막는다.
@@ -365,10 +406,13 @@ function RequireAuthGate() {
         path === '/forgot' || path.startsWith('/forgot/') ||
         path.includes('/(auth)/');
       if (!authed && !inAuth) {
+        console.log('[YY_LOGIN_FLOW] RequireAuthGate -> not authed, redirect to /(auth)/login from', path);
         router.replace('/(auth)/login');
+      } else {
+        console.log('[YY_LOGIN_FLOW] RequireAuthGate -> pass', { authed, path });
       }
     } catch {}
-  }, [p, authed]);
+  }, [p, authed, authLoading]);
   return null as any;
 }
 

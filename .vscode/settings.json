@@ -1,4 +1,5 @@
 {
+  // TS 서버 8GB(8192) 설정은 RAM 부족 시 Cursor 전체 OOM 유발 → 4096 이하 권장
   "workbench.colorCustomizations": {
     "titleBar.activeBackground": "#0d1f12",
     "titleBar.activeForeground": "#ffd700",
@@ -13,13 +14,64 @@
     "tab.inactiveBackground": "#0d1f12",
     "tab.inactiveForeground": "#c8c8c8"
   },
-  "window.title": "[YOY • Green/Gold] ${workspaceFolderBasename} — ${activeEditorShort}"
-}
-
-{
+  "window.title": "[YOY • Green/Gold] ${workspaceFolderBasename} — ${activeEditorShort}",
   "editor.codeActionsOnSave": {
     "source.fixAll": "explicit",
     "source.organizeImports": "explicit",
     "source.sortMembers": "explicit"
+  },
+  "files.maxMemoryForLargeFilesMB": 128,
+  "editor.largeFileOptimizations": true,
+  "typescript.tsserver.maxTsServerMemory": 4096,
+  "search.useIgnoreFiles": true,
+  "search.followSymlinks": false,
+  "search.maxResults": 2000,
+  "terminal.integrated.scrollback": 3000,
+  "debug.console.maximumLines": 2000,
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/android/**": true,
+    "**/ios/**": true,
+    "**/build/**": true,
+    "**/.gradle/**": true,
+    "**/.expo/**": true,
+    "**/dist/**": true,
+    "**/web-build/**": true,
+    "**/.expo-shared/**": true,
+    "**/.cache/**": true,
+    "**/coverage/**": true,
+    "**/tmp/**": true,
+    "**/logs/**": true,
+    "**/yoy-monitor/**": true,
+    "**/App-screen/**": true,
+    "**/YooY Namecard.ai/**": true,
+    "**/.git/objects/**": true,
+    "**/.git/lfs/**": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/android": true,
+    "**/ios": true,
+    "**/.gradle": true,
+    "**/build": true,
+    "**/dist": true,
+    "**/web-build": true,
+    "**/.expo": true,
+    "**/.expo-shared": true,
+    "**/.cache": true,
+    "**/coverage": true,
+    "**/tmp": true,
+    "**/logs": true,
+    "**/yoy-monitor": true,
+    "**/App-screen": true,
+    "**/YooY Namecard.ai": true,
+    "**/*.log": true,
+    "**/*.apk": true,
+    "**/*.aab": true,
+    "**/*.ipa": true,
+    "**/*.tsbuildinfo": true,
+    "**/crash*.txt": true,
+    "**/hs_err_pid*.log": true,
+    "**/replay_pid*.log": true
   }
 }

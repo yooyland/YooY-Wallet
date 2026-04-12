@@ -9,16 +9,6 @@ buildscript {
     classpath('com.android.tools.build:gradle')
     classpath('com.facebook.react:react-native-gradle-plugin')
     classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')
-    // Firebase Gradle plugin for google-services.json (Android AppCheck / native SDKs)
-    classpath('com.google.gms:google-services:4.4.2')
-  }
-}
-
-// Gradle Play Publisher plugin classpath
-// (Maven Central artifact; safe to add here)
-buildscript {
-  dependencies {
-    classpath('com.github.triplet.gradle:play-publisher:3.10.1')
   }
 }
 
@@ -26,20 +16,9 @@ allprojects {
   repositories {
     google()
     mavenCentral()
-    // Note: JitPack disabled to avoid timeouts and wrong resolution for Expo artifacts
+    maven { url 'https://www.jitpack.io' }
   }
 }
 
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
-
-// Override versions set by expo-root-project to ensure native builds are stable
-ext {
-  // Force Kotlin version for KSP mapping
-  kotlinVersion = (project.findProperty('kotlinVersion')
-      ?: project.findProperty('android.kotlinVersion')
-      ?: project.findProperty('expo.kotlinVersion')
-      ?: '2.0.21') as String
-  // Use NDK 27.1 for full C++20 std::format support required by RN 0.81+
-  ndkVersion = '27.1.12297006'
-}

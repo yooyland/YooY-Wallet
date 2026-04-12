@@ -2377,11 +2377,11 @@ export default function TodoScreen() {
                              result.type === 'money' ? item.description :
                              result.type === 'memo' ? item.title : ''}
                           </Text>
-                          {result.type === 'tasks' && item.note && (
+                          {result.type === 'tasks' && (item as TodoItem).note ? (
                             <Text style={styles.searchResultItemSubtitle} numberOfLines={1}>
-                              {item.note}
+                              {(item as TodoItem).note}
                             </Text>
-                          )}
+                          ) : null}
                           {result.type === 'diary' && (
                             <Text style={styles.searchResultItemSubtitle} numberOfLines={1}>
                               {item.content}

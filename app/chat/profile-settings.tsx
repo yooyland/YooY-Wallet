@@ -7,7 +7,7 @@ import { Image as EImage } from 'expo-image';
 import { Video as ExpoVideo, ResizeMode } from 'expo-av';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
-import { router, Stack } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 import { getDownloadURL, ref as storageRef, uploadBytes, uploadString, getStorage, getMetadata } from 'firebase/storage';
 import { firebaseStorage, ensureAppCheckReady } from '@/lib/firebase';
@@ -24,6 +24,8 @@ const ImageManipulator: any = (()=>{ try { return require('expo-image-manipulato
 
 export default function ChatProfileSettingsScreen() {
   const { language } = usePreferences();
+  const params = useLocalSearchParams<{ from?: string }>();
+  const from = String(params?.from || '');
   const BLURHASH = 'L5H2EC=PM+yV0g-mq.wG9c010J}I';
   const { currentProfile, updateProfile, setStatus, setCustomStatus, setAvatar: setAvatarInStore, initialize } = useChatProfileStore();
   const [displayName, setDisplayName] = useState('');
@@ -918,10 +920,14 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
       // SSOT 반영
       try {
         const id = mediaIdForUri(uri);
+        const isHttp = /^https?:\/\//i.test(uri);
+        const isData = /^data:/i.test(uri);
+        const isLocal = /^(file|content):/i.test(uri);
+        // uriHttp는 퍼시스트에 남김. https·로컬(file/content) 모두 그리드/썸네일에 필요 (data: 만 uriData)
         useMediaStore.getState().addOrUpdate({
           id,
-          uriHttp: /^https?:\/\//i.test(uri) ? uri : undefined,
-          uriData: /^data:/i.test(uri) ? uri : undefined,
+          uriHttp: isHttp || isLocal ? uri : undefined,
+          uriData: isData ? uri : undefined,
           name: deriveName(uri),
           createdAt: Date.now(),
           visibility: 'public',
@@ -1671,8 +1677,12 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
       const { setLastActive } = useChatProfileStore.getState();
       setLastActive(Date.now());
 
-      // 저장 후 친구목록으로 이동 (즉시 트리거)
-      setTimeout(() => { try { router.replace('/chat/friends'); } catch {} }, 120);
+      // 저장 후 이동: v2에서 들어온 경우 v2 방목록으로 복귀
+      setTimeout(() => {
+        try {
+          router.replace('/chatv2/rooms');
+        } catch {}
+      }, 120);
     } catch (error) {
       console.error('Profile save error:', error);
       Alert.alert('오류', '프로필 저장에 실패했습니다.');

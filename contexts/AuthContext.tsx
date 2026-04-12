@@ -41,8 +41,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [autoLoginEnabled, setAutoLoginEnabled] = useState<boolean>(false);
-  // Manual-login gate: only allow sessions initiated by user action
+  // Manual-login gate: explicit signOut 시에만 false로 유지
   const allowSessionRef = useRef(false);
   // Performance: track auth initialization
   const authInitRef = useRef(Date.now());
@@ -68,7 +67,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             if (raw) { try { auto = !!(JSON.parse(raw || '{}') as any)?.autoLogin; } catch {} }
           }
         } catch {}
-        setAutoLoginEnabled(!!auto);
 
         let token: string | null = null;
         if (auto) {
@@ -82,16 +80,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setAccessToken(token);
           }
         } else {
-          // 자동 로그인 OFF이면 토큰/세션 복원 금지
+          // 자동 로그인 OFF: 저장된 JWT만 비우고, Firebase 영속 세션은 유지(백그라운드 복귀·프로세스 재시작 후에도 로그인 유지)
           allowSessionRef.current = false;
-          setAccessToken(null);
-          setCurrentUser(null);
           try { if (Platform.OS === 'web') await AsyncStorage.removeItem(ACCESS_TOKEN_KEY); else await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY); } catch {}
-          // Firebase가 내부적으로 세션을 유지하고 있을 수 있으므로, 강제로 로그아웃 (익명 포함)
-          try { await firebaseAuth.signOut(); } catch {}
         }
       } finally {
-        setIsLoading(false);
+        // Firebase는 onAuthStateChanged 첫 콜백까지 로딩 유지(미결정 상태에서 로그인 화면으로 튕김 방지)
+        if (Config.authProvider !== 'firebase') {
+          setIsLoading(false);
+        }
         if (typeof __DEV__ !== 'undefined' && __DEV__) {
           console.log(`[PERF] auth-init: ${Date.now() - authInitRef.current}ms`);
         }
@@ -103,15 +100,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (Config.authProvider !== 'firebase') return;
     const unsub = onAuthStateChanged(firebaseAuth, async (user) => {
+      try {
       if (user) {
-        // 자동 로그인 OFF인데 Firebase 세션이 남아있다면 즉시 로그아웃 처리
-        if (!autoLoginEnabled && !allowSessionRef.current) {
-          try { await firebaseAuth.signOut(); } catch {}
-          try { if (Platform.OS === 'web') { await AsyncStorage.removeItem(ACCESS_TOKEN_KEY); } else { await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY); } } catch {}
-          setAccessToken(null);
-          setCurrentUser(null);
-          return;
-        }
         // 익명 세션이면 즉시 차단하고 로그인 화면으로 이동
         if ((user as any).isAnonymous) {
           try { await firebaseAuth.signOut(); } catch {}
@@ -121,6 +111,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           try { router.replace('/(auth)/login'); } catch {}
           return;
         }
+        // 일반 계정: 디스크에서 복원된 세션도 허용(명시적 로그아웃 전까지 유지)
+        allowSessionRef.current = true;
         // 계정 전환 시 채팅 스토어/프로필 캐시를 강제 교체 (동일 브라우저 프로필에서 다른 계정으로 로그인 시 섞임 방지)
         try {
           const prevUid = await AsyncStorage.getItem('yoo-last-uid');
@@ -152,7 +144,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // 로그인 홈으로 유도: 인증 화면에 머물러 있으면 대시보드로
         try {
           const p = (typeof window !== 'undefined' ? window.location?.pathname : '') || '';
-          if (p.includes('/(auth)')) router.replace('/(tabs)/dashboard');
+          console.log('[YY_LOGIN_FLOW] onAuthStateChanged user present', { path: p || '(native)', uid: user.uid });
+          if (p.includes('/(auth)')) {
+            console.log('[YY_LOGIN_FLOW] redirect from auth -> /(tabs)/dashboard');
+            router.replace('/(tabs)/dashboard');
+          }
         } catch {}
       } else {
         if (Platform.OS === 'web') {
@@ -171,9 +167,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // 여기서 로그인 화면으로 강제 이동하면 /register 같은 인증 플로우 화면 진입이 막힐 수 있음.
         // 라우팅은 RootLayout의 RequireAuthGate가 책임지도록 두고, 여기서는 상태만 정리한다.
       }
+      } finally {
+        setIsLoading(false);
+      }
     });
     return () => unsub();
-  }, [autoLoginEnabled]);
+  }, []);
 
   const signIn = useCallback(async ({ username, password }: { username: string; password: string }) => {
     setIsLoading(true);
@@ -239,6 +238,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signIn,
     signOut,
     signUp: async ({ email, password }) => {
+      allowSessionRef.current = true;
       let token: string | undefined;
       if (Config.authProvider === 'firebase') {
         const cred = await createUserWithEmailAndPassword(firebaseAuth, email, password);

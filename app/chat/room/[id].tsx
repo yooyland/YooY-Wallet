@@ -27,6 +27,7 @@ import { usePreferences } from '@/contexts/PreferencesContext';
 import { Ionicons } from '@expo/vector-icons';
 import { perfStart, perfEnd } from '@/lib/perfTimer';
 import { shouldOpenFileExternally } from '@/src/features/chat/lib/media';
+import { materializePickerUriForUpload } from '@/src/features/chatv2/core/pickerUri';
 // 안정 참조: 빈 배열 상수 (zustand selector에서 새 배열 생성으로 인한 무한 업데이트 방지)
 const EMPTY_LIST: any[] = [];
 class RoomErrorBoundary extends React.Component<any, { hasError: boolean; err?: any }> {
@@ -293,11 +294,28 @@ function RoomInner() {
   const myRole = useMemo(() => {
     try {
       const roles = ((roomSettingsMap as any)?.[roomId]?.members?.roles) || {};
-      if (String((room as any)?.createdBy||'') === uid) return 'admin';
+      if (String((room as any)?.createdBy || '') === uid) return 'admin';
       return String(roles[uid] || 'member');
-    } catch { return 'member'; }
+    } catch {
+      return 'member';
+    }
   }, [roomSettingsMap, room, uid, roomId]);
-  const isPrivileged = (myRole === 'admin' || myRole === 'moderator');
+
+  /** 방장: createdBy·ownerIds·저장된 ownerUserId까지 보면 TTL 보안 등 스텁에 createdBy 없을 때도 인식 */
+  const isRoomOwner = useMemo(() => {
+    try {
+      const r = room as any;
+      if (String(r?.createdBy || '').trim() === String(uid)) return true;
+      if (Array.isArray(r?.ownerIds) && r.ownerIds.map((x: unknown) => String(x)).includes(String(uid))) return true;
+      const ou = String((roomSettingsMap as any)?.[roomId]?.members?.ownerUserId || '').trim();
+      if (ou && ou === String(uid)) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }, [room, roomSettingsMap, roomId, uid]);
+
+  const isPrivileged = isRoomOwner || myRole === 'admin' || myRole === 'moderator';
   const [nowTick, setNowTick] = useState<number>(Date.now());
   const [serverOffsetMs, setServerOffsetMs] = useState<number>(0);
   // 키보드 상태 관리 - useRef로 메시지 리스트 리렌더 방지
@@ -947,16 +965,25 @@ function RoomInner() {
         if (images.length >= 1) {
           for (const a0 of images) {
             if (!a0?.uri) continue;
-            try { if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[YY_CHAT_FLOW]', 'send image', { uri: String(a0.uri).slice(0,120), mime: a0.mimeType, name: a0.fileName }); } catch {}
-            sendMessage(roomId, uid, a0.fileName || '', 'image', String(a0.uri), undefined, undefined, undefined, { mimeType: a0.mimeType || 'image/jpeg', filename: a0.fileName });
+            let uri = String(a0.uri);
+            try {
+              uri = await materializePickerUriForUpload(uri);
+            } catch {}
+            try { if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[YY_CHAT_FLOW]', 'send image', { uri: String(uri).slice(0,120), mime: a0.mimeType, name: a0.fileName }); } catch {}
+            sendMessage(roomId, uid, a0.fileName || '', 'image', uri, undefined, undefined, undefined, { mimeType: a0.mimeType || 'image/jpeg', filename: a0.fileName });
           }
         }
       }
       // 비디오: 선택된(또는 강제) 비디오 각각 전송
       const videos = assets.filter(a => String(a.type||'').includes('video') || mode==='video');
       for (const v of videos) {
-        try { if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[YY_CHAT_FLOW]', 'send video', { uri: String(v?.uri||'').slice(0,120), mime: v.mimeType, name: v.fileName }); } catch {}
-        if (v?.uri) sendMessage(roomId, uid, v.fileName || '[video]', 'video', String(v.uri), undefined, undefined, undefined, { mimeType: v.mimeType || 'video/mp4', filename: v.fileName || '[video]' });
+        if (!v?.uri) continue;
+        let vuri = String(v.uri);
+        try {
+          vuri = await materializePickerUriForUpload(vuri);
+        } catch {}
+        try { if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[YY_CHAT_FLOW]', 'send video', { uri: String(vuri).slice(0,120), mime: v.mimeType, name: v.fileName }); } catch {}
+        sendMessage(roomId, uid, v.fileName || '[video]', 'video', vuri, undefined, undefined, undefined, { mimeType: v.mimeType || 'video/mp4', filename: v.fileName || '[video]' });
       }
     } catch {}
     setAttachOpen(false);
@@ -1033,43 +1060,18 @@ function RoomInner() {
     try {
       try { await (ImagePicker as any).requestMediaLibraryPermissionsAsync?.(); } catch {}
       const IP: any = ImagePicker as any;
-      const res: any = await IP.launchImageLibraryAsync?.({ mediaTypes: IP.MediaTypeOptions.Images, allowsMultipleSelection: false, selectionLimit: 1, quality: 0.95, base64: false, exif: false });
+      const res: any = await IP.launchImageLibraryAsync?.({ mediaTypes: IP.MediaTypeOptions.Images, allowsMultipleSelection: false, selectionLimit: 1, quality: 1, base64: false, exif: false });
       if (res && !res.canceled && Array.isArray(res.assets) && res.assets[0]?.uri) {
         const uri = String(res.assets[0].uri);
         let detected = '';
-        
-        // 1) ML Kit 시도 (가장 안정적)
         try {
-          const { scanBarcodes, BarcodeFormat } = require('@react-native-ml-kit/barcode-scanning');
-          const FS = require('expo-file-system');
-          // content:// 또는 ph:// URI를 file:// URI로 복사
-          let scanTarget = uri;
-          if (/^(content|ph):\/\//i.test(uri) && FS?.cacheDirectory) {
-            const dest = `${FS.cacheDirectory}qr_mlkit_${Date.now()}.jpg`;
-            await FS.copyAsync({ from: uri, to: dest });
-            scanTarget = dest;
-          }
-          console.log('[sendQR] ML Kit scanTarget:', scanTarget);
-          const formats = BarcodeFormat?.QR_CODE ? [BarcodeFormat.QR_CODE] : undefined;
-          const out = formats ? await scanBarcodes(scanTarget, formats) : await scanBarcodes(scanTarget);
-          console.log('[sendQR] ML Kit result:', out);
-          const first = Array.isArray(out) && out.length ? out[0] : null;
-          detected = String(first?.displayValue || first?.rawValue || '');
+          const { scanBarcodeFromFileUri } = require('@/lib/qrScanner');
+          detected = (await scanBarcodeFromFileUri(uri)) || '';
+          console.log('[sendQR] scanBarcodeFromFileUri len:', detected?.length);
         } catch (e) {
-          console.warn('[sendQR] ML Kit error:', e);
+          console.warn('[sendQR] scanBarcodeFromFileUri error:', e);
         }
-        
-        // 2) ML Kit 실패 시 scanQRFromImage 유틸 사용
-        if (!detected) {
-          try {
-            const { scanQRFromImage } = require('@/lib/qrScanner');
-            detected = await scanQRFromImage(uri) || '';
-            console.log('[sendQR] scanQRFromImage result:', detected);
-          } catch (e) {
-            console.warn('[sendQR] scanQRFromImage error:', e);
-          }
-        }
-        
+
         // 이미지 먼저 전송 (QR 이미지)
         try { sendMessage(roomId, uid, '[QR 이미지]', 'image', uri); } catch {}
         
@@ -1779,7 +1781,7 @@ function RoomInner() {
                       (async () => {
                         try {
                           const Linking = require('expo-linking');
-                          const FS = require('expo-file-system');
+                          const FS = require('expo-file-system/legacy');
                           const u = url.toLowerCase();
                           if (u.startsWith('file://') || u.startsWith('content://')) {
                             Linking.openURL(url);
@@ -2472,7 +2474,7 @@ function RoomInner() {
                     try {
                       const url = String(viewerUrl||'');
                       if (!url) return;
-                      const FS: any = require('expo-file-system');
+                      const FS: any = require('expo-file-system/legacy');
                       const ML: any = require('expo-media-library');
                       const perm = await ML.requestPermissionsAsync?.();
                       if (!perm?.granted) { Alert.alert('권한 필요','갤러리 접근 권한이 필요합니다.'); return; }
@@ -2502,8 +2504,22 @@ function RoomInner() {
                   onKeep={(()=>{
                     try {
                       const { useMediaStore, mediaIdForUri } = require('@/src/features/chat/store/media.store');
-                      const id = mediaIdForUri(String(viewerUrl||''));
-                      useMediaStore.getState().addOrUpdate({ id, uriHttp: String(viewerUrl||''), visibility:'private', location:'treasure' });
+                      const rawUrl = String(viewerUrl || '');
+                      const id = mediaIdForUri(rawUrl);
+                      let mediaType: 'image' | 'video' | 'file' | 'link' = 'image';
+                      const k = String(viewerKind || '').toLowerCase();
+                      if (k === 'video') mediaType = 'video';
+                      else if (k === 'file' || k === 'pdf' || k === 'audio') mediaType = 'file';
+                      else if (k === 'web' || k === 'youtube' || k === 'map') mediaType = 'link';
+                      useMediaStore.getState().addOrUpdate({
+                        id,
+                        uriHttp: rawUrl,
+                        visibility: 'private',
+                        location: 'treasure',
+                        protect: true,
+                        type: mediaType,
+                        createdAt: Date.now(),
+                      });
                       Alert.alert('보관함','비공개 보물창고로 이동했습니다.');
                     } catch {}
                   })}

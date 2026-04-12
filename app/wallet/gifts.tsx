@@ -7,6 +7,9 @@ import TopBar from '@/components/top-bar';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { createVoucher, buildClaimUri, endVoucher, deleteVoucher, parseClaimUri, getVoucher, claimVoucher, type ClaimVoucher } from '@/lib/claims';
+import { QrSavePopupCard } from '@/components/QrSavePopupCard';
+import { QR_FRAME_BORDER } from '@/lib/qrFrameVariants';
+import { useScreenshotCloseModal } from '@/lib/useScreenshotCloseModal';
 import { collection, onSnapshot, orderBy, query, where, deleteDoc, doc as fsDoc } from 'firebase/firestore';
 import { firestore } from '@/lib/firebase';
 import * as ImagePicker from 'expo-image-picker';
@@ -14,13 +17,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useWallet } from '@/contexts/WalletContext';
 import { useTransaction } from '@/contexts/TransactionContext';
 import { firebaseAuth, ensureAppCheckReady } from '@/lib/firebase';
-import { signInAnonymously } from 'firebase/auth';
-
-let QRCode: any = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  QRCode = require('react-native-qrcode-svg').default || require('react-native-qrcode-svg');
-} catch {}
 
 export default function GiftsPage() {
   const { language } = usePreferences();
@@ -55,6 +51,8 @@ export default function GiftsPage() {
 
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const [qrVisible, setQrVisible] = useState(false);
+  useScreenshotCloseModal(!!qrUrl && qrVisible, () => setQrVisible(false), language);
+  const giftQrModalCaptureRef = useRef<View | null>(null);
   const [txDetail, setTxDetail] = useState<any|null>(null);
   const [txMemoDraft, setTxMemoDraft] = useState('');
 
@@ -134,11 +132,24 @@ export default function GiftsPage() {
       Alert.alert(language==='en'?'Enter valid values':'유효한 값을 입력하세요');
       return;
     }
-    // Firestore 보안 규칙에 따라 인증이 필요할 수 있으므로, 미인증 상태면 익명 로그인 시도
+    if (!firebaseAuth.currentUser?.email) {
+      Alert.alert(
+        language==='en'?'Email sign-in required':'이메일 로그인 필요',
+        language==='en'
+          ? 'Gift creation requires Firebase email sign-in. Please sign in with email in the app.'
+          : '기프트 생성은 Firebase에 이메일로 로그인된 계정에서만 가능합니다. 앱에서 이메일 로그인 후 다시 시도해 주세요.'
+      );
+      return;
+    }
+    if (String(firebaseAuth.currentUser.email).toLowerCase() !== String(email || '').toLowerCase()) {
+      Alert.alert(
+        language==='en'?'Account mismatch':'계정 불일치',
+        language==='en'?'Signed-in email does not match your profile. Please re-login.'
+          : '로그인된 이메일과 프로필이 일치하지 않습니다. 다시 로그인해 주세요.'
+      );
+      return;
+    }
     try {
-      if (!firebaseAuth.currentUser) {
-        if ((require('react-native').Platform?.OS === 'web')) await signInAnonymously(firebaseAuth);
-      }
       try { await ensureAppCheckReady(); } catch {}
     } catch {}
     setCreating(true);
@@ -159,7 +170,6 @@ export default function GiftsPage() {
       } catch (e:any) {
         const msg = String(e?.message || e || '');
         if (/permission|denied|PERMISSION/i.test(msg)) {
-          try { if (!firebaseAuth.currentUser && (require('react-native').Platform?.OS === 'web')) await signInAnonymously(firebaseAuth); } catch {}
           try { await ensureAppCheckReady(); } catch {}
           voucher = await createVoucher({
             createdByEmail: email,
@@ -262,7 +272,7 @@ export default function GiftsPage() {
           : (language==='en'?'Cancelled':'종료됨');
         Alert.alert(language==='en'?'Not claimable':'수령 불가', msg);
       } else {
-        Alert.alert(language==='en'?'Claim available':'수령 가능', (language==='en'?'Press Claim to receive.':'아래 받기 버튼을 눌러 수령하세요.'));
+        Alert.alert(language==='en'?'Claim available':'수령 가능', (language==='en'?'Press Claim to receive.':'수령하기를 눌러 주세요.'));
       }
     } catch (e) {
       Alert.alert(language==='en'?'Error':'오류', String(e instanceof Error ? e.message : e));
@@ -321,7 +331,7 @@ export default function GiftsPage() {
         // 1) ML Kit 시도 (가장 안정적)
         try {
           const { scanBarcodes, BarcodeFormat } = require('@react-native-ml-kit/barcode-scanning');
-          const FS = require('expo-file-system');
+          const FS = require('expo-file-system/legacy');
           let scanTarget = uri;
           if (/^(content|ph):\/\//i.test(uri) && FS?.cacheDirectory) {
             const dest = `${FS.cacheDirectory}qr_mlkit_${Date.now()}.jpg`;
@@ -429,61 +439,93 @@ export default function GiftsPage() {
     try { if (rafRef.current) cancelAnimationFrame(rafRef.current); } catch {}
   };
 
-  const onClaim = async () => {
+  const executeClaimFromVoucher = async (v: ClaimVoucher) => {
+    const sym = v.symbol || 'YOY';
+    const addr = getWalletBySymbol?.(sym)?.address || '';
+    if (!addr) {
+      Alert.alert(language==='en'?'No wallet address':'지갑 주소 없음', language==='en'?'Create wallet first.':'먼저 해당 코인 지갑을 생성하세요.');
+      return;
+    }
+    const res = await claimVoucher({ id: v.id, recipientAddress: addr, recipientEmail: email });
+    if ('error' in res) {
+      const code = String(res.error || '');
+      if (code.includes('expired') || code.includes('cancelled') || code.includes('not_active')) {
+        Alert.alert(language==='en'?'Event ended':'이벤트가 종료 되었습니다.');
+      } else if (code.includes('exhausted')) {
+        Alert.alert(language==='en'?'Event exhausted':'이벤트가 모두 소진 되었습니다.');
+      } else {
+        Alert.alert(language==='en'?'Claim failed':'수령 실패', code);
+      }
+      return;
+    }
     try {
-      if (!pending) return;
-      const sym = pending.symbol || 'YOY';
-      const addr = getWalletBySymbol?.(sym)?.address || '';
-      if (!addr) {
-        Alert.alert(language==='en'?'No wallet address':'지갑 주소 없음', language==='en'?'Create wallet first.':'먼저 해당 코인 지갑을 생성하세요.');
+      const storageKey = `user_balances_${email}`;
+      const saved = await AsyncStorage.getItem(storageKey);
+      const parsed = saved ? JSON.parse(saved) : {};
+      parsed[sym] = (parsed[sym] || 0) + (res.amount || 0);
+      await AsyncStorage.setItem(storageKey, JSON.stringify(parsed));
+    } catch {}
+    try {
+      const tx = {
+        id: `tx_gift_recv_${v.id}`,
+        type: 'receive',
+        symbol: sym,
+        currency: sym,
+        amount: res.amount || 0,
+        to: addr,
+        from: `voucher:${v.id}`,
+        description: 'Event receive',
+        status: 'completed',
+        success: true,
+        hash: `voucher_claim_${v.id}`,
+        blockTimestamp: new Date().toISOString(),
+        timestamp: new Date().toISOString(),
+        network: sym === 'YOY' ? 'yoy' : undefined,
+      } as any;
+      await addTransaction(tx);
+      setTxDetail(tx);
+    } catch {}
+    const successMsg = language==='en'
+      ? `Congratulations! You received ${res.amount} ${sym}.`
+      : `축하합니다! ${res.amount} ${sym}를 수령하였습니다.`;
+    Alert.alert(successMsg);
+    setPending(null);
+  };
+
+  const handleGiftReceiveSubmit = async () => {
+    try {
+      let vid: string | null = null;
+      if (claimInput.trim()) {
+        const parsed = parseClaimUri(claimInput);
+        vid = parsed?.id || null;
+      } else if (pending?.id) {
+        vid = pending.id;
+      }
+      if (!vid) {
+        Alert.alert(language==='en'?'Enter event link':'이벤트 링크를 입력하세요');
         return;
       }
-      const res = await claimVoucher({ id: pending.id, recipientAddress: addr, recipientEmail: email });
-      if ('error' in res) {
-        const code = String(res.error || '');
-        if (code.includes('expired') || code.includes('cancelled') || code.includes('not_active')) {
-          Alert.alert(language==='en'?'Event ended':'이벤트가 종료 되었습니다.');
-        } else if (code.includes('exhausted')) {
-          Alert.alert(language==='en'?'Event exhausted':'이벤트가 모두 소진 되었습니다.');
-        } else {
-          Alert.alert(language==='en'?'Claim failed':'수령 실패', code);
-        }
+      if (/^local_/i.test(vid)) {
+        Alert.alert(
+          language==='en'?'Not claimable':'수령 불가',
+          language==='en'?'This is a local preview. Use a real event link.':'로컬 미리보기입니다. 실제 이벤트 링크로 시도해 주세요.'
+        );
         return;
       }
-      // 수령 성공: 수신자 잔액 증가
-      try {
-        const storageKey = `user_balances_${email}`;
-        const saved = await AsyncStorage.getItem(storageKey);
-        const parsed = saved ? JSON.parse(saved) : {};
-        parsed[sym] = (parsed[sym] || 0) + (res.amount || 0);
-        await AsyncStorage.setItem(storageKey, JSON.stringify(parsed));
-      } catch {}
-      // 거래내역 기록(받은 사람 증가) + 상세 팝업
-      try {
-        const tx = {
-          id: `tx_gift_recv_${pending.id}`,
-          type: 'receive',
-          symbol: sym,
-          currency: sym,
-          amount: res.amount || 0,
-          to: addr,
-          from: `voucher:${pending.id}`,
-          description: 'Event receive',
-          status: 'completed',
-          success: true,
-          hash: `voucher_claim_${pending.id}`,
-          blockTimestamp: new Date().toISOString(),
-          timestamp: new Date().toISOString(),
-          network: sym === 'YOY' ? 'yoy' : undefined,
-        } as any;
-        await addTransaction(tx);
-        setTxDetail(tx);
-      } catch {}
-      const successMsg = language==='en'
-        ? `Congratulations! You received ${res.amount} ${sym}.`
-        : `축하합니다! ${res.amount} ${sym}를 수령하였습니다.`;
-      Alert.alert(successMsg);
-      setPending(null);
+      const v = await getVoucher(vid);
+      if (!v) {
+        Alert.alert(language==='en'?'Not found':'바우처를 찾을 수 없습니다.');
+        return;
+      }
+      setPending(v as any);
+      if (v.status !== 'active') {
+        const msg = v.status === 'expired' ? (language==='en'?'Expired':'만료됨')
+          : v.status === 'exhausted' ? (language==='en'?'Exhausted':'소진됨')
+          : (language==='en'?'Cancelled':'종료됨');
+        Alert.alert(language==='en'?'Not claimable':'수령 불가', msg);
+        return;
+      }
+      await executeClaimFromVoucher(v);
     } catch (e) {
       Alert.alert(language==='en'?'Error':'오류', String(e instanceof Error ? e.message : e));
     }
@@ -499,25 +541,20 @@ export default function GiftsPage() {
           <ThemedText style={{ fontSize: 16, color: '#EDEDED' }}>{language==='en'?'Event gift':'기프트 수령'}</ThemedText>
           <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
             <TextInput value={claimInput} onChangeText={setClaimInput} placeholder={language==='en'?'Paste event link (yooy://claim) here':'이벤트 링크(yooy://claim)를 붙여넣으세요'} placeholderTextColor="#666" style={{ flex:1, color:'#EDEDED', borderWidth:1, borderColor:'#2B3A3F', borderRadius:8, paddingHorizontal:12, paddingVertical:8 }} />
+            <TouchableOpacity onPress={handleGiftReceiveSubmit} style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#FFD700', backgroundColor:'#FFD700', borderRadius:8 }}>
+              <ThemedText style={{ color:'#000' }}>{language==='en'?'Claim':'수령하기'}</ThemedText>
+            </TouchableOpacity>
+          </View>
+          <View style={{ flexDirection:'row', gap:8, flexWrap:'wrap' }}>
             <TouchableOpacity onPress={handlePasteClaim} style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#2B3A3F', borderRadius:8 }}>
               <ThemedText style={{ color:'#EDEDED' }}>{language==='en'?'Paste':'붙여넣기'}</ThemedText>
             </TouchableOpacity>
-          </View>
-          <View style={{ flexDirection:'row', gap:8 }}>
             <TouchableOpacity onPress={scanImageForClaim} style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#2B3A3F', borderRadius:8 }}>
               <ThemedText style={{ color:'#EDEDED' }}>{language==='en'?'Image':'이미지'}</ThemedText>
             </TouchableOpacity>
             <TouchableOpacity onPress={startCameraScan} style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#2B3A3F', borderRadius:8 }}>
               <ThemedText style={{ color:'#EDEDED' }}>{language==='en'?'Scan':'스캔'}</ThemedText>
             </TouchableOpacity>
-            <TouchableOpacity onPress={async()=>{ if (claimInput) await loadVoucherFromData(claimInput); }} style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#2B3A3F', borderRadius:8 }}>
-              <ThemedText style={{ color:'#EDEDED' }}>{language==='en'?'Check':'확인'}</ThemedText>
-            </TouchableOpacity>
-            {!!pending && pending.status === 'active' && (
-              <TouchableOpacity onPress={onClaim} style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#FFD700', borderRadius:8, backgroundColor:'#FFD700' }}>
-                <ThemedText style={{ color:'#000' }}>{language==='en'?'Claim':'받기'}</ThemedText>
-              </TouchableOpacity>
-            )}
           </View>
           {!!pending && (
             <View style={{ marginTop:6 }}>
@@ -782,34 +819,17 @@ export default function GiftsPage() {
 
       <Modal visible={!!qrUrl && qrVisible} transparent animationType="fade" onRequestClose={()=>setQrVisible(false)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.7)', alignItems:'center', justifyContent:'center', padding:16 }}>
-          <View style={{ width:'90%', maxWidth:420, backgroundColor:'#0F171B', borderRadius:16, borderWidth:1, borderColor:'#1F2C31', padding:16, alignItems:'center' }}>
-            <ThemedText style={{ color:'#EDEDED', fontSize:16, marginBottom:12 }}>{language==='en'?'Share QR':'QR 공유'}</ThemedText>
-            <ThemedText style={{ color:'#9AB', fontSize:12, marginBottom:8 }}>
-              {language==='en'
-                ? 'Share this QR to let others claim your event.'
-                : '이 QR을 공유하면 다른 사용자가 이벤트를 수령할 수 있어요.'}
-            </ThemedText>
-            <View style={{ width:240, height:240, borderRadius:12, overflow:'hidden', backgroundColor:'#fff', alignItems:'center', justifyContent:'center' }}>
-              {(() => {
-                const data = qrUrl || '';
-                if (Platform.OS !== 'web' && QRCode) {
-                  const Comp = QRCode as any;
-                  return <Comp value={data} size={220} />;
-                }
-                const url = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=${encodeURIComponent(data)}`;
-                return <Image source={{ uri: url }} style={{ width:240, height:240 }} />;
-              })()}
-            </View>
-            <View style={{ marginTop:12, width:'100%', gap:8 }}>
-              <TouchableOpacity style={{ width:'100%', alignItems:'center', justifyContent:'center', paddingVertical:10, backgroundColor:'#243034', borderRadius:8, borderWidth:1, borderColor:'#375A64' }} onPress={async()=>{
-                try { if (qrUrl) await (navigator as any)?.clipboard?.writeText?.(qrUrl); Alert.alert(language==='en'?'Copied':'복사됨'); } catch {}
-              }}>
-                <ThemedText style={{ color:'#EDEDED' }}>{language==='en'?'Copy link':'링크 복사'}</ThemedText>
-              </TouchableOpacity>
-              <TouchableOpacity style={{ width:'100%', alignItems:'center', justifyContent:'center', paddingVertical:10, backgroundColor:'#FFD700', borderRadius:8 }} onPress={()=> setQrVisible(false)}>
-                <ThemedText style={{ color:'#000' }}>{language==='en'?'Close':'닫기'}</ThemedText>
-              </TouchableOpacity>
-            </View>
+          <View style={{ width:'90%', maxWidth:420, backgroundColor:'#0F171B', borderRadius:16, borderWidth:3, borderColor: QR_FRAME_BORDER.gift, padding:16, alignItems:'center' }}>
+            <QrSavePopupCard
+              ref={giftQrModalCaptureRef}
+              payload={qrUrl || ''}
+              headline={language==='en'?'Share QR':'QR 공유'}
+              titleLine={language === 'en' ? '[Gift] / YOY' : '[기프트] / YOY'}
+              language={language}
+              webCaptureId="gift-qr-popup-card"
+              variant="gift"
+              onClose={() => setQrVisible(false)}
+            />
           </View>
         </View>
       </Modal>

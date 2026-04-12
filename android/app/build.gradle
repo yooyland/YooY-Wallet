@@ -1,19 +1,8 @@
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
-apply plugin: "com.github.triplet.play"
-// Firebase google-services plugin (required for native AppCheck / Play Integrity)
-apply plugin: "com.google.gms.google-services"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
-
-// Allow overriding Hermes usage from environment without editing gradle.properties.
-// Useful on Windows where hermesc can intermittently crash during release bundling.
-def __hermesEnabledEnv = System.getenv("HERMES_ENABLED")
-if (__hermesEnabledEnv != null && __hermesEnabledEnv.toString().trim()) {
-    project.ext.set("hermesEnabled", __hermesEnabledEnv.toString().trim())
-    println "android: hermesEnabled overridden by env HERMES_ENABLED=${project.ext.get('hermesEnabled')}"
-}
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -47,7 +36,7 @@ react {
 
     /* Bundling */
     //   A list containing the node command and its flags. Default is just 'node'.
-    nodeExecutableAndArgs = ["node", "--max-old-space-size=8192"]
+    // nodeExecutableAndArgs = ["node"]
 
     //
     //   The path to the CLI configuration file. Default is empty.
@@ -61,16 +50,14 @@ react {
     //
     //   A list of extra flags to pass to the 'bundle' commands.
     //   See https://github.com/react-native-community/cli/blob/main/docs/commands.md#bundle
-    extraPackagerArgs = ["--max-workers", "1"]
+    // extraPackagerArgs = []
 
     /* Hermes Commands */
     //   The hermes compiler command to run. By default it is 'hermesc'
     // hermesCommand = "$rootDir/my-custom-hermesc/bin/hermesc"
     //
     //   The list of flags to pass to the Hermes compiler. By default is "-O", "-output-source-map"
-    // Windows hermesc can crash during release bundling when generating output source maps.
-    // Keep release compilation leaner and more stable by omitting "-output-source-map".
-    hermesFlags = ["-O"]
+    // hermesFlags = ["-O", "-output-source-map"]
 
     /* Autolinking */
     autolinkLibrariesWithApp()
@@ -94,61 +81,30 @@ def enableMinifyInReleaseBuilds = (findProperty('android.enableMinifyInReleaseBu
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
-// --- Auto versioning: store/read from android/version.properties and bump on release builds ---
-def versionPropsFile = new File(rootDir, "version.properties")
-def versionProps = new Properties()
-if (versionPropsFile.exists()) {
-    versionPropsFile.withInputStream { stream -> versionProps.load(stream) }
+
+def keystorePropertiesFile = rootProject.file("key.properties")
+def keystoreProperties = new Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
-def envVersionCode = System.getenv('ANDROID_VERSION_CODE')
-def envVersionName = System.getenv('ANDROID_VERSION_NAME')
-def storedCode = (versionProps.getProperty('VERSION_CODE') ?: "2") as String
-def storedName = versionProps.getProperty('VERSION_NAME') ?: "1.0.1"
-// Safe time-based code (yyyyMMdd*100 + NN) to keep <= 2,147,483,647
-def dateBase = Integer.parseInt(new java.text.SimpleDateFormat("yyyyMMdd").format(new Date()))
-def patchNo = ((System.getenv('ANDROID_BUILD_NO') ?: System.getenv('BUILD_NO') ?: "0") as String).replaceAll("[^0-9]","")
-def patchInt = (patchNo ? Integer.parseInt(patchNo) : 0)
-if (patchInt > 99) { patchInt = 99 }
-def timeCodeSafe = dateBase * 100 + patchInt
-// Choose highest among: explicit env (parsed as long), stored, safe time-based, but clamp to Int32 max
-Long parsedEnv = null
-try {
-    if (envVersionCode) parsedEnv = Long.parseLong(envVersionCode)
-} catch (Throwable ignored) { parsedEnv = null }
-def chosenLong = (parsedEnv != null) ? Math.min(parsedEnv, 2147483647L) : Math.max(storedCode.toInteger(), timeCodeSafe)
-def computedVersionCode = (chosenLong as int)
-def computedVersionName = (envVersionName ?: storedName)
-def autoVersionBump = ((findProperty('android.autoVersionBump') ?: 'true') as String).toBoolean()
-// --- End auto versioning setup ---
-println "android: building versionCode=${computedVersionCode}, versionName=${computedVersionName} (autoVersionBump=${autoVersionBump})"
 
-// Explicit env override (if provided), ensure final values here
-def __envVC = System.getenv('ANDROID_VERSION_CODE')
-def __envVN = System.getenv('ANDROID_VERSION_NAME')
-def finalVersionCode = (__envVC && __envVC.trim()) ? Math.min(Long.parseLong(__envVC.trim()), 2147483647L) as int : computedVersionCode
-def finalVersionName = (__envVN && __envVN.trim()) ? __envVN.trim() : computedVersionName
-println "android: final versionCode=${finalVersionCode}, versionName=${finalVersionName}"
-
-// (no-op) avoid mutating third-party CMake files at configuration time
+// Play / local AAB: MYAPP_VERSION_* in android/gradle.properties
+def myAppVersionCode = (findProperty('MYAPP_VERSION_CODE') ?: '2026033101').toInteger()
+def myAppVersionName = findProperty('MYAPP_VERSION_NAME') ?: '1.0.004'
 
 android {
     ndkVersion rootProject.ext.ndkVersion
 
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
-    buildFeatures {
-        // Ensure Prefab is enabled so fbjni/folly/etc. provide CMake targets
-        prefab true
-    }
 
     namespace 'com.yooyland.wallet'
     defaultConfig {
         applicationId 'com.yooyland.wallet'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        // Auto versioning (env ANDROID_VERSION_CODE/NAME overrides)
-        versionCode finalVersionCode
-        versionName finalVersionName
+        versionCode myAppVersionCode
+        versionName myAppVersionName
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -159,32 +115,25 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
-            release {
-                def storeFileProp = findProperty('MYAPP_UPLOAD_STORE_FILE') ?: ''
-                def keyAliasProp = findProperty('MYAPP_UPLOAD_KEY_ALIAS') ?: ''
-                def storePasswordProp = findProperty('MYAPP_UPLOAD_STORE_PASSWORD') ?: ''
-                def keyPasswordProp = findProperty('MYAPP_UPLOAD_KEY_PASSWORD') ?: ''
-                if (!storeFileProp || !keyAliasProp) {
-                    throw new IllegalStateException("Upload keystore not configured. Set MYAPP_UPLOAD_* in gradle.properties")
-                }
-                storeFile file(storeFileProp)
-                keyAlias keyAliasProp
-                storePassword storePasswordProp
-                keyPassword keyPasswordProp
+        release {
+            if (keystorePropertiesFile.exists()) {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
             }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-                signingConfig signingConfigs.release
+            signingConfig signingConfigs.release
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds
-            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
             def enablePngCrunchInRelease = findProperty('android.enablePngCrunchInReleaseBuilds') ?: 'true'
             crunchPngs enablePngCrunchInRelease.toBoolean()
         }
@@ -200,226 +149,23 @@ android {
     }
 }
 
-// Guard autolinking CMake for missing worklets codegen (make configure resilient)
-tasks.register("guardAutolinkingCMake") {
-    doLast {
-        try {
-            def f = file("$buildDir/generated/autolinking/src/main/jni/Android-autolinking.cmake")
-            if (!f.exists()) return
-            def src = f.getText("UTF-8")
-            def out = src
-            // Wrap add_subdirectory for react-native-worklets with EXISTS guard
-            out = out.replaceAll(
-                    /add_subdirectory\(\s*"([^"]*react-native-worklets[^"]*)"\s*\)/,
-                    'if(EXISTS "$1" AND EXISTS "$1/CMakeLists.txt")\nadd_subdirectory("$1")\nendif()'
-            )
-            // Guard target_link_libraries for react_codegen_rnworklets
-            out = out.replaceAll(
-                    /target_link_libraries\(\s*react_codegen_rnworklets([^\)]*)\)/,
-                    'if(TARGET react_codegen_rnworklets)\ntarget_link_libraries(react_codegen_rnworklets$1)\nendif()'
-            )
-            if (out != src) {
-                f.setText(out, "UTF-8")
-                println "[guard] Patched Android-autolinking.cmake (worklets guards applied)"
-            }
-        } catch (Throwable t) {
-            println "[guard] skipping autolinking patch (${t?.message})"
-        }
-    }
-}
 
-// Run guard after autolinking is generated and before CMake config
-tasks.configureEach { t ->
-    def name = (t.name ?: "").toLowerCase()
-    if (name.contains("autolinking") && (name.contains("generate") || name.contains("sources"))) {
-        t.finalizedBy("guardAutolinkingCMake")
-    }
-    if (name == "prebuild") {
-        t.dependsOn("guardAutolinkingCMake")
-    }
-    if (name.contains("configurecmake")) {
-        t.dependsOn("guardAutolinkingCMake")
-    }
-}
-
-// As a last resort, create a stub worklets codegen target if missing
-tasks.register("ensureWorkletsCodegen") {
-    doLast {
-        try {
-            // NOTE: in :app module, rootDir points to <repo>/android. We need <repo>/node_modules.
-            def dir = file("$projectRoot/node_modules/react-native-worklets/android/build/generated/source/codegen/jni")
-            if (!dir.exists()) { dir.mkdirs() }
-            def cm = file(new File(dir, "CMakeLists.txt"))
-            def dummy = file(new File(dir, "rnworklets_stub.cpp"))
-            // Use a real STATIC lib; INTERFACE breaks when RN links without INTERFACE keyword.
-            def desired = """cmake_minimum_required(VERSION 3.13)
-project(rnworklets_stub LANGUAGES C CXX)
-add_library(react_codegen_rnworklets STATIC rnworklets_stub.cpp)
-set_target_properties(react_codegen_rnworklets PROPERTIES POSITION_INDEPENDENT_CODE ON)
-"""
-            if (!dummy.exists() || dummy.getText("UTF-8").contains("\\n")) {
-                // Write a real newline, not a literal backslash-n sequence
-                dummy.setText("int rnworklets_stub() { return 0; }\n", "UTF-8")
-            }
-            def needsWrite = (!cm.exists())
-            if (!needsWrite) {
-                try {
-                    def cur = cm.getText("UTF-8")
-                    if (cur.contains("INTERFACE") || !cur.contains("react_codegen_rnworklets")) {
-                        needsWrite = true
-                    }
-                } catch (Throwable ignored) {
-                    needsWrite = true
-                }
-            }
-            if (needsWrite) {
-                cm.setText(desired, "UTF-8")
-                println "[worklets-stub] Ensured stub react_codegen_rnworklets at ${cm}"
-            }
-        } catch (Throwable t) {
-            println "[worklets-stub] skipped (${t?.message})"
-        }
-    }
-}
-
-tasks.configureEach { t ->
-    def name = (t.name ?: "").toLowerCase()
-    if (name.contains("configurecmake") || name == "prebuild") {
-        t.dependsOn("ensureWorkletsCodegen")
-    }
-}
-
-// Harden timing: patch and stub immediately before any configureCMake runs
-tasks.configureEach { t ->
-    def name = (t.name ?: "").toLowerCase()
-    if (name.contains("configurecmake")) {
-        t.doFirst {
-            try {
-                // Ensure stub exists right before CMake configuration
-                def dir = file("$projectRoot/node_modules/react-native-worklets/android/build/generated/source/codegen/jni")
-                if (!dir.exists()) { dir.mkdirs() }
-                def cm = file(new File(dir, "CMakeLists.txt"))
-                def dummy = file(new File(dir, "rnworklets_stub.cpp"))
-                def desired = """cmake_minimum_required(VERSION 3.13)
-project(rnworklets_stub LANGUAGES C CXX)
-add_library(react_codegen_rnworklets STATIC rnworklets_stub.cpp)
-set_target_properties(react_codegen_rnworklets PROPERTIES POSITION_INDEPENDENT_CODE ON)
-"""
-                if (!dummy.exists() || dummy.getText("UTF-8").contains("\\n")) {
-                    // Write a real newline, not a literal backslash-n sequence
-                    dummy.setText("int rnworklets_stub() { return 0; }\n", "UTF-8")
-                }
-                def needsWrite = (!cm.exists())
-                if (!needsWrite) {
-                    try {
-                        def cur = cm.getText("UTF-8")
-                        if (cur.contains("INTERFACE") || !cur.contains("react_codegen_rnworklets")) {
-                            needsWrite = true
-                        }
-                    } catch (Throwable ignored) {
-                        needsWrite = true
-                    }
-                }
-                if (needsWrite) {
-                    cm.setText(desired, "UTF-8")
-                    println "[worklets-stub/doFirst] Ensured stub react_codegen_rnworklets at ${cm}"
-                }
-            } catch (Throwable t2) {
-                println "[worklets-stub/doFirst] skipped (${t2?.message})"
-            }
-            try {
-                // Patch the generated Android-autolinking.cmake just-in-time
-                def f = file("$buildDir/generated/autolinking/src/main/jni/Android-autolinking.cmake")
-                if (f.exists()) {
-                    def src = f.getText("UTF-8")
-                    def out = src
-                    // Guard add_subdirectory for react-native-worklets (quoted path)
-                    out = out.replaceAll(
-                            /add_subdirectory\\(\\s*"([^"]*react-native-worklets[^"]*)"\\s*\\)/,
-                            'if(EXISTS "$1" AND EXISTS "$1/CMakeLists.txt")\\nadd_subdirectory("$1")\\nendif()'
-                    )
-                    // Guard add_subdirectory for react-native-worklets (unquoted path)
-                    out = out.replaceAll(
-                            /add_subdirectory\\(\\s*([^")]*react-native-worklets[^)]*)\\s*\\)/,
-                            'if(EXISTS "$1" AND EXISTS "$1/CMakeLists.txt")\\nadd_subdirectory("$1")\\nendif()'
-                    )
-                    // Guard target_link_libraries(react_codegen_rnworklets ...)
-                    out = out.replaceAll(
-                            /target_link_libraries\\(\\s*react_codegen_rnworklets([^)]*)\\)/,
-                            'if(TARGET react_codegen_rnworklets)\\ntarget_link_libraries(react_codegen_rnworklets$1)\\nendif()'
-                    )
-                    if (out != src) {
-                        f.setText(out, "UTF-8")
-                        println "[guard/doFirst] Patched Android-autolinking.cmake (worklets guards applied)"
-                    } else {
-                        println "[guard/doFirst] No worklets patterns found to patch"
-                    }
-                } else {
-                    println "[guard/doFirst] autolinking CMake not found yet (will rely on finalizedBy hook)"
-                }
-            } catch (Throwable t3) {
-                println "[guard/doFirst] skipping autolinking patch (${t3?.message})"
-            }
-        }
-    }
-}
-
-// Gradle Play Publisher configuration
-play {
-    // Set path via env var or gradle.properties: PLAY_SERVICE_ACCOUNT_JSON
-    def credPath = (findProperty('PLAY_SERVICE_ACCOUNT_JSON') ?: System.getenv('PLAY_SERVICE_ACCOUNT_JSON'))
-    if (!credPath) {
-        logger.lifecycle("Play Publisher: credentials not set (PLAY_SERVICE_ACCOUNT_JSON). Publishing disabled.")
-        enabled.set(false)
-    } else {
-        serviceAccountCredentials.set(file(credPath))
-        defaultToAppBundles.set(true)
-        track.set((findProperty('PLAY_TRACK') ?: System.getenv('PLAY_TRACK')) ?: "internal")
-        // Explicitly enable mapping upload when available (on by default in recent versions)
-        try {
-            uploadMappingFile.set(true)
-        } catch (Throwable ignored) {
-            // For plugin versions where this property doesn't exist, default behavior applies.
-        }
-    }
-}
-
-// Apply static values from `gradle.properties` to the packaging options (AGP-safe)
-// Accepts comma-delimited lists, e.g. android.packagingOptions.pickFirsts=/LICENSE,**/picasa.ini
+// Apply static values from `gradle.properties` to the `android.packagingOptions`
+// Accepts values in comma delimited lists, example:
+// android.packagingOptions.pickFirsts=/LICENSE,**/picasa.ini
 ["pickFirsts", "excludes", "merges", "doNotStrip"].each { prop ->
-    def raw = (findProperty("android.packagingOptions.$prop") ?: "") as String
-    if (!raw) return
-    def options = raw.split(",").collect { it.trim() }.findAll { it }
-    if (options.isEmpty()) return
-    println "android.packagingOptions.$prop += $options (${options.size()})"
-    // Configure via the Android extension if present; guard against property shadowing
-    def androidExt = project.extensions.findByName("android")
-    if (androidExt != null) {
-        try {
-            options.each { v ->
-                androidExt.packagingOptions."$prop" += v
-            }
-        } catch (Throwable ignored) {
-            // Fallback for AGP 8+: map legacy props onto new DSL where applicable
-            try {
-                if (prop == "excludes" || prop == "pickFirsts" || prop == "merges") {
-                    androidExt.packaging {
-                        resources {
-                            if (prop == "excludes") { excludes += options }
-                            if (prop == "pickFirsts") { pickFirsts += options }
-                            if (prop == "merges") { merges += options }
-                        }
-                    }
-                } else if (prop == "doNotStrip") {
-                    androidExt.packaging {
-                        jniLibs {
-                            keepDebugSymbols += options
-                        }
-                    }
-                }
-            } catch (Throwable ignored2) {
-                logger.lifecycle("packagingOptions mapping skipped: ${ignored2?.message}")
-            }
+    // Split option: 'foo,bar' -> ['foo', 'bar']
+    def options = (findProperty("android.packagingOptions.$prop") ?: "").split(",");
+    // Trim all elements in place.
+    for (i in 0..<options.size()) options[i] = options[i].trim();
+    // `[] - ""` is essentially `[""].filter(Boolean)` removing all empty strings.
+    options -= ""
+
+    if (options.length > 0) {
+        println "android.packagingOptions.$prop += $options ($options.length)"
+        // Ex: android.packagingOptions.pickFirsts += '**/SCCS/**'
+        options.each {
+            android.packagingOptions[prop] += it
         }
     }
 }
@@ -427,9 +173,6 @@ play {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
-
-    // Ensure ML Kit Barcode Scanning is available for expo-barcode-scanner
-    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";
@@ -453,60 +196,5 @@ dependencies {
         implementation("com.facebook.react:hermes-android")
     } else {
         implementation jscFlavor
-    }
-
-    // Firebase App Check (Android): Play Integrity for release, Debug provider for dev
-    implementation platform("com.google.firebase:firebase-bom:33.7.0")
-    implementation "com.google.firebase:firebase-appcheck-playintegrity"
-    implementation "com.google.firebase:firebase-appcheck-debug"
-}
-
-// Worklets autolinking strip DISABLED for release stability
-def __stripWorklets = (findProperty('android.stripWorklets') ?: 'false').toBoolean()
-if (__stripWorklets) {
-    tasks.register("stripWorkletsFromAutolinking") {
-        doLast {
-            println "[stripWorklets] (enabled) but this build should not enable it for release."
-        }
-    }
-    tasks.configureEach { t ->
-        def name = t.name.toLowerCase()
-        if (name.contains("autolinking") && (name.contains("generate") || name.contains("sources"))) {
-            t.finalizedBy("stripWorkletsFromAutolinking")
-        }
-    }
-}
-
-// (이전) Worklets 제거 작업은 비활성화합니다. 네이티브 Worklets를 정상 포함해 Reanimated 초기화를 보장합니다.
-// Reanimated v4에는 별도의 plugin.gradle이 없습니다. (babel/plugin + import로 초기화)
-// Persist next version after release build configuration
-gradle.taskGraph.whenReady { graph ->
-    def willBuildRelease = graph.hasTask(":app:bundleRelease") || graph.hasTask(":app:assembleRelease")
-    if (willBuildRelease && autoVersionBump) {
-        try {
-            if (envVersionCode == null) {
-                versionProps.setProperty('VERSION_CODE', String.valueOf(computedVersionCode + 1))
-            }
-            if (envVersionName == null) {
-                def parts = computedVersionName.split('\\.')
-                def major = parts.length > 0 ? (parts[0] as int) : 1
-                def minor = parts.length > 1 ? (parts[1] as int) : 0
-                def patch = parts.length > 2 ? (parts[2] as int) + 1 : 1
-                versionProps.setProperty('VERSION_NAME', "${major}.${minor}.${patch}")
-            }
-            versionPropsFile.withOutputStream { os -> versionProps.store(os, null) }
-            // Avoid confusion: this is NOT the current release version, it's the next default value stored for a future build.
-            def nextCode = versionProps.getProperty('VERSION_CODE')
-            def nextName = versionProps.getProperty('VERSION_NAME')
-            def nextMsg = "android: next default version prepared (for future builds) -> ${nextCode}/${nextName}"
-            // If env provided explicit versions, suppress the next-version line (release version is already logged above).
-            if (envVersionCode == null && envVersionName == null) {
-                println nextMsg
-            } else {
-                println "android: next default version prepared (suppressed: env release version in use)"
-            }
-        } catch (Throwable ignored) {
-            println "android: Auto version bump skipped (${ignored?.message})"
-        }
     }
 }

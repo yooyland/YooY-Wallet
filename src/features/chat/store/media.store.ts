@@ -42,12 +42,20 @@ export function mediaIdForUri(uri: string): string {
 
 export type MediaStore = MediaStateV1 & MediaActionsV1;
 
+// 레거시 AsyncStorage → zustand 마이그레이션은 UID당 한 번만 수행 (프로필 진입 시 반복 I/O 방지)
+const migratedLegacyUids = new Set<string>();
+
 export const useMediaStore = create<MediaStore>()(persist((set, get) => ({
   version: 1,
   items: {},
   byLocation: { gallery: [], treasure: [] },
 
   async migrateFromLegacy(uid: string) {
+    try {
+      const key = String(uid || '').trim();
+      if (!key || migratedLegacyUids.has(key)) return;
+      migratedLegacyUids.add(key);
+    } catch {}
     const galleryKey = `u:${uid}:chat.media.items`;
     const treasureKey = `u:${uid}:treasure.items`;
     const metaKey = `u:${uid}:chat.media.meta`;
@@ -70,9 +78,13 @@ export const useMediaStore = create<MediaStore>()(persist((set, get) => ({
           const id = it?.id || mediaIdForUri(uri);
           const meta = m?.[uri] || {};
           const createdAt = it?.createdAt ?? Date.now();
+          const isData = /^data:/i.test(uri);
+          const isHttp = /^https?:/i.test(uri);
+          const isLocal = /^(file|content):/i.test(uri);
           const item: MediaItemV1 = {
             id,
-            uriHttp: it?.uri && /^https?:/i.test(it.uri) ? it.uri : undefined,
+            uriHttp: !isData && (isHttp || isLocal) ? uri : undefined,
+            uriData: isData ? uri : undefined,
             name: meta?.name || it?.name,
             createdAt,
             visibility: meta?.public === false ? 'private' : (it?.public === false ? 'private' : 'public'),

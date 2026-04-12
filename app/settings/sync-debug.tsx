@@ -83,6 +83,12 @@ export default function SyncDebug() {
         setLinkRes({ status: 401, ms: 0, requestUrl: new URL('/me/addresses', base).toString(), raw: JSON.stringify({ error: 'no token' }) });
         return;
       }
+      // 서버 링크 성공/실패와 무관하게, 온체인 조회용으로 마지막 주소를 로컬에 저장
+      try {
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        const normalized = (linkAddr || '').trim();
+        if (normalized) await AsyncStorage.setItem('wallet.lastKnownAddress', normalized);
+      } catch {}
       const url = new URL('/me/addresses', base).toString();
       const t0 = Date.now();
       const r = await fetch(url, {

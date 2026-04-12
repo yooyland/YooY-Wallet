@@ -1,0 +1,30 @@
+# Cursor indexing / agent / search load reduction (OOM). App source (src/app/lib) NOT excluded.
+node_modules
+# android
+ios
+build
+dist
+web-build
+.expo
+.expo-shared
+.cache
+.gradle
+coverage
+tmp
+logs
+.metro-health-check*
+.kotlin
+App-screen
+yoy-monitor
+**/*.log
+**/crash*.txt
+**/hs_err_pid*.log
+**/replay_pid*.log
+**/rn-*.txt
+**/yooyland-*.txt
+**/*.tsbuildinfo
+.git
+YooY Namecard.ai
+**/*.apk
+**/*.aab
+**/*.ipa

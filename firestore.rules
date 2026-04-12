@@ -20,6 +20,81 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
+    // chatV2 membership helper
+    // roomMembers/{roomId}/members/{uid} is the source of truth for whether a user belongs to a room.
+    function isRoomMember(roomId, memberUid) {
+      return exists(/databases/$(db)/documents/roomMembers/$(roomId)/members/$(memberUid));
+    }
+
+    function isRoomParticipant(roomId, memberUid) {
+      // Prefer roomMembers (most strict). If missing (older/legacy data), heal using canonical rooms/{roomId}.participantIds.
+      return isRoomMember(roomId, memberUid) ||
+        exists(/databases/$(db)/documents/users/$(memberUid)/joinedRooms/$(roomId)) ||
+        (exists(/databases/$(db)/documents/rooms/$(roomId)) &&
+          (get(/databases/$(db)/documents/rooms/$(roomId)).data.participantIds != null) &&
+          (memberUid in (get(/databases/$(db)/documents/rooms/$(roomId)).data.participantIds)));
+    }
+
+    /** 방 문서가 있고, 요청자가 createdBy 이며 targetUid 가 participantIds 에 포함 — 최초 roomMembers/joinedRooms 배치(group/dm/secret/ttl/notice 공통) */
+    function roomCreatorBootstrap(roomId, targetUid) {
+      return exists(/databases/$(db)/documents/rooms/$(roomId)) &&
+        get(/databases/$(db)/documents/rooms/$(roomId)).data.createdBy == request.auth.uid &&
+        get(/databases/$(db)/documents/rooms/$(roomId)).data.participantIds != null &&
+        targetUid in get(/databases/$(db)/documents/rooms/$(roomId)).data.participantIds;
+    }
+
+    /** rooms.participantIds 에 실제로 포함된 uid 가 자신의 roomMembers 행을 만들거나 settings 를 갱신할 수 있게 함 (participantIds 비어 있던 레거시 복구 전까지 권한 누락 방지) */
+    function mayUpsertOwnRoomMemberFromRoomDoc(roomId, memberUid) {
+      return isSignedIn() && request.auth.uid == memberUid &&
+        exists(/databases/$(db)/documents/rooms/$(roomId)) &&
+        get(/databases/$(db)/documents/rooms/$(roomId)).data.participantIds != null &&
+        memberUid in get(/databases/$(db)/documents/rooms/$(roomId)).data.participantIds;
+    }
+
+    /** 방 설정 저장 시 타인의 users/{uid}/joinedRooms/{roomId} 동기화 — 두 uid 모두 rooms.participantIds 에 있으면 허용 */
+    function bothInRoomParticipantIds(roomId, uidA, uidB) {
+      return exists(/databases/$(db)/documents/rooms/$(roomId)) &&
+        get(/databases/$(db)/documents/rooms/$(roomId)).data.participantIds != null &&
+        uidA in get(/databases/$(db)/documents/rooms/$(roomId)).data.participantIds &&
+        uidB in get(/databases/$(db)/documents/rooms/$(roomId)).data.participantIds;
+    }
+
+    /** users/{uid}/joinedRooms/{roomId} 문서 존재 — roomMembers 생성 전에도 멤버십 입증 */
+    function hasJoinedRoomDoc(roomId, memberUid) {
+      return exists(/databases/$(db)/documents/users/$(memberUid)/joinedRooms/$(roomId));
+    }
+
+    /** rooms.participantIds 에 포함 (문서·필드 존재 시에만 평가) */
+    function inRoomsParticipantIds(roomId, memberUid) {
+      return exists(/databases/$(db)/documents/rooms/$(roomId)) &&
+        get(/databases/$(db)/documents/rooms/$(roomId)).data.participantIds is list &&
+        memberUid in get(/databases/$(db)/documents/rooms/$(roomId)).data.participantIds;
+    }
+
+    /**
+     * 본인 roomMembers/{roomId}/members/{memberUid} 문서 생성·갱신(알림·테마 등 settings)
+     * — joinedRooms 또는 participantIds 또는 기존 멤버 문서로 입증 (matches 룰 누락 시에도 저장 가능)
+     */
+    function mayWriteOwnRoomMemberDoc(roomId, memberUid) {
+      return isSignedIn() &&
+        request.auth.uid == memberUid &&
+        (
+          isRoomMember(roomId, memberUid) ||
+          hasJoinedRoomDoc(roomId, memberUid) ||
+          inRoomsParticipantIds(roomId, memberUid)
+        );
+    }
+
+    /** 레거시 userRoomPreferences/{uid}_{roomId} — split 은 룰/런타임에 따라 실패할 수 있어 matches 우선 */
+    function ownsUserRoomPreferenceFlatDoc(docId) {
+      return isSignedIn() && docId.matches('^' + request.auth.uid + '_.+');
+    }
+
+    /** 양쪽 모두 해당 방 joinedRooms 문서가 있으면 participantIds 비어 있어도 동기화 허용 */
+    function bothHaveJoinedRoomDoc(roomId, uidA, uidB) {
+      return hasJoinedRoomDoc(roomId, uidA) && hasJoinedRoomDoc(roomId, uidB);
+    }
+
     // 관리자 여부는 우선 이메일 기반 (서버의 ALLOWED_ADMIN_EMAILS 와 맞추는 것을 권장)
     function isAdmin() {
       return isSignedIn()
@@ -55,6 +130,24 @@ service cloud.firestore {
       }
 
       match /joinedRooms/{roomId} {
+        // v2 send/update writes joinedRooms for "other participants" as well.
+        // - 본인 행 / 멤버끼리 동기화 / 방 생성 시 createdBy 가 참가자별 초기 행 작성
+        allow read: if isSignedIn() && (isMe(uid) || isRoomParticipant(roomId, request.auth.uid));
+        allow create: if isSignedIn() && (
+          isMe(uid) ||
+          roomCreatorBootstrap(roomId, uid) ||
+          bothInRoomParticipantIds(roomId, request.auth.uid, uid)
+        );
+        allow update, delete: if isSignedIn() && (
+          isMe(uid) ||
+          (isRoomParticipant(roomId, uid) && isRoomParticipant(roomId, request.auth.uid)) ||
+          bothInRoomParticipantIds(roomId, request.auth.uid, uid) ||
+          bothHaveJoinedRoomDoc(roomId, request.auth.uid, uid)
+        );
+      }
+
+      /** 방별 알림·테마 등 (본인 서브컬렉션만 — 상위 users write 와 별도로 명시) */
+      match /chatRoomPrefs/{roomId} {
         allow read, write: if isMe(uid);
       }
 
@@ -87,6 +180,35 @@ service cloud.firestore {
       }
     }
 
+    // -----------------------------
+    // chatV2 collections
+    // -----------------------------
+    match /roomMembers/{roomId}/members/{memberUid} {
+      allow read: if isSignedIn() && isRoomParticipant(roomId, request.auth.uid);
+      allow create: if isSignedIn() && (
+        mayWriteOwnRoomMemberDoc(roomId, memberUid) ||
+        mayUpsertOwnRoomMemberFromRoomDoc(roomId, memberUid) ||
+        (isRoomParticipant(roomId, request.auth.uid) && isRoomParticipant(roomId, memberUid)) ||
+        roomCreatorBootstrap(roomId, memberUid)
+      );
+      allow update: if isSignedIn() && (
+        mayWriteOwnRoomMemberDoc(roomId, memberUid) ||
+        mayUpsertOwnRoomMemberFromRoomDoc(roomId, memberUid) ||
+        (isRoomParticipant(roomId, request.auth.uid) && isRoomParticipant(roomId, memberUid))
+      );
+      allow delete: if isSignedIn() && isRoomParticipant(roomId, request.auth.uid) && isRoomParticipant(roomId, memberUid);
+    }
+
+    match /roomMessages/{roomId}/items/{messageId} {
+      allow read: if isSignedIn() && isRoomParticipant(roomId, request.auth.uid);
+      allow write: if isSignedIn() && isRoomParticipant(roomId, request.auth.uid);
+    }
+
+    // 레거시 평면 선호 (마이그레이션·구버전 앱). 신규는 users/{uid}/chatRoomPrefs/{roomId} 사용
+    match /userRoomPreferences/{docId} {
+      allow read, write: if ownsUserRoomPreferenceFlatDoc(docId);
+    }
+
     /* -----------------------------
      * 초대 / 유저네임 인덱스
      * ----------------------------- */
@@ -103,18 +225,62 @@ service cloud.firestore {
     /* -----------------------------
      * 기프트(쿠폰) / 알림
      * ----------------------------- */
+    /** 비생성자 수령 1건: claims +1, claimedCount +1 (레거시 문서에 claimedCount 필드 없을 때 대비) */
+    function claimVoucherRecipientAppend() {
+      return isSignedIn()
+        && resource.data.status == 'active'
+        && request.resource.data.createdByEmail == resource.data.createdByEmail
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.claims is list
+        && resource.data.claims is list
+        && request.resource.data.claims.size() == resource.data.claims.size() + 1
+        && (
+          (!resource.data.keys().hasAll(['claimedCount']) && request.resource.data.claimedCount == 1)
+          || (resource.data.keys().hasAll(['claimedCount'])
+            && request.resource.data.claimedCount == resource.data.claimedCount + 1)
+        );
+    }
+
     match /claim_vouchers/{voucherId} {
-      // 바우처 생성/수정: 관리자 전용
+      // 읽기: 로그인 사용자 (목록/수령 확인)
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      // 생성: 본인 이메일과 token.email 일치 시만 (클라이언트 createVoucher)
+      allow create: if isSignedIn()
+        && request.auth.token.email != null
+        && request.resource.data.id == voucherId
+        && request.resource.data.createdByEmail == request.auth.token.email
+        && request.resource.data.status == 'active';
+      // 수정: 관리자 / 생성자(종료·만료 등) / 단일 클레임 추가(+1) / 만료 시 status만 expired
+      allow update: if isAdmin()
+        || (isSignedIn()
+          && resource.data.createdByEmail == request.auth.token.email
+          && request.resource.data.createdByEmail == resource.data.createdByEmail
+          && request.resource.data.id == resource.data.id)
+        || claimVoucherRecipientAppend()
+        || (isSignedIn()
+          && request.resource.data.createdByEmail == resource.data.createdByEmail
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.claims is list
+          && resource.data.claims is list
+          && request.resource.data.claims.size() == resource.data.claims.size() + 1
+          && request.resource.data.claimedCount == resource.data.claimedCount + 1)
+        || (isSignedIn()
+          && resource.data.status == 'active'
+          && request.resource.data.status == 'expired'
+          && request.resource.data.createdByEmail == resource.data.createdByEmail
+          && request.resource.data.id == resource.data.id
+          && request.resource.data.claims == resource.data.claims
+          && request.resource.data.claimedCount == resource.data.claimedCount);
+      allow delete: if isSignedIn()
+        && resource.data.createdByEmail == request.auth.token.email
+        && resource.data.status == 'cancelled';
     }
 
     match /claim_notifications/{notifId} {
-      // 알림 읽기: 로그인 사용자 (필요시 수령자 기준 필터 추가)
       allow read: if isSignedIn();
-      // 쓰기: 서버(Cloud Functions 또는 서버 SDK)에서 service account 로만 수행하는 것을 권장
-      // 여기서는 관리자 이메일로 제한
-      allow write: if isAdmin();
+      // 수령 후 알림: 로그인 사용자 생성 허용 (스팸 방지: voucherId 필수)
+      allow create: if isSignedIn() && request.resource.data.voucherId is string;
+      allow update, delete: if isAdmin();
     }
   }
 }

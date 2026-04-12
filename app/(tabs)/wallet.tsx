@@ -8,11 +8,15 @@ import { ThemedView } from '@/components/themed-view';
 import TopBar from '@/components/top-bar';
 import TransactionDetailModal from '@/components/TransactionDetailModal';
 import WalletCreateModal from '@/components/WalletCreateModal';
+import { QrSavePopupCard } from '@/components/QrSavePopupCard';
+import { QR_FRAME_BORDER } from '@/lib/qrFrameVariants';
+import { useScreenshotCloseModal } from '@/lib/useScreenshotCloseModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { useQuickActions } from '@/contexts/QuickActionsContext';
 import { useTransaction } from '@/contexts/TransactionContext';
 import { useWallet } from '@/contexts/WalletContext';
+import { useMergedWalletAssets } from '@/contexts/MergedWalletAssetsContext';
 import { t } from '@/i18n';
 import { ExchangeRates, formatCurrency, getExchangeRates } from '@/lib/currency';
 import { getCoinPriceByCurrency, updateRealTimePrices } from '@/lib/priceManager';
@@ -27,7 +31,7 @@ import { firestore, firebaseAuth, ensureAppCheckReady } from '@/lib/firebase';
 import { signInAnonymously } from 'firebase/auth';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as MediaLibrary from 'expo-media-library';
@@ -385,7 +389,7 @@ async function scanImageWithAll(uri: string): Promise<string | null> {
         if (!/^data:image\//i.test(src)) {
           try {
             // eslint-disable-next-line @typescript-eslint/no-var-requires
-            const FS = require('expo-file-system');
+            const FS = require('expo-file-system/legacy');
             const ext = (src.split('.').pop() || '').toLowerCase();
             if (ext === 'jpg' || ext === 'jpeg') mimeGuess = 'image/jpeg';
             else if (ext === 'png') mimeGuess = 'image/png';
@@ -1082,6 +1086,7 @@ export default function WalletScreen() {
   const [realTimeBalances, setRealTimeBalances] = useState<any[]>([]);
   // SSOT: monitorStore 잔액(온체인 + 내부자산 오버레이)
   const monitorBalances = useMonitorStore(s => s.balancesArray);
+  const { mergedAssets } = useMergedWalletAssets();
   // 로그인 사용자: 잔액은 monitorStore 단일 소스. 변경 시마다 그대로 반영(빈 배열 포함).
   useEffect(() => {
     try {
@@ -1338,15 +1343,11 @@ export default function WalletScreen() {
     const syncOnChain = async () => {
       try {
         if (currentUserEmail) return;
-        const { getLocalWallet } = await import('@/src/wallet/wallet');
         const { getActiveChain } = await import('@/src/wallet/chains');
         const { default: Constants } = await import('expo-constants');
         const { ethers } = await import('ethers');
-        // WalletConnect 연결 주소 우선
-        let wcAddr: string | null = null;
-        try { wcAddr = wc?.state?.connected ? (wc?.state?.address || null) : null; } catch {}
-        const local = await getLocalWallet().catch(()=>null);
-        const addr = wcAddr || local?.address || getWalletBySymbol('YOY')?.address;
+        const { resolveWalletAddressForUser } = await import('@/lib/resolveWalletAddress');
+        const addr = await resolveWalletAddressForUser(wc?.state ?? null, (currentUser as any)?.uid ?? null);
         if (!addr) return;
         const active = getActiveChain();
         const provider = new ethers.JsonRpcProvider(active.rpcUrl, active.chainIdDec);
@@ -1533,11 +1534,9 @@ export default function WalletScreen() {
           const { getEthMonitorHttp, getEthMonitorWs } = await import('@/lib/config');
         const httpUrl = await getEthMonitorHttp();
         const wsUrl = await getEthMonitorWs();
-        // EVM 지갑(ETH/YOY 공용) 주소 기준으로 구독 - WalletConnect 주소 우선
-        const { getLocalWallet } = await import('@/src/wallet/wallet');
-        const local = await getLocalWallet().catch(()=>null);
-        const wcAddr = (() => { try { return wc?.state?.connected ? (wc?.state?.address || null) : null; } catch { return null; } })();
-        const addr = wcAddr || local?.address || getWalletBySymbol('YOY')?.address;
+        // EVM 지갑(ETH/YOY 공용) 주소: WC > 로컬 HD > 계정별/레거시 저장 주소 (다른 주소로 대체 없음)
+        const { resolveWalletAddressForUser } = await import('@/lib/resolveWalletAddress');
+        const addr = await resolveWalletAddressForUser(wc?.state ?? null, (currentUser as any)?.uid ?? null);
         if (!addr) return;
         // Register address in yoy-monitor (idempotent)
         try {
@@ -1640,10 +1639,8 @@ export default function WalletScreen() {
         const { getEthChainIdHex, getEthMonitorHttp } = await import('@/lib/config');
         const { enrollAddress, fetchBalances, fetchTransactions, toHumanAmount, meEnrollAddress, fetchMeBalances, fetchMeTransactions, ensureMeAddressLinked, balancesMapToArray, loadCachedMeBalances, saveCachedMeBalances } = await import('@/lib/monitor');
         const chainId = await getEthChainIdHex();
-        const { getLocalWallet } = await import('@/src/wallet/wallet');
-        const local = await getLocalWallet().catch(()=>null);
-        const wcAddr = (() => { try { return wc?.state?.connected ? (wc?.state?.address || null) : null; } catch { return null; } })();
-        const addr = (wcAddr || local?.address || getWalletBySymbol('YOY')?.address) as string | undefined;
+        const { resolveWalletAddressForUser } = await import('@/lib/resolveWalletAddress');
+        const addr = await resolveWalletAddressForUser(wc?.state ?? null, (currentUser as any)?.uid ?? null);
         if (addr) {
           await enrollAddress(addr, (currentUser as any)?.uid || undefined);
         }
@@ -1692,59 +1689,6 @@ export default function WalletScreen() {
               }
             } catch {}
           }
-        } catch {}
-        // === Detailed logging: URLs and raw JSON responses ===
-        try {
-          const base = await getEthMonitorHttp();
-          const balUrl = `${base}/balances/${addr}`;
-          const txUrl = `${base}/transactions?address=${encodeURIComponent(addr)}&page=1&limit=100`;
-          console.log('[monitor][wallet] balance URL =', balUrl);
-          console.log('[monitor][wallet] transactions URL =', txUrl);
-          // balances raw response
-          try {
-            const r = await fetch(balUrl);
-            const ct = r.headers.get('content-type');
-            const status = r.status;
-            const text = await r.text();
-            console.log('[monitor][wallet] balances status=', status, 'ct=', ct, 'head=', text.slice(0,120));
-            try { const j = JSON.parse(text); console.log('[monitor][wallet] balances full json =', j); } catch { console.log('[monitor][wallet] balances non-JSON'); }
-          } catch (e) { console.log('[monitor][wallet] balances fetch error', String((e as any)?.message||e)); }
-          // transactions raw response
-          try {
-            const r = await fetch(txUrl);
-            const ct = r.headers.get('content-type');
-            const status = r.status;
-            const text = await r.text();
-            console.log('[monitor][wallet] tx status=', status, 'ct=', ct, 'head=', text.slice(0,120));
-            try { const j = JSON.parse(text); console.log('[monitor][wallet] tx full json =', j); } catch { console.log('[monitor][wallet] tx non-JSON'); }
-          } catch (e) { console.log('[monitor][wallet] tx fetch error', String((e as any)?.message||e)); }
-          // /me/addresses (auth)
-          try {
-            const { useAuth } = await import('@/contexts/AuthContext');
-            // Access inside effect via closure-less hook is not allowed; fallback to direct token from SecureStore if needed is complex.
-            // So call Firebase directly to get token for logging only.
-            const { firebaseAuth } = await import('@/lib/firebase');
-            const u = (firebaseAuth as any)?.currentUser;
-            const uid = u?.uid || (currentUser as any)?.uid;
-            const token = u ? await u.getIdToken(true) : null;
-            if (token) {
-              const meUrl = `${base}/me/addresses`;
-              console.log('[monitor][wallet] uid =', uid, 'GET', meUrl);
-              const r = await fetch(meUrl, { headers: { Authorization: `Bearer ${token}` } });
-              const text = await r.text();
-              try {
-                const j = JSON.parse(text);
-                console.log('[monitor][wallet] /me/addresses json =', j);
-                const addrs: string[] = Array.isArray(j?.addresses) ? j.addresses : [];
-                const target = '0x12572f149443cDde88B1DC35e49a0d3e3bb24428'.toLowerCase();
-                console.log('[monitor][wallet] target linked to uid? ', addrs.map(a=>String(a).toLowerCase()).includes(target));
-              } catch {
-                console.log('[monitor][wallet] /me/addresses non-JSON head=', text.slice(0,120));
-              }
-            } else {
-              console.log('[monitor][wallet] /me/addresses skipped (no token)');
-            }
-          } catch {}
         } catch {}
         // 로그인 사용자는 /me/balances 결과가 온체인+내부자산 합산 기준이므로
         // /balances/:addr 로 가져온 온체인 스냅샷으로 YOY/ETH를 다시 덮어쓰지 않는다.
@@ -1962,10 +1906,13 @@ export default function WalletScreen() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [username, setUsername] = useState<string>('');
-  // 총 보유 자산 합계: Dashboard와 동일하게 valueUSD를 기준으로 합산 후 환율로 변환
+  // 총 보유 자산 합계: 대시보드와 동일하게 mergedAssets(온체인+내부)의 valueUSD 합산 → 환율로 변환
   const totalUsd = useMemo(() => {
     try {
-      const list = Array.isArray(realTimeBalances) ? realTimeBalances : [];
+      const list =
+        mergedAssets.length > 0
+          ? mergedAssets
+          : (Array.isArray(realTimeBalances) ? realTimeBalances : []);
       return list
         .filter((b: any) => !['KRW','USD','JPY','CNY','EUR'].includes(String(b?.symbol || '').toUpperCase()))
         .reduce((sum: number, b: any) => {
@@ -1973,7 +1920,7 @@ export default function WalletScreen() {
           return sum + (Number.isFinite(v) ? v : 0);
         }, 0);
     } catch { return 0; }
-  }, [realTimeBalances]);
+  }, [mergedAssets, realTimeBalances]);
 
   const displayTotal = useMemo(() => {
     try {
@@ -2142,6 +2089,13 @@ export default function WalletScreen() {
     }
   }, []);
   const { transactions, loading: txLoading, updateTransactionMemo } = useTransaction();
+  /** 히스토리·상세 모달은 zustand 거래 스토어를 쓰므로 메모 저장 시 반드시 동기 갱신 */
+  const persistTransactionMemo = useCallback(async (id: string, memo: string) => {
+    useTransactionStore.getState().updateTransaction(id, { memo });
+    try {
+      await updateTransactionMemo(id, memo);
+    } catch {}
+  }, [updateTransactionMemo]);
   const [memoEditingId, setMemoEditingId] = useState<string|null>(null);
   const [txDetail, setTxDetail] = useState<any|null>(null);
 
@@ -2297,7 +2251,21 @@ export default function WalletScreen() {
                                 blockTimestamp: new Date().toISOString(),
                               };
                               await addTransaction(transactionData as any);
-                              try { walletStore.addTransaction({ type:'transfer', success:true, status:'completed', symbol: sym, amount: gained, change: gained, description: transactionData.description, transactionHash: transactionData.hash, source:'voucher' } as any); } catch {}
+                              try {
+                                walletStore.addTransaction({
+                                  id: `gift_claim_${voucher.id}_${Date.now()}`,
+                                  type: 'gift_claim',
+                                  success: true,
+                                  status: 'completed',
+                                  symbol: sym,
+                                  amount: gained,
+                                  change: gained,
+                                  description: transactionData.description,
+                                  source: 'gift',
+                                  memo: `voucher:${voucher.id}`,
+                                } as any);
+                                await useMonitorStore.getState().syncMe('gift', { force: true });
+                              } catch {}
                             } catch {}
                             Alert.alert(language==='en'?'Received':'수령 완료', `${gained} ${sym}`);
                           }}
@@ -4513,11 +4481,12 @@ export default function WalletScreen() {
   const [qrModalTab, setQrModalTab] = useState<TabKey>('receive');
   const [qrModalType, setQrModalType] = useState<'wallet' | 'pngsave'>('wallet');
   const qrModalContentRef = useRef<View|null>(null);
+  const qrPngSaveCaptureRef = useRef<View|null>(null);
   const qrPopupOverlayRef = useRef<View|null>(null);
   // 커스텀 페이로드 QR (바우처 등)
   const [customQrPayload, setCustomQrPayload] = useState<string | null>(null);
   const [customQrVisible, setCustomQrVisible] = useState(false);
-  const customQrBoxRef = useRef<View|null>(null);
+  const customQrSaveCardRef = useRef<View|null>(null);
   
   // QR 모달이 열려있을 때 스크린샷 감지하여 팝업 자동 닫기
   useEffect(() => {
@@ -4539,6 +4508,8 @@ export default function WalletScreen() {
       subscription.remove();
     };
   }, [qrModalVisible, qrModalType, language]);
+
+  useScreenshotCloseModal(!!customQrVisible && !!customQrPayload, () => setCustomQrVisible(false), language);
   
   // 복사 상태 관리
   const [copySuccess, setCopySuccess] = useState(false);
@@ -4560,6 +4531,26 @@ export default function WalletScreen() {
   // 기프트 탭: 상태 표시용
   const [giftStatus, setGiftStatus] = useState<string | null>(null);
   const [giftStatusTone, setGiftStatusTone] = useState<'info'|'success'|'error'|'warn'>('info');
+
+  // yooy://claim 등 딥링크로 들어온 값: 포커스 시 입력칸·기프트 탭으로 반영
+  useFocusEffect(
+    React.useCallback(() => {
+      let alive = true;
+      (async () => {
+        try {
+          const { DEEPLINK_CLAIM_RAW_KEY } = await import('@/src/features/chatv2/core/openInternalAppLink');
+          const raw = await AsyncStorage.getItem(DEEPLINK_CLAIM_RAW_KEY);
+          if (!raw || !alive) return;
+          await AsyncStorage.removeItem(DEEPLINK_CLAIM_RAW_KEY);
+          setGiftClaimInput(String(raw).trim());
+          setActiveTab('gift');
+        } catch {}
+      })();
+      return () => {
+        alive = false;
+      };
+    }, [])
+  );
 
   // Gift 탭: 링크에서 바우처 로드
   const loadGiftVoucherFromData = async (raw: string) => {
@@ -4692,79 +4683,94 @@ export default function WalletScreen() {
     }
   };
 
+  /** pendingGift 갱신 전에도 동작하도록 id/symbol을 인자로 받음 */
+  const executeGiftClaim = async (giftId: string, giftSymbol: string) => {
+    setGiftStatus(language==='en'?'Receiving...':'수령 중...'); setGiftStatusTone('info');
+    const sym = giftSymbol || 'YOY';
+    const recvAddrNow = getWalletBySymbol(sym)?.address || recvAddress || '';
+    if (!recvAddrNow) {
+      const msg = language==='en'?'No wallet address':'지갑 주소 없음';
+      setGiftStatus(msg); setGiftStatusTone('error');
+      Alert.alert(msg, language==='en'?'Create wallet first.':'먼저 해당 코인 지갑을 생성하세요.');
+      return;
+    }
+    const res = await claimVoucher({ id: giftId, recipientAddress: recvAddrNow, recipientEmail: currentUserEmail });
+    if ('error' in res) {
+      const code = String(res.error || '');
+      if (code.includes('expired') || code.includes('cancelled') || code.includes('not_active')) {
+        const msg = language==='en'?'Event ended':'이벤트가 종료 되었습니다.';
+        setGiftStatus(msg); setGiftStatusTone('warn');
+        Alert.alert(msg);
+      } else if (code.includes('exhausted')) {
+        const msg = language==='en'?'Event exhausted':'이벤트가 모두 소진 되었습니다.';
+        setGiftStatus(msg); setGiftStatusTone('warn');
+        Alert.alert(msg);
+      } else {
+        setGiftStatus(code); setGiftStatusTone('error');
+        Alert.alert(language==='en'?'Event failed':'수령 실패', code);
+      }
+      return;
+    }
+    const gained = res.amount || 0;
+    try {
+      if (sym === 'YOY' && gained > 0) {
+        const { sendYoyToken } = await import('@/src/wallet/wallet');
+        await sendYoyToken({ to: recvAddrNow, amount: String(gained) });
+      }
+    } catch (chainErr) {
+      try {
+        Alert.alert(language==='en'?'On-chain transfer failed':'온체인 전송 실패', String(chainErr instanceof Error ? chainErr.message : chainErr));
+      } catch {}
+    }
+    try {
+      const storageKey = `user_balances_${currentUserEmail}`;
+      const saved = await AsyncStorage.getItem(storageKey);
+      const parsedBal = saved ? JSON.parse(saved) : {};
+      parsedBal[sym] = (parsedBal[sym] || 0) + gained;
+      await AsyncStorage.setItem(storageKey, JSON.stringify(parsedBal));
+    } catch {}
+    try {
+      const transactionData: any = {
+        id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: 'receive',
+        symbol: sym,
+        amount: gained,
+        to: recvAddrNow,
+        from: 'voucher',
+        description: 'Voucher claim',
+        status: 'completed',
+        success: true,
+        hash: `voucher_${giftId}`,
+        blockTimestamp: new Date().toISOString(),
+      };
+      await addTransaction(transactionData);
+      setTxDetail(transactionData);
+      walletStore.addTransaction({
+        id: `gift_claim_${giftId}_${Date.now()}`,
+        type: 'gift_claim',
+        success: true,
+        status: 'completed',
+        symbol: sym,
+        amount: gained,
+        change: gained,
+        description: language === 'en' ? 'Gift received' : '기프트 수령',
+        source: 'gift',
+        memo: `voucher:${giftId}`,
+      } as any);
+      await useMonitorStore.getState().syncMe('gift', { force: true });
+    } catch {}
+    setPendingGift(null);
+    const successMsg = language==='en'
+      ? `Congratulations! You received ${gained} ${sym}.`
+      : `축하합니다! ${gained} ${sym}를 수령하였습니다.`;
+    setGiftStatus(successMsg); setGiftStatusTone('success');
+    Alert.alert(successMsg);
+  };
+
   const handleClaimGift = async () => {
     try {
       if (!pendingGift) return;
-      setGiftStatus(language==='en'?'Receiving...':'수령 중...'); setGiftStatusTone('info');
-      const sym = pendingGift.symbol || 'YOY';
-      const recvAddrNow = getWalletBySymbol(sym)?.address || recvAddress || '';
-      if (!recvAddrNow) {
-        const msg = language==='en'?'No wallet address':'지갑 주소 없음';
-        setGiftStatus(msg); setGiftStatusTone('error');
-        Alert.alert(msg, language==='en'?'Create wallet first.':'먼저 해당 코인 지갑을 생성하세요.');
-        return;
-      }
-      const res = await claimVoucher({ id: pendingGift.id, recipientAddress: recvAddrNow, recipientEmail: currentUserEmail });
-      if ('error' in res) {
-        const code = String(res.error || '');
-        if (code.includes('expired') || code.includes('cancelled') || code.includes('not_active')) {
-          const msg = language==='en'?'Event ended':'이벤트가 종료 되었습니다.';
-          setGiftStatus(msg); setGiftStatusTone('warn');
-          Alert.alert(msg);
-        } else if (code.includes('exhausted')) {
-          const msg = language==='en'?'Event exhausted':'이벤트가 모두 소진 되었습니다.';
-          setGiftStatus(msg); setGiftStatusTone('warn');
-          Alert.alert(msg);
-        } else {
-          setGiftStatus(code); setGiftStatusTone('error');
-          Alert.alert(language==='en'?'Event failed':'수령 실패', code);
-        }
-        return;
-      }
-      const gained = res.amount || 0;
-      // 메인넷 전송: YOY를 실제로 수령 지갑으로 전송 시도(가스/지갑 설정 필요)
-      try {
-        if ((pendingGift.symbol || 'YOY') === 'YOY' && gained > 0) {
-          const { sendYoyToken } = await import('@/src/wallet/wallet');
-          await sendYoyToken({ to: recvAddrNow, amount: String(gained) });
-        }
-      } catch (chainErr) {
-        // 온체인 전송 실패는 앱 내 잔액 반영만 수행하고 경고
-        try {
-          Alert.alert(language==='en'?'On-chain transfer failed':'온체인 전송 실패', String(chainErr instanceof Error ? chainErr.message : chainErr));
-        } catch {}
-      }
-      try {
-        const storageKey = `user_balances_${currentUserEmail}`;
-        const saved = await AsyncStorage.getItem(storageKey);
-        const parsedBal = saved ? JSON.parse(saved) : {};
-        parsedBal[sym] = (parsedBal[sym] || 0) + gained;
-        await AsyncStorage.setItem(storageKey, JSON.stringify(parsedBal));
-      } catch {}
-      // 거래내역 기록 + 상세 팝업 오픈
-      try {
-        const transactionData: any = {
-          id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: 'receive',
-          symbol: sym,
-          amount: gained,
-          to: recvAddrNow,
-          from: 'voucher',
-          description: 'Voucher claim',
-          status: 'completed',
-          success: true,
-          hash: `voucher_${pendingGift.id}`,
-          blockTimestamp: new Date().toISOString(),
-        };
-        await addTransaction(transactionData);
-        setTxDetail(transactionData);
-      } catch {}
-      setPendingGift(null);
-      const successMsg = language==='en'
-        ? `Congratulations! You received ${gained} ${sym}.`
-        : `축하합니다! ${gained} ${sym}를 수령하였습니다.`;
-      setGiftStatus(successMsg); setGiftStatusTone('success');
-      Alert.alert(successMsg);
+      await executeGiftClaim(pendingGift.id, pendingGift.symbol || 'YOY');
     } catch (e) {
       const msg = String(e instanceof Error ? e.message : e);
       setGiftStatus(msg); setGiftStatusTone('error');
@@ -4815,8 +4821,7 @@ export default function WalletScreen() {
         Alert.alert(msg);
         return;
       }
-      setGiftStatus(language==='en'?'Receiving...':'수령 중...'); setGiftStatusTone('info');
-      await handleClaimGift();
+      await executeGiftClaim(v.id, v.symbol || 'YOY');
     } catch (e) {
       const msg = String(e instanceof Error ? e.message : e);
       setGiftStatus(msg); setGiftStatusTone('error');
@@ -4843,12 +4848,15 @@ export default function WalletScreen() {
   const [quickSettingsVisible, setQuickSettingsVisible] = useState(false);
   const [isSending, setIsSending] = useState(false);
 
-  // 보유 수량 조회
+  // 보유 수량 조회 (병합 자산 우선)
   const getOwnedAmount = (sym: string) => {
-    const b = realTimeBalances.find(x => x.symbol === sym);
+    const u = String(sym).toUpperCase();
+    const m = mergedAssets.find(x => String(x.symbol).toUpperCase() === u);
+    if (m && typeof m.amount === 'number') return m.amount;
+    const b = realTimeBalances.find(x => String(x.symbol).toUpperCase() === u);
     return b?.amount ?? 0;
   };
-  const ownedSendAmount = useMemo(() => getOwnedAmount(sendSelectedSymbol), [sendSelectedSymbol, realTimeBalances]);
+  const ownedSendAmount = useMemo(() => getOwnedAmount(sendSelectedSymbol), [sendSelectedSymbol, realTimeBalances, mergedAssets]);
   // 거래내역 Type 컬러 (파스텔)
   const getTypeColor = (type: string) => {
     const key = String(type || '').toUpperCase();
@@ -4890,14 +4898,15 @@ export default function WalletScreen() {
         else if (entry.key === 'gift') setActiveTab('gift');
         else if (entry.key === 'history') setActiveTab('history');
         else if (entry.key === 'qr') {
-          try { router.push('/chat/add-friend-qr?from=wallet'); } catch { setActiveTab('receive'); }
+          // QR entry -> old-style 명함/QR 메인 화면
+          try { router.push('/chat/add-friend-qr'); } catch { setActiveTab('receive'); }
         }
         else if (entry.key === 'schedule') {
           router.push('/(tabs)/todo');
         } else if (entry.key === 'reward') {
           router.push('/(tabs)/dashboard');
         } else if (entry.key === 'chat') {
-          try { router.push('/chat/friends'); } catch { router.push('/(tabs)/chat'); }
+          try { router.push('/chatv2'); } catch { router.push('/chatv2'); }
         } else if (entry.key === 'shop') {
           router.push('/(tabs)/exchange');
         } else if (entry.key === 'nft') {
@@ -5148,13 +5157,28 @@ export default function WalletScreen() {
     }
   };
 
+  /** 자산 탭 목록·평가: 온체인+내부 병합(mergedAssets) 우선, 없으면 monitor 실시간만 */
+  const balancesForHoldingsUi = useMemo(() => {
+    if (mergedAssets.length > 0) {
+      return mergedAssets.map((m) => ({
+        symbol: m.symbol,
+        name: (m as { name?: string }).name || m.symbol,
+        amount: m.amount,
+        valueUSD: m.valueUSD,
+        change24h: (m as { change24h?: number }).change24h ?? 0,
+        change24hPct: (m as { change24hPct?: number }).change24hPct ?? 0,
+      }));
+    }
+    return realTimeBalances;
+  }, [mergedAssets, realTimeBalances]);
+
   // 간단 가격/수익 데이터 생성 (대시보드 마켓 뷰 유사)
   const holdingsForMarket = useMemo(() => {
     try {
       const pm = require('@/lib/priceManager').default;
       const { useMonitorStore } = require('@/lib/monitorStore');
       const buyPriceMap = useMonitorStore.getState().buyPriceMap || {};
-    return realTimeBalances
+    return balancesForHoldingsUi
       .filter(b => !['KRW','USD','JPY','CNY','EUR'].includes(b.symbol))
       .map(b => {
           // 우선 사용자 통화 가격 시도
@@ -5190,9 +5214,9 @@ export default function WalletScreen() {
         return { symbol: b.symbol, name: b.name, amount: b.amount, currentPrice, buyPrice, currentValue, profitLoss, profitLossPercent };
       });
     } catch {
-      return realTimeBalances.map(b => ({ symbol: b.symbol, name: b.name, amount: b.amount, currentPrice: 0, buyPrice: 0, currentValue: 0, profitLoss: 0, profitLossPercent: 0 }));
+      return balancesForHoldingsUi.map(b => ({ symbol: b.symbol, name: b.name, amount: b.amount, currentPrice: 0, buyPrice: 0, currentValue: 0, profitLoss: 0, profitLossPercent: 0 }));
     }
-  }, [realTimeBalances, currency, usdkrw]);
+  }, [balancesForHoldingsUi, currency, usdkrw]);
 
   // 코인명 번역 토글 및 정렬 상태
   const [useKoreanCoinName, setUseKoreanCoinName] = useState(false);
@@ -5222,10 +5246,13 @@ export default function WalletScreen() {
     }
   }, [currency]);
 
-  // 실제 보유한 자산 확인 (amount > 0)
+  // 실제 보유한 자산 확인 (amount > 0), 병합 자산 우선
   const hasAsset = (symbol: string) => {
-    const balance = realTimeBalances.find(b => b.symbol === symbol);
-    return balance && balance.amount > 0;
+    const u = String(symbol).toUpperCase();
+    const m = mergedAssets.find(b => String(b.symbol).toUpperCase() === u);
+    if (m && m.amount > 0) return true;
+    const balance = realTimeBalances.find(b => String(b.symbol).toUpperCase() === u);
+    return !!(balance && balance.amount > 0);
   };
 
   // Exchange 페이지의 모든 코인 리스트 (실제 마켓 데이터 기반)
@@ -5293,7 +5320,10 @@ export default function WalletScreen() {
 
   // 코인 표시 이름 가져오기
   const getCoinDisplayName = (symbol: string) => {
-    const balance = realTimeBalances.find(b => b.symbol === symbol);
+    const u = String(symbol).toUpperCase();
+    const m = mergedAssets.find(b => String(b.symbol).toUpperCase() === u);
+    if (m && (m as { name?: string }).name) return (m as { name?: string }).name as string;
+    const balance = realTimeBalances.find(b => String(b.symbol).toUpperCase() === u);
     return balance?.name || symbol;
   };
 
@@ -5472,11 +5502,13 @@ export default function WalletScreen() {
                 <View style={[styles.cardContent,{ alignItems:'stretch' }]}>
                   <View style={styles.assetHeaderRow}>
                     <ThemedText style={styles.totalLabel}>{language === 'en' ? `Total Assets (${currency})` : `총 보유 자산 (${currency})`}</ThemedText>
-                    <ThemedText style={styles.assetsCountText}>{realTimeBalances.length} Assets</ThemedText>
+                    <ThemedText style={styles.assetsCountText}>
+                      {(balancesForHoldingsUi.filter((b: any) => (b?.amount || 0) > 0).length)} Assets
+                    </ThemedText>
                   </View>
                   <ThemedText style={[styles.totalAmount,{ color:'#FFD700', textAlign:'center' }]}>
                     {(() => {
-                      const hasAnyAmount = Array.isArray(realTimeBalances) && realTimeBalances.some(b => (b?.amount || 0) > 0);
+                      const hasAnyAmount = Array.isArray(balancesForHoldingsUi) && balancesForHoldingsUi.some((b: any) => (b?.amount || 0) > 0);
                       let v = Number(displayTotal);
                       // 폴백: 합계가 비어있으면 행 합계로 다시 계산
                       if (!(Number.isFinite(v) && v > 0)) {
@@ -5628,7 +5660,7 @@ export default function WalletScreen() {
                 <TextInput value={giftClaimInput} onChangeText={setGiftClaimInput} placeholder={language==='en'?'Paste event link (yooy://claim) here':'이벤트 링크(yooy://claim)를 붙여넣으세요'} placeholderTextColor="#666" style={{ flex:1, color:'#EDEDED', borderWidth:1, borderColor:'#2B3A3F', borderRadius:8, paddingHorizontal:12, paddingVertical:8 }} />
                 {/* 수령하기: 상태 안내 + 성공 시 거래내역 팝업 */}
                 <TouchableOpacity onPress={handleEventClaimClick} style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#FFD700', backgroundColor:'#FFD700', borderRadius:8 }}>
-                  <ThemedText style={{ color:'#000' }}>{language==='en'?'Event':'수령하기'}</ThemedText>
+                  <ThemedText style={{ color:'#000' }}>{language==='en'?'Claim':'수령하기'}</ThemedText>
                 </TouchableOpacity>
               </View>
               <View style={{ flexDirection:'row', gap:8 }}>
@@ -5691,11 +5723,6 @@ export default function WalletScreen() {
                 }} style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#2B3A3F', borderRadius:8 }}>
                   <ThemedText style={{ color:'#EDEDED' }}>{language==='en'?'Scan':'카메라'}</ThemedText>
                 </TouchableOpacity>
-                {!!pendingGift && pendingGift.status === 'active' && (
-                  <TouchableOpacity onPress={handleClaimGift} style={{ paddingVertical:8, paddingHorizontal:12, borderWidth:1, borderColor:'#FFD700', borderRadius:8, backgroundColor:'#FFD700' }}>
-                    <ThemedText style={{ color:'#000' }}>{language==='en'?'Claim':'받기'}</ThemedText>
-                  </TouchableOpacity>
-                )}
               </View>
               {!!pendingGift && (
                 <View style={{ marginTop:6 }}>
@@ -5852,7 +5879,7 @@ export default function WalletScreen() {
                       parsed[symbol] = Math.max(0, (parsed[symbol] || 0) - totalDeduct);
                       await AsyncStorage.setItem(storageKey, JSON.stringify(parsed));
                     } catch {}
-                    // 거래내역 기록(보낸 사람 - 예약 차감)
+                    // 거래내역: 히스토리 탭은 useTransactionStore만 사용. fee 타입으로 내부 잔액 오버레이(차감) 반영
                     try {
                       const reserved = (giftMode==='per_claim'
                         ? Math.max(0, Number(giftPerClaimAmount || 0)) * Math.max(1, Number(giftClaimLimit || 0))
@@ -5870,6 +5897,19 @@ export default function WalletScreen() {
                         hash: `voucher_create_${voucher.id}`,
                         blockTimestamp: new Date().toISOString(),
                       } as any);
+                      walletStore.addTransaction({
+                        id: `gift_create_${voucher.id}`,
+                        type: 'gift_reserve',
+                        success: true,
+                        status: 'completed',
+                        symbol,
+                        amount: reserved,
+                        change: -reserved,
+                        description: language === 'en' ? 'Gift reserved (creation)' : '기프트 생성(예약 차감)',
+                        source: 'gift',
+                        memo: `voucher:${voucher.id}`,
+                      } as any);
+                      await useMonitorStore.getState().syncMe('gift', { force: true });
                     } catch {}
                     Alert.alert(language==='en'?'Gift created':'기프트 생성됨');
                   } catch (e) {
@@ -7189,7 +7229,7 @@ export default function WalletScreen() {
                                     : (language==='en'?'Cancelled':'종료됨');
                                   Alert.alert(language==='en'?'Not claimable':'수령 불가', msg);
                                 } else {
-                                  Alert.alert(language==='en'?'Claim available':'수령 가능', (language==='en'?'Press Claim to receive.':'하단의 받기 버튼을 눌러 수령하세요.'));
+                                  Alert.alert(language==='en'?'Claim available':'수령 가능', (language==='en'?'Press Claim to receive.':'기프트 탭에서 수령하기를 눌러 주세요.'));
                                 }
                               } catch (e) {
                                 Alert.alert(language==='en'?'Error':'오류', String(e instanceof Error ? e.message : e));
@@ -7277,42 +7317,6 @@ export default function WalletScreen() {
                       )}
                     </TouchableOpacity>
                   </View>
-
-                  {/* 기프트 수령 대기 상태: 링크 인식/스캔 후 노출 */}
-                  {pendingGift && pendingGift.status === 'active' && (
-                    <View style={[styles.ctaRow,{ width:'100%', alignSelf:'stretch' }]}>
-                      <TouchableOpacity style={[styles.ctaShare,{ flex:1, width:undefined }]} onPress={async()=>{
-                        try {
-                          const sym = pendingGift.symbol || 'YOY';
-                          const recvAddrNow = getWalletBySymbol(sym)?.address || recvAddress || '';
-                          if (!recvAddrNow) {
-                            Alert.alert(language==='en'?'No wallet address':'지갑 주소 없음', language==='en'?'Create wallet first.':'먼저 해당 코인 지갑을 생성하세요.');
-                            return;
-                          }
-                          const { claimVoucher } = await import('@/lib/claims');
-                          const res = await claimVoucher({ id: pendingGift.id, recipientAddress: recvAddrNow, recipientEmail: currentUserEmail });
-                          if ('error' in res) {
-                            Alert.alert(language==='en'?'Claim failed':'수령 실패', String(res.error));
-                            return;
-                          }
-                          const gained = res.amount || 0;
-                          try {
-                            const storageKey = `user_balances_${currentUserEmail}`;
-                            const saved = await AsyncStorage.getItem(storageKey);
-                            const parsedBal = saved ? JSON.parse(saved) : {};
-                            parsedBal[sym] = (parsedBal[sym] || 0) + gained;
-                            await AsyncStorage.setItem(storageKey, JSON.stringify(parsedBal));
-                          } catch {}
-                          setPendingGift(null);
-                          Alert.alert(language==='en'?'Received':'수령 완료', `${gained} ${sym}`);
-                        } catch (e) {
-                          Alert.alert(language==='en'?'Error':'오류', String(e instanceof Error ? e.message : e));
-                        }
-                      }}>
-                        <ThemedText style={styles.ctaShareText} numberOfLines={1}>{language==='en'?'Claim':'받기'}</ThemedText>
-                      </TouchableOpacity>
-                    </View>
-                  )}
 
                   <View style={[styles.warningBox,{ marginTop: 12 }]}>
                     <ThemedText style={styles.warningText}>
@@ -7877,7 +7881,7 @@ export default function WalletScreen() {
                           />
                           <TouchableOpacity
                             style={styles.memoSaveBtn}
-                            onPress={async()=>{ await updateTransactionMemo(tx.id, memoDraft); setMemoEditingId(null); }}
+                            onPress={async()=>{ await persistTransactionMemo(tx.id, memoDraft.trim()); setMemoEditingId(null); }}
                           >
                             <ThemedText style={styles.memoSaveText}>Save</ThemedText>
                           </TouchableOpacity>
@@ -8213,7 +8217,7 @@ export default function WalletScreen() {
             setTransactionDetailVisible(false);
             setSelectedTransaction(null);
           }}
-          onSaveMemo={updateTransactionMemo}
+          onSaveMemo={persistTransactionMemo}
           memoDraft={memoDraft}
           setMemoDraft={setMemoDraft}
         />
@@ -8252,67 +8256,38 @@ export default function WalletScreen() {
               >
                 <ThemedText style={styles.qrModalCloseButtonText}>×</ThemedText>
               </TouchableOpacity>
+              {qrModalType !== 'pngsave' ? (
               <View style={styles.qrModalHeader}>
                 <ThemedText style={styles.qrModalTitle}>
-                  {qrModalType === 'pngsave' 
-                    ? `[${qrCoin.symbol}] / ${recvInput ? `${recvInput} ${qrCoin.symbol}` : '—'}`
-                    : `${currentUser?.displayName || currentUser?.email?.split('@')[0] || '사용자'}님의 ${qrCoin.symbol} Wallet`
-                  }
+                  {`${currentUser?.displayName || currentUser?.email?.split('@')[0] || '사용자'}님의 ${qrCoin.symbol} Wallet`}
                 </ThemedText>
               </View>
+              ) : null}
               
-              <View style={[styles.qrModalBody, { paddingTop: 8 }]}>
-                {/* PNG 저장 미리보기 - 전체 화면 캡처 방식 */}
+              <View style={[styles.qrModalBody, { paddingTop: qrModalType === 'pngsave' ? 4 : 8 }]}>
+                {/* PNG 저장 미리보기 - 스크린샷 저장 UX */}
                 {qrModalType === 'pngsave' ? (
                   <View style={{ alignItems:'center', justifyContent:'center' }}>
-                    {/* 스크린샷 안내 */}
-                    <View style={{ alignItems:'center', marginBottom: 12, paddingHorizontal: 16 }}>
-                      <ThemedText style={{ color:'#AAAAAA', fontSize:13, textAlign:'center' }}>
-                        {language==='en' 
-                          ? 'Take a screenshot to save this QR code' 
-                          : '스크린샷을 찍어서 QR코드를 저장하세요'}
-                      </ThemedText>
-                    </View>
-                    {/* 상단 타이틀 */}
-                    <View style={{ alignItems:'center', marginBottom: 12 }}>
-                      <ThemedText style={{ color:'#FFD700', fontWeight:'800', fontSize:18 }}>
-                        {`[${qrCoin.symbol}] / ${recvInput || '0'} ${qrCoin.symbol}`}
-                      </ThemedText>
-                    </View>
-                    {/* 프레임 + 내부 화이트 패널 - 안정적인 크기 */}
-                    <View style={{ padding:0, borderRadius:16, borderWidth:6, borderColor:'#D4AF37', backgroundColor:'#000' }}>
-                      <View style={{ margin:6, backgroundColor:'#fff', borderRadius:10, padding:0, borderWidth:1, borderColor:'#000' }}>
-                        <View style={{ width:280, height:280, alignItems:'center', justifyContent:'center', backgroundColor:'#fff', borderRadius:8 }} ref={qrShotBoxRef as any} collapsable={false}>
-                          {(() => {
-                            const addr = qrCoin.address;
-                            const amtForUrl = recvAmountType === 'amount'
-                              ? convertAmountToQuantity(parseFloat(recvInput) || 0, qrCoin.symbol).toString()
-                              : (recvInput || '');
-                            const payload = buildPayUri(addr, qrCoin.symbol, amtForUrl);
-                            if (QRCode && Platform.OS !== 'web') {
-                              const Comp = QRCode as any;
-                              return (
-                                <View style={{ position: 'relative' }}>
-                                  <Comp
-                                    value={payload}
-                                    size={240}
-                                    backgroundColor="#FFFFFF"
-                                    color="#000000"
-                                    quietZone={20}
-                                    ecl="H"
-                                    getRef={(c:any)=>{ (qrRef as any).current = c; }}
-                                  />
-                                  {/* 저장용 QR: 로고 제거하여 인식률 최대화 (로고가 중앙 패턴 가려서 인식 실패 가능) */}
-                                </View>
-                              );
-                            }
-                            // 웹 폴백 이미지
-                            const url = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&ecc=H&margin=20&color=000000&bgcolor=ffffff&data=${encodeURIComponent(payload)}`;
-                            return <Image source={{ uri: url }} style={{ width: 300, height: 300 }} resizeMode="contain" />;
-                          })()}
-                        </View>
-                      </View>
-                    </View>
+                    {(() => {
+                      const addr = qrCoin.address;
+                      const amtForUrl = recvAmountType === 'amount'
+                        ? convertAmountToQuantity(parseFloat(recvInput) || 0, qrCoin.symbol).toString()
+                        : (recvInput || '');
+                      const payload = buildPayUri(addr, qrCoin.symbol, amtForUrl);
+                      const titleLine = `[${qrCoin.symbol}] / ${recvInput || '0'} ${qrCoin.symbol}`;
+                      return (
+                        <QrSavePopupCard
+                          ref={qrPngSaveCaptureRef}
+                          payload={payload}
+                          titleLine={titleLine}
+                          language={language}
+                          webCaptureId="wallet-qr-pngsave-card"
+                          variant="receive"
+                          onClose={() => setQrModalVisible(false)}
+                          showTopClose={false}
+                        />
+                      );
+                    })()}
                   </View>
                 ) : (
                 <View style={{ alignItems:'center', paddingHorizontal: 16 }}>
@@ -8526,17 +8501,6 @@ export default function WalletScreen() {
               
               {/* 경고 섹션 제거 요청 */}
               
-              {/* 닫기 버튼 - 스크린샷 방식 안내 */}
-              {qrModalType === 'pngsave' && (
-                <View style={styles.qrModalDownloadButtonContainer}>
-                  <TouchableOpacity 
-                    style={[styles.qrSaveButton, { backgroundColor:'#D4AF37', borderColor:'#D4AF37' }]} 
-                    onPress={() => setQrModalVisible(false)}
-                  >
-                    <ThemedText style={{ color:'#000', fontWeight:'700' }}>{language==='en'?'Close':'닫기'}</ThemedText>
-                  </TouchableOpacity>
-                </View>
-              )}
             </View>
           </View>
       )}
@@ -8594,30 +8558,20 @@ export default function WalletScreen() {
       {customQrPayload && (
         <Modal visible={customQrVisible} transparent animationType="fade" onRequestClose={()=>setCustomQrVisible(false)}>
           <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.7)', alignItems:'center', justifyContent:'center', padding:16 }}>
-            <View style={{ width:'90%', maxWidth:420, backgroundColor:'#0F171B', borderRadius:16, borderWidth:1, borderColor:'#1F2C31', padding:16, alignItems:'center' }} ref={qrModalContentRef as any}>
-              <ThemedText style={{ color:'#EDEDED', fontSize:16, marginBottom:12 }}>{isGiftPayload(customQrPayload) ? 'QR Gift' : (language==='en'?'Share QR':'QR 공유')}</ThemedText>
-              <View ref={customQrBoxRef as any} style={{ width:240, height:240, borderRadius:16, overflow:'hidden', backgroundColor:'#fff', alignItems:'center', justifyContent:'center', borderWidth:4, borderColor: isGiftPayload(customQrPayload) ? '#D32F2F' : '#FFD700' }}>
-                {(() => {
-                  const data = customQrPayload || '';
-                  if (Platform.OS !== 'web' && QRCode) {
-                    const Comp = QRCode as any;
-                    return (
-                      <View style={{ width:220, height:220, backgroundColor:'#fff' }}>
-                        <Comp value={data} size={220} />
-                        {/* 중앙 로고 제거 */}
-                      </View>
-                    );
-                  }
-                  const url = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=${encodeURIComponent(data)}`;
-                  return (
-                    <View style={{ width:240, height:240, backgroundColor:'#fff' }}>
-                      <Image source={{ uri: `${url}&ecc=H&margin=24&color=000000&bgcolor=ffffff` }} style={{ width:240, height:240 }} />
-                      {/* 중앙 로고 제거 */}
-                    </View>
-                  );
-                })()}
-              </View>
-              <View style={{ marginTop:12, width:'100%', gap:8 }}>
+            <View
+              style={{
+                width:'90%',
+                maxWidth:420,
+                backgroundColor:'#0F171B',
+                borderRadius:16,
+                borderWidth:3,
+                borderColor: isGiftPayload(customQrPayload) ? QR_FRAME_BORDER.gift : QR_FRAME_BORDER.receive,
+                padding:16,
+                alignItems:'center',
+              }}
+            >
+              {!isGiftPayload(customQrPayload) ? (
+              <View style={{ width:'100%', marginBottom: 8 }}>
                 <TouchableOpacity style={[styles.ctaCopy,{ width:'100%' }]} onPress={async()=>{
                   try {
                     if (customQrPayload) {
@@ -8633,61 +8587,22 @@ export default function WalletScreen() {
                 }}>
                   <ThemedText style={styles.ctaCopyText}>{language==='en'?'Copy link':'링크 복사'}</ThemedText>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.ctaShare,{ width:'100%' }]} onPress={async()=>{
-                  try {
-                    // 캡처로 스타일 포함 저장
-                    let ok = false;
-                    if (Platform.OS !== 'web' && captureRef && customQrBoxRef.current) {
-                      const uri = await captureRef(customQrBoxRef.current, { format: 'png', quality: 1, result: 'tmpfile' });
-                      const perm = await MediaLibrary.requestPermissionsAsync();
-                      if (perm.status === 'granted' && uri) { await MediaLibrary.saveToLibraryAsync(uri); ok = true; }
-                    } else if ((Platform as any).OS === 'web' && customQrBoxRef.current) {
-                      try {
-                        // 사전 처리: 외부 QR 이미지를 dataURL로 대체해 CORS 회피
-                        const boxEl = customQrBoxRef.current as unknown as HTMLElement;
-                        const imgEl = boxEl.querySelector('img');
-                        let restoreSrc: string | null = null;
-                        let tmpUrl: string | null = null;
-                        if (imgEl && imgEl.getAttribute('src')?.includes('api.qrserver.com')) {
-                          restoreSrc = imgEl.getAttribute('src');
-                          const proxy = `${window.location.origin}/api/proxy?url=${encodeURIComponent(restoreSrc || '')}`;
-                          const resp = await fetch(proxy);
-                          const blob = await resp.blob();
-                          tmpUrl = URL.createObjectURL(blob);
-                          await new Promise<void>((resolve) => {
-                            imgEl.onload = () => resolve();
-                            imgEl.setAttribute('src', tmpUrl!);
-                          });
-                        }
-                        // @ts-ignore
-                        const html2canvas = (await import('html2canvas')).default;
-                        const canvas = await html2canvas(customQrBoxRef.current as any, { backgroundColor: '#0F171B', scale: 2, useCORS: true });
-                        const dataUrl = canvas.toDataURL('image/png');
-                        const link = document.createElement('a');
-                        link.download = 'yooy-gift-qr.png';
-                        link.href = dataUrl;
-                        document.body.appendChild(link);
-                        link.click();
-                        document.body.removeChild(link);
-                        try {
-                          if (restoreSrc) imgEl?.setAttribute('src', restoreSrc);
-                          if (tmpUrl) URL.revokeObjectURL(tmpUrl);
-                        } catch {}
-                        ok = true;
-                      } catch {}
-                    } else {
-                      // 폴백
-                      ok = await handleSaveQrImage(customQrPayload || '', isGiftPayload(customQrPayload) ? 'Gift QR' : 'QR');
-                    }
-                    if (ok) Alert.alert(language==='en'?'Saved':'저장됨');
-                  } catch {}
-                }}>
-                  <ThemedText style={styles.ctaShareText}>{language==='en'?'Save as PNG':'PNG 저장'}</ThemedText>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.ctaShare,{ width:'100%' }]} onPress={()=> setCustomQrVisible(false)}>
-                  <ThemedText style={styles.ctaShareText}>{language==='en'?'Close':'닫기'}</ThemedText>
-                </TouchableOpacity>
               </View>
+              ) : null}
+              <QrSavePopupCard
+                ref={customQrSaveCardRef}
+                payload={customQrPayload || ''}
+                headline={isGiftPayload(customQrPayload) ? 'QR Gift' : (language==='en'?'Share QR':'QR 공유')}
+                titleLine={
+                  isGiftPayload(customQrPayload)
+                    ? (language === 'en' ? '[Gift] / Event' : '[기프트] / 이벤트')
+                    : (language === 'en' ? '[YOY] / Share' : '[YOY] / 공유')
+                }
+                language={language}
+                webCaptureId="wallet-custom-qr-card"
+                variant={isGiftPayload(customQrPayload) ? 'gift' : 'receive'}
+                onClose={() => setCustomQrVisible(false)}
+              />
             </View>
           </View>
         </Modal>
@@ -8742,7 +8657,7 @@ export default function WalletScreen() {
         onClose={()=>setTxDetail(null)} 
         memoDraft={memoDraft} 
         setMemoDraft={setMemoDraft} 
-        onSaveMemo={async(id, memo)=>{ await updateTransactionMemo(id, memo); setTxDetail(null); }}
+        onSaveMemo={async(id, memo)=>{ await persistTransactionMemo(id, memo); setTxDetail(null); }}
       />
       <QuickActionsSettings visible={quickSettingsVisible} onClose={()=>setQuickSettingsVisible(false)} />
 

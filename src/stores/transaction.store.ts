@@ -19,7 +19,9 @@ export type TransactionType =
   | 'refund'
   | 'airdrop'
   | 'burn'
-  | 'mint';
+  | 'mint'
+  | 'gift_reserve'
+  | 'gift_claim';
 
 export interface Transaction {
   id: string;

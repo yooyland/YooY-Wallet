@@ -3,6 +3,58 @@
  * wallet.tsx의 scanImageWithAll 로직을 분리하여 공유
  */
 
+import { Platform } from 'react-native';
+
+function pickMlKitBarcodeText(out: unknown): string {
+  const first = Array.isArray(out) && out.length ? (out as any)[0] : null;
+  return String(first?.displayValue || first?.rawValue || '').trim();
+}
+
+/**
+ * 네이티브: 파일/갤러리 URI에서 바코드 인식 (ML Kit 우선 → scanQRFromImage 폴백).
+ * 채팅·명함 등에서 공통 사용.
+ */
+export async function scanBarcodeFromFileUri(uri: string): Promise<string | null> {
+  if (!uri || Platform.OS === 'web') return null;
+  const src = String(uri).trim();
+  const FS = require('expo-file-system/legacy');
+  let scanTarget = src;
+  try {
+    if (/^(content|ph):\/\//i.test(src) && FS?.cacheDirectory) {
+      const dest = `${FS.cacheDirectory}qr_mlkit_${Date.now()}.jpg`;
+      await FS.copyAsync({ from: src, to: dest });
+      scanTarget = dest;
+    }
+    const { scanBarcodes, BarcodeFormat } = require('@react-native-ml-kit/barcode-scanning');
+    // 1) 인자 1개(전체 포맷) — 일부 기기에서만 동작, 로고·테두리 있는 QR에 유리한 경우 있음
+    try {
+      const out = await (scanBarcodes as (p: string) => Promise<unknown>)(scanTarget);
+      const t = pickMlKitBarcodeText(out);
+      if (t) {
+        console.log('[scanBarcodeFromFileUri] ML Kit (auto) ok, len=', t.length);
+        return t;
+      }
+    } catch (_) {
+      /* 단일 인자 미지원 */
+    }
+    // 2) QR_CODE 지정(기본)
+    try {
+      const formats = BarcodeFormat?.QR_CODE ? [BarcodeFormat.QR_CODE] : undefined;
+      const out = formats ? await scanBarcodes(scanTarget, formats) : await scanBarcodes(scanTarget);
+      const t = pickMlKitBarcodeText(out);
+      if (t) {
+        console.log('[scanBarcodeFromFileUri] ML Kit (QR) ok, len=', t.length);
+        return t;
+      }
+    } catch (e) {
+      console.warn('[scanBarcodeFromFileUri] ML Kit QR:', e);
+    }
+  } catch (e) {
+    console.warn('[scanBarcodeFromFileUri] ML Kit fail:', e);
+  }
+  return scanQRFromImage(src);
+}
+
 // jsQR 동적 로딩
 let jsQRLib: any = (() => { try { return require('jsqr'); } catch { return null; } })();
 
@@ -41,8 +93,8 @@ export async function scanQRFromImage(uri: string): Promise<string | null> {
   if (!uri) return null;
   console.log('[scanQRFromImage] start:', uri?.slice(0, 100));
 
-  // 네이티브 환경에서만 실행
-  if (typeof document !== 'undefined') return null;
+  // 웹에서는 이 유틸을 사용하지 않음 (네이티브 전용)
+  if (Platform.OS === 'web') return null;
 
   try {
     const src = String(uri || '');
@@ -52,7 +104,7 @@ export async function scanQRFromImage(uri: string): Promise<string | null> {
     // 1) 파일 경로에서 base64 데이터 읽기
     if (!/^data:image\//i.test(src)) {
       try {
-        const FS = require('expo-file-system');
+        const FS = require('expo-file-system/legacy');
         const ext = (src.split('.').pop() || '').toLowerCase();
         if (ext === 'jpg' || ext === 'jpeg') mimeGuess = 'image/jpeg';
         else if (ext === 'png') mimeGuess = 'image/png';
@@ -141,6 +193,27 @@ export async function scanQRFromImage(uri: string): Promise<string | null> {
 
     console.log('[scanQRFromImage] image decoded:', width, 'x', height);
 
+    /** 이진화 없이 그레이스케일만 — 가장자리 색 테두리가 있는 명함 QR에 유리 */
+    const grayscaleNoBinarize = (src: Uint8ClampedArray): Uint8ClampedArray => {
+      const out = new Uint8ClampedArray(src.length);
+      for (let i = 0; i < src.length; i += 4) {
+        const r = src[i],
+          g = src[i + 1],
+          b = src[i + 2],
+          a = src[i + 3];
+        const alpha = a / 255;
+        const blendR = Math.round(r * alpha + 255 * (1 - alpha));
+        const blendG = Math.round(g * alpha + 255 * (1 - alpha));
+        const blendB = Math.round(b * alpha + 255 * (1 - alpha));
+        const gray = Math.round(0.299 * blendR + 0.587 * blendG + 0.114 * blendB);
+        out[i] = gray;
+        out[i + 1] = gray;
+        out[i + 2] = gray;
+        out[i + 3] = 255;
+      }
+      return out;
+    };
+
     // 이미지 전처리 함수: 그레이스케일 변환 + 대비 증가 + 투명도 제거
     const preprocessImage = (src: Uint8ClampedArray): Uint8ClampedArray => {
       const out = new Uint8ClampedArray(src.length);
@@ -170,22 +243,31 @@ export async function scanQRFromImage(uri: string): Promise<string | null> {
     const preprocessedData = preprocessImage(data);
     console.log('[scanQRFromImage] preprocessed: grayscale + contrast + binarized');
 
-    // 3) jsQR로 스캔 (전처리된 이미지 우선)
+    // 3) jsQR — 원본 RGBA 먼저(이진화가 파란 테두리·로고 QR를 깨는 경우가 많음), 그다음 그레이만, 마지막 이진
     try {
       await ensureJsQRLoaded();
-      // 전처리된 이미지로 먼저 시도
-      let out = jsQRLib ? jsQRLib(preprocessedData, width, height, { inversionAttempts: 'attemptBoth' }) : null;
-      if (out?.data) {
-        console.log('[scanQRFromImage] jsQR success (preprocessed):', out.data);
-        return normalizeScannedText(String(out.data));
+      if (jsQRLib) {
+        const inv = { inversionAttempts: 'attemptBoth' as const };
+        let out = jsQRLib(data, width, height, inv);
+        if (out?.data) {
+          console.log('[scanQRFromImage] jsQR success (original rgba):', out.data);
+          return normalizeScannedText(String(out.data));
+        }
+        const grayOnly = grayscaleNoBinarize(data);
+        out = jsQRLib(grayOnly, width, height, inv);
+        if (out?.data) {
+          console.log('[scanQRFromImage] jsQR success (grayscale):', out.data);
+          return normalizeScannedText(String(out.data));
+        }
+        out = jsQRLib(preprocessedData, width, height, inv);
+        if (out?.data) {
+          console.log('[scanQRFromImage] jsQR success (preprocessed):', out.data);
+          return normalizeScannedText(String(out.data));
+        }
       }
-      // 원본 이미지로 재시도
-      out = jsQRLib ? jsQRLib(data, width, height, { inversionAttempts: 'attemptBoth' }) : null;
-      if (out?.data) {
-        console.log('[scanQRFromImage] jsQR success (original):', out.data);
-        return normalizeScannedText(String(out.data));
-      }
-    } catch (e) { console.warn('[scanQRFromImage] jsQR fail:', e); }
+    } catch (e) {
+      console.warn('[scanQRFromImage] jsQR fail:', e);
+    }
 
     // 4) ZXing JS 폴백
     try {

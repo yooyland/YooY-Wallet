@@ -11,10 +11,17 @@ import { Platform } from 'react-native';
 // App Check (웹에서 Storage 사전검증 헤더 요구 시 대비)
 let initializeAppCheckFn: any = null;
 let ReCaptchaV3ProviderCtor: any = null;
+let CustomProviderCtor: any = null;
+let getAppCheckTokenFn: any = null;
 let appCheckInstance: any = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  ({ initializeAppCheck: initializeAppCheckFn, ReCaptchaV3Provider: ReCaptchaV3ProviderCtor } = require('firebase/app-check'));
+  ({
+    initializeAppCheck: initializeAppCheckFn,
+    ReCaptchaV3Provider: ReCaptchaV3ProviderCtor,
+    CustomProvider: CustomProviderCtor,
+    getToken: getAppCheckTokenFn,
+  } = require('firebase/app-check'));
 } catch {}
 // RN 전용 AsyncStorage는 웹 번들에서 제외 (동적 로딩)
 let RNAsyncStorage: any = null;
@@ -26,6 +33,10 @@ try {
 }
 
 const ENV = process.env.EXPO_PUBLIC_ENV || 'dev';
+const APP_ENV = String(process.env.EXPO_PUBLIC_ENVIRONMENT || ENV || 'dev').toLowerCase();
+const IS_PROD_ENV = APP_ENV === 'prod' || APP_ENV === 'production';
+const ENABLE_APPCHECK_DEBUG = String(process.env.EXPO_PUBLIC_APPCHECK_DEBUG || (!IS_PROD_ENV)).toLowerCase() === 'true';
+const APPCHECK_DEBUG_TOKEN = String(process.env.EXPO_PUBLIC_APPCHECK_DEBUG_TOKEN || '').trim();
 const FALLBACKS: Record<string, any> = {
   prod: {
     apiKey: 'AIzaSyB-qGVg2R0N1VfrY68cucdnz3_00y2RphI',
@@ -79,9 +90,9 @@ let authInstance: Auth;
 if (Platform.OS === 'web') {
   // App Check: 개발 환경에서는 디버그 토큰로 사전검증 우회, 운영은 site key 사용
   try {
-    const enableDebug = String(process.env.EXPO_PUBLIC_APPCHECK_DEBUG || (process.env.EXPO_PUBLIC_ENV || 'dev') === 'dev') === 'true';
+    const enableDebug = ENABLE_APPCHECK_DEBUG;
     if (enableDebug && typeof window !== 'undefined') {
-      const debugToken = process.env.EXPO_PUBLIC_APPCHECK_DEBUG_TOKEN || '';
+      const debugToken = APPCHECK_DEBUG_TOKEN;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (window as any).FIREBASE_APPCHECK_DEBUG_TOKEN = debugToken ? debugToken : true;
       try {
@@ -145,6 +156,69 @@ if (Platform.OS === 'web') {
     authInstance = (app as any)._auth as Auth;
   } catch {
     authInstance = getAuth(app);
+  }
+
+  // Native App Check: 개발(debug token) / 배포(play integrity via native provider) 분기
+  // - @react-native-firebase/app-check가 있으면 그 토큰을 CustomProvider로 Firebase JS SDK에 연결
+  // - 모듈이 없으면 로그만 남기고 기존 동작 유지
+  try {
+    if (initializeAppCheckFn && CustomProviderCtor) {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const rnFbAppCheck = (() => {
+        try {
+          return require('@react-native-firebase/app-check').default;
+        } catch {
+          return null;
+        }
+      })();
+      if (rnFbAppCheck) {
+        if (ENABLE_APPCHECK_DEBUG) {
+          try {
+            // RN Firebase App Check: debug provider/token 활성화 (가능한 API만 호출)
+            if (typeof rnFbAppCheck().activate === 'function') {
+              // debug token 문자열이 있으면 사용, 없으면 자동 생성 모드
+              void Promise.resolve(rnFbAppCheck().activate(APPCHECK_DEBUG_TOKEN || true));
+            }
+          } catch {}
+        } else {
+          try {
+            if (typeof rnFbAppCheck().activate === 'function') {
+              // 배포: Play Integrity provider 사용(기기/빌드 설정 필요)
+              void Promise.resolve(rnFbAppCheck().activate());
+            }
+          } catch {}
+        }
+        appCheckInstance = initializeAppCheckFn(app, {
+          provider: new CustomProviderCtor({
+            getToken: async () => {
+              const tokenResult = await rnFbAppCheck().getToken(true);
+              const token = String(tokenResult?.token || '').trim();
+              if (!token) throw new Error('native_appcheck_token_empty');
+              return { token };
+            },
+          }),
+          isTokenAutoRefreshEnabled: true,
+        });
+        try {
+          // eslint-disable-next-line no-console
+          console.info('[AppCheck] Native initialized', {
+            env: APP_ENV,
+            debug: ENABLE_APPCHECK_DEBUG,
+            hasDebugToken: !!APPCHECK_DEBUG_TOKEN,
+          });
+        } catch {}
+      } else {
+        try {
+          // eslint-disable-next-line no-console
+          console.warn('[AppCheck] Native provider module missing: @react-native-firebase/app-check');
+        } catch {}
+      }
+    }
+  } catch (e: any) {
+    try {
+      // eslint-disable-next-line no-console
+      console.error('[AppCheck] Native init failed', String(e?.message || e || 'native_appcheck_init_failed'));
+    } catch {}
   }
 }
 export const firebaseAuth: Auth = authInstance;
@@ -216,16 +290,31 @@ export async function ensureAuthedUid(): Promise<string> {
 export async function ensureAppCheckReady(): Promise<void> {
   try {
     if (!appCheckInstance) return;
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { getToken } = require('firebase/app-check');
+    const getToken = getAppCheckTokenFn || (() => Promise.resolve(null));
     // 강제 갱신(true)로 즉시 토큰을 확보
     const res = await getToken(appCheckInstance, true);
     // 토큰이 헤더에 반영될 때까지 아주 짧은 딜레이 (preflight 타이밍 이슈 예방)
     if (res && res.token) {
+      try {
+        // eslint-disable-next-line no-console
+        console.info('[AppCheck] token ready', {
+          platform: Platform.OS,
+          env: APP_ENV,
+          tokenPrefix: String(res.token).slice(0, 12),
+        });
+      } catch {}
       await new Promise((r) => setTimeout(r, 150));
     }
-  } catch {
-    // no-op
+  } catch (e: any) {
+    try {
+      // eslint-disable-next-line no-console
+      console.error('[AppCheck] token fetch failed', {
+        platform: Platform.OS,
+        env: APP_ENV,
+        error: String(e?.message || e || 'appcheck_token_failed'),
+      });
+    } catch {}
+    throw e;
   }
 }
 

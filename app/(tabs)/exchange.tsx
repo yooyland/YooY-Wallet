@@ -14,7 +14,7 @@ import { useMarket } from '@/contexts/MarketContext';
 import { getAllUpbitMarkets, UpbitPrice, UpbitTicker } from '@/lib/upbit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link, useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
     Dimensions,
     FlatList,
@@ -64,7 +64,7 @@ export default function ExchangeScreen() {
   // SSOT: 보유 잔액(실제 보유 코인/수량)
   const { useMonitorStore } = require('@/lib/monitorStore');
   const storeBalances = useMonitorStore((s: any) => s.balancesArray);
-  const amountBySymbol = React.useMemo<Record<string, number>>(() => {
+  const amountBySymbol = useMemo<Record<string, number>>(() => {
     const m: Record<string, number> = {};
     try {
       (storeBalances || []).forEach((b: any) => {
@@ -917,7 +917,7 @@ export default function ExchangeScreen() {
 
 
   // 검색 모달 결과: 쿼리가 있을 때만 보여줄 전용 필터
-  const searchResults = React.useMemo(() => {
+  const searchResults = useMemo(() => {
     const q = String(searchText || '').trim().toLowerCase();
     if (!q) return [];
     try {

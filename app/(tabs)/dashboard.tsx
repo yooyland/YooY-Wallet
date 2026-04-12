@@ -27,13 +27,15 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Link, router } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useQuickActions } from '@/contexts/QuickActionsContext';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+    ActivityIndicator,
     Alert,
     Image,
     Modal,
     ScrollView,
     StyleSheet,
+    Text,
     TextInput,
     TouchableOpacity,
     View,
@@ -45,18 +47,49 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useWalletConnect } from '@/contexts/WalletConnectContext';
 import { useMonitorStore } from '@/lib/monitorStore';
 import { perfStart, perfEnd, logAppStartupTime } from '@/lib/perfTimer';
+import { mergeAssets } from '@/lib/mergeAssets';
+import { onChainSnapToAssetRows } from '@/lib/onchainAssetRows';
+import { usdUnitPriceForMergedSymbol } from '@/lib/onchainAssetValuation';
 
 // Per-user scoped keys
 const photoKeyFor = (uid?: string|null) => (uid ? `u:${uid}:profile.photoUri` : 'profile.photoUri');
+
+/** 앱 프로세스당 1회만 웰컴 게이트(포스트 로그인 블랙스크린 완화). 탭 재진입마다 마운트되면 기존 코드는 매번 같은 로딩이 반복됨. */
+let dashboardWelcomeGateDone = false;
 
 export default function DashboardScreen() {
   // Performance: log dashboard mount time
   useEffect(() => {
     logAppStartupTime('Dashboard mounted');
   }, []);
+
+  const [booting, setBooting] = useState(() => !dashboardWelcomeGateDone);
+  useEffect(() => {
+    if (dashboardWelcomeGateDone) {
+      setBooting(false);
+      return;
+    }
+    let alive = true;
+    try {
+      InteractionManager.runAfterInteractions(() => {
+        if (!alive) return;
+        setTimeout(() => {
+          if (!alive) return;
+          dashboardWelcomeGateDone = true;
+          setBooting(false);
+        }, 50);
+      });
+    } catch {
+      dashboardWelcomeGateDone = true;
+      setBooting(false);
+    }
+    return () => {
+      alive = false;
+    };
+  }, []);
   
   // Track screen focus state to pause polling when unfocused
-  const isFocusedRef = React.useRef(true);
+  const isFocusedRef = useRef(true);
   useFocusEffect(
     useCallback(() => {
       isFocusedRef.current = true;
@@ -102,10 +135,13 @@ export default function DashboardScreen() {
   const [onChainSnap, setOnChainSnap] = useState<Record<string, number>>({});
   // SSOT: monitor store balances (server + local overlays)
   const monitorBalances = useMonitorStore(s => s.balancesArray);
-  // 로그인 사용자: monitorStore가 단일 소스. 변경 시마다 그대로 반영(빈 배열이면 비움).
+  const pullOnChainRef = useRef<(() => Promise<void>) | null>(null);
+  // 로그인 사용자: monitorStore가 단일 소스.
+  // 빈 배열 업데이트로 기존 합산 표시가 순간적으로 사라지는 현상을 막기 위해
+  // 유효 데이터가 들어올 때만 교체한다.
   useEffect(() => {
     try {
-      if (Array.isArray(monitorBalances)) {
+      if (Array.isArray(monitorBalances) && monitorBalances.length > 0) {
         setRealTimeBalances(monitorBalances as any);
       }
     } catch {}
@@ -119,72 +155,31 @@ export default function DashboardScreen() {
     const pull = async () => {
       if (!isFocusedRef.current) return; // Skip when unfocused
       try {
-        const { getLocalWallet } = await import('@/src/wallet/wallet');
-        const local = await getLocalWallet().catch(() => null);
-        const wcAddr = (() => { try { return wc?.connected ? (wc?.address || null) : null; } catch { return null; } })();
-        const addr = (wcAddr || local?.address) as string | undefined;
+        const { resolveWalletAddressForUser } = await import('@/lib/resolveWalletAddress');
+        const { fetchOnchainAssets } = await import('@/lib/onchainBalances');
+        const addr = await resolveWalletAddressForUser(wc, currentUser?.uid ?? null);
         if (!addr) return;
-        const { fetchBalances } = await import('@/lib/monitor');
-        const bals = await fetchBalances(addr);
-        const yoy = Number((bals as any)?.YOY ?? 0);
-        const eth = Number((bals as any)?.ETH ?? 0);
+        const snap = await fetchOnchainAssets(addr);
         if (cancelled) return;
-        setOnChainSnap(prev => ({
-          YOY: Number.isFinite(yoy) ? yoy : (prev?.YOY ?? 0),
-          ETH: Number.isFinite(eth) ? eth : (prev?.ETH ?? 0),
-        }));
+        if (DEBUG) {
+          try {
+            console.log('[ASSET_TRACE] walletAddress=', addr);
+            console.log('[ASSET_TRACE] onchainSnap=', snap);
+          } catch {}
+        }
+        setOnChainSnap(snap);
       } catch {}
     };
+    pullOnChainRef.current = pull;
     void pull();
     timer = setInterval(pull, 20000);
     return () => {
       cancelled = true;
+      pullOnChainRef.current = null;
       if (timer) try { clearInterval(timer); } catch {}
     };
-  }, [wc?.connected, wc?.address]);
+  }, [wc?.connected, wc?.address, currentUser?.uid]);
 
-  // 보유자산 목록용: YOY는 On-chain/App-Asset로 분리 표시. 소스 없으면 ownedBalances만으로도 표시해 드롭다운이 비지 않게 함.
-  const holdingsListRows = useMemo(() => {
-    try {
-      const source = (sortedBalances && sortedBalances.length > 0) ? sortedBalances : ownedBalances;
-      const allowSymbols = ['YOY', 'BTC', 'ETH', 'SOL', 'DOT', 'BNB', 'AVAX', 'XMR', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC'];
-      const base = source.filter(b => allowSymbols.includes(String(b.symbol).toUpperCase()));
-      const useBase = base.length > 0 ? base : source;
-      const out: any[] = [];
-      for (const b of useBase) {
-        if (String(b.symbol).toUpperCase() === 'YOY') {
-          const total = Number(b.amount || 0);
-          const onChain = Math.max(0, Number(onChainSnap.YOY ?? 0));
-          const appAsset = Math.max(0, total - onChain);
-          const usdPerUnit = total > 0 ? (Number(b.valueUSD || 0) / total) : 0;
-          out.push({
-            ...b,
-            symbol: 'YOY',
-            name: 'On-chain',
-            amount: onChain,
-            valueUSD: usdPerUnit > 0 ? onChain * usdPerUnit : 0,
-            _subType: 'onchain',
-            _root: b,
-          });
-          out.push({
-            ...b,
-            symbol: 'YOY',
-            name: 'App-Asset',
-            amount: appAsset,
-            valueUSD: usdPerUnit > 0 ? appAsset * usdPerUnit : 0,
-            _subType: 'app',
-            _root: b,
-          });
-        } else {
-          out.push({ ...b, _subType: 'total', _root: b });
-        }
-      }
-      return out;
-    } catch {
-      return [];
-    }
-  }, [sortedBalances, ownedBalances, onChainSnap]);
-  
   // 코인 상세 모달 상태
   const [coinDetailModalVisible, setCoinDetailModalVisible] = useState(false);
   const [selectedCoin, setSelectedCoin] = useState<any>(null);
@@ -235,33 +230,27 @@ export default function DashboardScreen() {
     });
   }, [currentUser, wc?.connected, wc?.address]);
 
-  // 모니터 잔액을 주기적으로 끌어와 YOY/ETH를 정확히 대체 (모든 사용자 공통, WC 우선)
+  // 내부 잔액: monitorStore sync만. 온체인은 onChainSnap + mergeAssets 경로로만 합산( realTimeBalances에 온체인 병합 금지 )
   useEffect(() => {
-    let timer: any;
     (async () => {
       try {
-        const { fetchBalances, meEnrollAddress, fetchMeBalances, fetchMeTransactions, ensureMeAddressLinked, balancesMapToArray, loadCachedMeBalances, saveCachedMeBalances } = await import('@/lib/monitor');
+        const { ensureMeAddressLinked } = await import('@/lib/monitor');
         const { getLocalWallet } = await import('@/src/wallet/wallet');
         const local = await getLocalWallet().catch(() => null);
         const wcAddr = (() => { try { return wc?.connected ? (wc?.address || null) : null; } catch { return null; } })();
         const addr = (wcAddr || local?.address) as string | undefined;
-        // 로그인 사용자: 잔액은 monitorStore 단일 소스만 사용. 여기서 setRealTimeBalances 호출 금지.
-        let isAuthed = false;
         try {
           const { firebaseAuth } = await import('@/lib/firebase');
           const u = (firebaseAuth as any)?.currentUser;
           const idt = u ? await u.getIdToken(true) : null;
           if (idt) {
-            isAuthed = true;
             if (addr) { try { await ensureMeAddressLinked(addr, idt); } catch {} }
-            // SSOT 동기화만 트리거. 화면 잔액은 useMonitorStore(s => s.balancesArray) → setRealTimeBalances 효과로만 반영
             try {
               const { useMonitorStore } = await import('@/lib/monitorStore');
               await useMonitorStore.getState().syncMe('[DASHBOARD]');
             } catch {}
           }
         } catch {}
-        // Log request URLs and raw responses (게스트/비로그인 진단용)
         try {
           const { getEthMonitorHttp } = await import('@/lib/config');
           const base = await getEthMonitorHttp();
@@ -274,41 +263,8 @@ export default function DashboardScreen() {
             try { const j = JSON.parse(text); console.log('[monitor][dashboard] balances full json =', j); } catch {}
           } catch (e) { console.log('[monitor][dashboard] balances fetch error', String((e as any)?.message||e)); }
         } catch {}
-        // 로그인 사용자는 /me/balances 로 이미 온체인+내부자산이 합쳐져 있기 때문에
-        // /balances/:addr 결과로 YOY/ETH를 다시 덮어쓰지 않는다.
-        if (isAuthed) {
-          return;
-        }
-        const pull = async () => {
-          if (!isFocusedRef.current) return; // Skip when unfocused
-          try {
-            const bals = await fetchBalances(addr);
-            setRealTimeBalances(prev => {
-              const up = (list: any[], symbol: string, amountStr?: string) => {
-                if (amountStr == null) return list;
-                const amt = Number(amountStr);
-                const idx = list.findIndex(b => b.symbol === symbol);
-                if (idx < 0) return [...list, { symbol, amount: amt, valueUSD: 0, name: symbol, change24h: 0, change24hPct: 0 } as any];
-                const base = list[idx];
-                const usdPerUnit = base.amount ? (base.valueUSD / base.amount) : 0;
-                const updated = { ...base, amount: amt, valueUSD: usdPerUnit ? amt * usdPerUnit : base.valueUSD };
-                const out = [...list];
-                out[idx] = updated;
-                return out;
-              };
-              let next = [...prev];
-              next = up(next, 'YOY', (bals as any)?.YOY);
-              next = up(next, 'ETH', (bals as any)?.ETH);
-              try { console.log('[monitor][dashboard] state.realTimeBalances(next)=', next); } catch {}
-              return next;
-            });
-          } catch {}
-        };
-        await pull();
-        timer = setInterval(pull, 10000);
       } catch {}
     })();
-    return () => { if (timer) try { clearInterval(timer); } catch {} };
   }, [wc?.connected, wc?.address]);
 
   // 모니터 거래내역을 주기적으로 끌어와 전역 거래 스토어에 반영 (WC 우선)
@@ -365,8 +321,8 @@ export default function DashboardScreen() {
   }, [wc?.connected, wc?.address, currentUser]);
 
   // 로컬 저장소로의 저장 비활성화(SSOT = monitorStore)
-  const lastSavedJsonRef = React.useRef<string>('');
-  const saveTimerRef = React.useRef<any>(null);
+  const lastSavedJsonRef = useRef<string>('');
+  const saveTimerRef = useRef<any>(null);
   useEffect(() => {
     return () => { try { clearTimeout(saveTimerRef.current); } catch {} };
   }, [realTimeBalances, currentUserEmail]);
@@ -384,6 +340,9 @@ export default function DashboardScreen() {
         try {
           const { useMonitorStore } = require('@/lib/monitorStore');
           useMonitorStore.getState().syncMe('[FOCUS][DASHBOARD]');
+        } catch {}
+        try {
+          void pullOnChainRef.current?.();
         } catch {}
       });
     }, [])
@@ -508,20 +467,6 @@ export default function DashboardScreen() {
   const [minusChangePct, setMinusChangePct] = useState<string>('');
   const [alerted, setAlerted] = useState<Record<string, boolean>>({});
   const [memoDraft, setMemoDraft] = useState('');
-  
-  // 즐겨찾기 우선순위로 정렬: 즐겨찾기 먼저, 그 다음 보유금액 순
-  const sortedBalances = useMemo(() => {
-    const onlyOwned = (realTimeBalances || []).filter(b => (typeof b.amount === 'number' && b.amount > 0));
-    return onlyOwned.slice().sort((a, b) => {
-      const aIsFavorite = favorites.includes(a.symbol);
-      const bIsFavorite = favorites.includes(b.symbol);
-      
-      if (aIsFavorite && !bIsFavorite) return -1;
-      if (!aIsFavorite && bIsFavorite) return 1;
-      
-      return b.valueUSD - a.valueUSD;
-    });
-  }, [realTimeBalances, favorites]);
   
   const topMarkets = mockMarkets.slice(0, 3);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -735,16 +680,19 @@ export default function DashboardScreen() {
           });
         return changed ? updated : prev;
         });
-        try { evaluateAlertsForBalances(updated); } catch (e) { console.log('evaluateAlertsForBalances error', e); }
         console.log('✅ 대시보드 가격 업데이트 완료');
       } catch (error) {
         console.error('❌ 대시보드 가격 업데이트 실패:', error);
-        // 실패 시에도 YOY는 컨텍스트 가격으로 보정
-        setRealTimeBalances((prev) => prev.map((b) =>
-          (b.symbol === 'YOY' && yoyPriceUSD)
-            ? ({ ...b, valueUSD: b.amount * yoyPriceUSD, currentPrice: yoyPriceUSD })
-            : b
-        ));
+        setRealTimeBalances((prev) =>
+          prev.map((b: any) => {
+            const px = usdUnitPriceForMergedSymbol(b.symbol, {
+              priceBySymbol: typeof yoyPriceUSD === 'number' && yoyPriceUSD > 0 ? { YOY: yoyPriceUSD } : {},
+            });
+            return px > 0
+              ? { ...b, valueUSD: Number(b.amount || 0) * px, currentPrice: px }
+              : b;
+          }),
+        );
       }
     })();
   }, [currency, monitorBalances, realTimeBalances.length, currentUserEmail, yoyPriceUSD]);
@@ -783,44 +731,118 @@ export default function DashboardScreen() {
     })();
   }, [isAuthenticated, currentUser?.uid]);
 
-  // 보유(양수) 자산만 필터 (금액은 AsyncStorage+거래집계만 사용, 가격과 무관)
-  const ownedBalances = useMemo(() => {
-    return realTimeBalances.filter(b => typeof b.amount === 'number' && b.amount > 0);
-  }, [realTimeBalances]);
+  const usdToKrwRate = rates?.KRW && rates.KRW > 0 ? rates.KRW : 1300;
 
-  // Calculate total assets in different currencies (보유 자산만, 안전 합계)
+  // 내부 자산: Zustand monitorStore.balancesArray만 (온체인과 분리 — realTimeBalances에 온체인을 섞지 않음)
+  const internalAssets = useMemo(() => {
+    const list = Array.isArray(monitorBalances) ? monitorBalances : [];
+    return list
+      .filter((b: any) => typeof b.amount === 'number' && b.amount > 0 && String(b.symbol ?? '').trim() !== '')
+      .map((b: any) => {
+        const sym = String(b.symbol ?? '')
+          .toUpperCase()
+          .trim();
+        const valueUSD = Number(b.valueUSD ?? 0);
+        const krwValue = valueUSD > 0 ? valueUSD * usdToKrwRate : 0;
+        return { ...b, symbol: sym, krwValue, valueUSD, source: 'internal' as const };
+      });
+  }, [monitorBalances, usdToKrwRate]);
+
+  const marketUsdOverrides = useMemo(() => {
+    const m: Record<string, number> = {};
+    if (typeof yoyPriceUSD === 'number' && yoyPriceUSD > 0) m.YOY = yoyPriceUSD;
+    return m;
+  }, [yoyPriceUSD]);
+
+  // 온체인 자산: fetchOnchainAssets 스냅(모든 지원 네이티브/ERC20) → 행 배열
+  const onchainAssets = useMemo(() => {
+    return onChainSnapToAssetRows(onChainSnap, usdToKrwRate, { priceBySymbol: marketUsdOverrides });
+  }, [onChainSnap, usdToKrwRate, marketUsdOverrides]);
+
+  // 최종 보유 = 온체인 + 내부 (단일 소스)
+  const mergedAssets = useMemo(() => {
+    return mergeAssets(onchainAssets, internalAssets, { usdToKrw: usdToKrwRate });
+  }, [onchainAssets, internalAssets, usdToKrwRate]);
+
+  useEffect(() => {
+    if (!DEBUG) return;
+    try {
+      console.log('[ASSET_TRACE] internalAssets=', internalAssets);
+      console.log('[ASSET_TRACE] mergedAssets=', mergedAssets);
+    } catch {}
+  }, [DEBUG, internalAssets, mergedAssets]);
+
+  // 즐겨찾기·평가금액 순 — mergedAssets만 사용
+  const sortedMergedHoldings = useMemo(() => {
+    const onlyOwned = (mergedAssets || []).filter(b => typeof b.amount === 'number' && b.amount > 0);
+    return onlyOwned.slice().sort((a, b) => {
+      const aSym = String(a.symbol).toUpperCase().trim();
+      const bSym = String(b.symbol).toUpperCase().trim();
+      const aIsFavorite = favorites.includes(aSym) || favorites.includes(a.symbol);
+      const bIsFavorite = favorites.includes(bSym) || favorites.includes(b.symbol);
+      if (aIsFavorite && !bIsFavorite) return -1;
+      if (!aIsFavorite && bIsFavorite) return 1;
+      return Number(b.valueUSD || 0) - Number(a.valueUSD || 0);
+    });
+  }, [mergedAssets, favorites]);
+
+  useEffect(() => {
+    try {
+      evaluateAlertsForBalances(mergedAssets as any);
+    } catch {}
+  }, [mergedAssets]);
+
+  // 보유자산 목록: mergedAssets 전부(수량>0), 가치순 — 심볼 화이트리스트 없음
+  const holdingsListRows = useMemo(() => {
+    try {
+      const source = (mergedAssets || []).filter(
+        (b: any) => typeof b.amount === 'number' && b.amount > 0,
+      );
+      const sorted = source.slice().sort((a, b) => Number(b.valueUSD || 0) - Number(a.valueUSD || 0));
+      return sorted.map((b: any) => ({ ...b, _subType: 'total', _root: b }));
+    } catch {
+      return [];
+    }
+  }, [mergedAssets]);
+
+  useEffect(() => {
+    if (typeof __DEV__ === 'undefined' || !__DEV__) return;
+    try {
+      console.log('[ASSET_AUDIT] onchainAssets =', onchainAssets);
+      console.log('[ASSET_AUDIT] internalAssets =', internalAssets);
+      console.log('[ASSET_AUDIT] mergedAssets =', mergedAssets);
+      for (const item of mergedAssets) {
+        console.log('[ASSET_AUDIT_ITEM]', {
+          symbol: item.symbol,
+          amount: item.amount,
+          onchainAmount: item.onchainAmount,
+          internalAmount: item.internalAmount,
+          hasOnchain: item.hasOnchain,
+          hasInternal: item.hasInternal,
+        });
+      }
+    } catch {}
+  }, [onchainAssets, internalAssets, mergedAssets]);
+
+  // Calculate total assets in different currencies (보유 자산만, mergedAssets 기준)
   const getTotalInCurrency = (currency: string) => {
     if (currency === 'Crypto') {
-      // 총 보유 자산 USD 합계를 실시간 가격으로 다시 계산 후 ETH 환산
-      // (valueUSD 캐시가 0이거나 오래된 경우에도 항상 최신 가격 반영)
-      const totalUSD = ownedBalances.reduce((sum, balance) => {
-        const amt = typeof balance.amount === 'number' && Number.isFinite(balance.amount) ? balance.amount : 0;
-        const directPrice = getCoinPriceByCurrency(balance.symbol, 'USD') || 0;
-        const price =
-          directPrice > 0
-            ? directPrice
-            : (balance.symbol === 'YOY' && yoyPriceUSD ? yoyPriceUSD : 0);
-        const usd = price > 0 ? amt * price : 0;
-        return sum + usd;
-      }, 0);
+      const totalUSD = mergedAssets.reduce((sum, a) => sum + Number(a.valueUSD || 0), 0);
       const ethPrice = getCoinPriceByCurrency('ETH', 'USD') || 0;
       const ethTotal = ethPrice > 0 ? totalUSD / ethPrice : 0;
       return { amount: ethTotal, symbol: 'ETH' };
-    } else {
-      // For fiat currencies, show the actual fiat amount
-      const fiatBalance = realTimeBalances.find(balance => balance.symbol === currency);
+    }
+    if (currency === 'KRW') {
+      const totalKrw = mergedAssets.reduce((sum, a) => sum + Number(a.krwValue ?? 0), 0);
+      return { amount: totalKrw, symbol: 'KRW' };
+    }
+    {
+      const fiatBalance = mergedAssets.find(balance => balance.symbol === currency);
       if (fiatBalance) {
         return { amount: fiatBalance.amount, symbol: currency };
       }
-      
-      // 보유 자산 기준 합계 (valueUSD가 NaN이면 안전 재계산)
-      const total = ownedBalances.reduce((sum, balance) => {
-        const safeUSD = (typeof balance.valueUSD === 'number' && isFinite(balance.valueUSD))
-          ? balance.valueUSD
-          : (balance.symbol === 'YOY' && yoyPriceUSD ? balance.amount * yoyPriceUSD : 0);
-        return sum + safeUSD;
-      }, 0);
-      const converted = rates ? total * rates[currency] : total;
+      const totalUSD = mergedAssets.reduce((sum, balance) => sum + Number(balance.valueUSD || 0), 0);
+      const converted = rates ? totalUSD * rates[currency] : totalUSD;
       return { amount: converted, symbol: currency };
     }
   };
@@ -982,7 +1004,7 @@ export default function DashboardScreen() {
     const unownedCoins: string[] = [];
     
     allCoins.forEach(symbol => {
-      const balance = sortedBalances.find(b => b.symbol === symbol);
+      const balance = sortedMergedHoldings.find(b => b.symbol === symbol);
       if (balance && balance.amount > 0) {
         ownedCoins.push(symbol);
       } else {
@@ -992,7 +1014,7 @@ export default function DashboardScreen() {
     
     // 보유한 코인 먼저 처리
     [...ownedCoins, ...unownedCoins].forEach(symbol => {
-      const balance = sortedBalances.find(b => b.symbol === symbol);
+      const balance = sortedMergedHoldings.find(b => b.symbol === symbol);
       const holdingData = holdingsData[symbol];
       
       // FAV 마켓인 경우 즐겨찾기한 코인만 필터링
@@ -1106,7 +1128,7 @@ export default function DashboardScreen() {
     if (actionId === 'todo') {
       router.push('/(tabs)/todo');
     } else if (actionId === 'chat') {
-      try { router.push('/chat/friends'); } catch { router.push('/(tabs)/chat'); }
+      try { router.push('/chatv2'); } catch { router.push('/chatv2'); }
     } else if (actionId === 'quickSet') {
       setMoreModalOpen(true);
     } else if (actionId === 'reward') {
@@ -1116,7 +1138,7 @@ export default function DashboardScreen() {
     } else if (actionId === 'receive') {
       router.push('/(tabs)/wallet?tab=receive');
     } else if (actionId === 'qr') {
-      try { router.push('/chat/add-friend-qr?from=dashboard'); } catch { router.push('/(tabs)/wallet?tab=receive'); }
+      try { router.push('/chatv2/qr'); } catch { router.push('/chatv2/rooms'); }
     } else if (actionId === 'gift') {
       router.push('/(tabs)/wallet?tab=gift');
     } else if (actionId === 'history') {
@@ -1242,20 +1264,22 @@ export default function DashboardScreen() {
     setSortBy(column);
   };
 
-  // 가상화폐만 필터링 (발행 화폐 제외)
-  const cryptoBalances = realTimeBalances.filter(balance => 
+  // 가상화폐만 필터링 (발행 화폐 제외) — merged 기준
+  const cryptoBalances = mergedAssets.filter(balance =>
     !['USD', 'KRW', 'JPY', 'EUR', 'GBP', 'CNY'].includes(balance.symbol)
   );
 
 
-  // 보유 코인 데이터 초기화 및 업데이트
+  // 보유 코인 데이터 초기화 및 업데이트 (merged 보유 심볼 기준, 고정 리스트 없음)
   useEffect(() => {
     const initializeHoldingsData = () => {
-      const userHoldings = ['YOY', 'BTC', 'ETH', 'SOL', 'DOT', 'BNB', 'AVAX', 'XMR', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC'];
+      const userHoldings = Array.from(
+        new Set(sortedMergedHoldings.map(b => String(b.symbol).toUpperCase()).filter(Boolean)),
+      );
       const newHoldingsData: Record<string, any> = {};
       
       userHoldings.forEach(symbol => {
-        const balance = sortedBalances.find(b => b.symbol === symbol);
+        const balance = sortedMergedHoldings.find(b => String(b.symbol).toUpperCase() === symbol);
         if (balance && balance.amount > 0) {
           // 매수가를 현재가의 80-120% 범위에서 랜덤하게 설정
           const currentPrice = balance.valueUSD / balance.amount;
@@ -1282,9 +1306,14 @@ export default function DashboardScreen() {
     };
     
     initializeHoldingsData();
-  }, [sortedBalances]);
+  }, [sortedMergedHoldings]);
 
-  return (
+  return booting ? (
+    <View style={{ flex: 1, backgroundColor: '#000000', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <ActivityIndicator />
+      <Text style={{ color: '#D4AF37', fontWeight: '800', marginTop: 12 }}>Welcome to YooY Land</Text>
+    </View>
+  ) : (
     <ThemedView style={{ flex: 1 }}>
       <TopBar 
         title={username}
@@ -1346,15 +1375,13 @@ export default function DashboardScreen() {
                 const totalInSelected = getTotalInCurrency(selectedCurrency);
                 return (
                   <ThemedText style={styles.balanceAmount}>
-                    {formatNumber(totalInSelected.amount, selectedCurrency)} {totalInSelected.symbol}
+                    {`${formatNumber(totalInSelected.amount, selectedCurrency)} ${totalInSelected.symbol}`}
                   </ThemedText>
                 );
               })()}
               <ThemedText style={styles.assetCount}>
                 {selectedCurrency === 'Crypto'
-                  ? ownedBalances.filter(balance =>
-                      ['YOY', 'BTC', 'ETH', 'SOL', 'DOT', 'BNB', 'AVAX', 'XMR', 'LTC', 'LINK', 'ADA', 'ATOM', 'XLM', 'XRP', 'DOGE', 'TRX', 'USDT', 'USDC'].includes(balance.symbol)
-                    ).length
+                  ? mergedAssets.filter(b => typeof b.amount === 'number' && b.amount > 0).length
                   : 1
                 } {t('assets', language)}
               </ThemedText>
@@ -1381,7 +1408,7 @@ export default function DashboardScreen() {
                 showsVerticalScrollIndicator={true}
                 nestedScrollEnabled={true}
               >
-                {(holdingsListRows.length > 0 ? holdingsListRows : ownedBalances.map((b: any) => ({ ...b, _subType: 'total', _root: b }))).map((row: any, idx: number) => (
+                {holdingsListRows.map((row: any, idx: number) => (
                   <View key={`${row.symbol}-${row._subType || 'x'}-${idx}`} style={styles.holdingItem}>
                     <TouchableOpacity
                       style={styles.holdingInfo}
@@ -1390,7 +1417,7 @@ export default function DashboardScreen() {
                     >
                       <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.holdingSymbol}>{row.symbol}</ThemedText>
                       <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.holdingName}>
-                        {row.symbol === 'YOY' ? String(row.name || '') : String(row.name || row.symbol)}
+                        {String(row.name || row.symbol)}
                       </ThemedText>
                     </TouchableOpacity>
                     <View style={styles.holdingAmount}>
@@ -1470,7 +1497,7 @@ export default function DashboardScreen() {
           </View>
           
           <View style={styles.holdingsGrid}>
-            {(showAllAssets ? sortedBalances : sortedBalances.slice(0, 4)).map((balance: any, index) => {
+            {(showAllAssets ? sortedMergedHoldings : sortedMergedHoldings.slice(0, 4)).map((balance: any, index) => {
               const isFavorite = favorites.includes(balance.symbol);
               let borderColor = '#FFFFFF'; // 기본 화이트
               
@@ -1478,7 +1505,7 @@ export default function DashboardScreen() {
                 borderColor = '#FFD700'; // 즐겨찾기: 골드
               } else {
                 // 즐겨찾기가 아닌 경우 보유금액 순으로 색상 할당
-                const nonFavoriteIndex = sortedBalances.filter(b => !favorites.includes(b.symbol)).indexOf(balance);
+                const nonFavoriteIndex = sortedMergedHoldings.filter(b => !favorites.includes(b.symbol)).indexOf(balance);
                 if (nonFavoriteIndex === 0) borderColor = '#FFB6C1'; // 파스텔 레드
                 else if (nonFavoriteIndex === 1) borderColor = '#98FB98'; // 파스텔 그린
                 else if (nonFavoriteIndex === 2) borderColor = '#ADD8E6'; // 파스텔 블루
@@ -1558,7 +1585,7 @@ export default function DashboardScreen() {
           </View>
           
           <TouchableOpacity 
-            style={[styles.showMoreButton, { display: realTimeBalances.length > 4 ? 'flex' : 'none' }]}
+            style={[styles.showMoreButton, { display: mergedAssets.filter(b => (b.amount || 0) > 0).length > 4 ? 'flex' : 'none' }]}
             onPress={() => setShowAllAssets(!showAllAssets)}
           >
             <ThemedText style={styles.showMoreIcon}>

@@ -94,7 +94,7 @@ export default function ChatViewer(props: ChatViewerProps) {
           // 1) ML Kit 시도
           try {
             const { scanBarcodes, BarcodeFormat } = require('@react-native-ml-kit/barcode-scanning');
-            const FS = require('expo-file-system');
+            const FS = require('expo-file-system/legacy');
             let scanTarget = String(url || '');
             if (/^(content|ph):\/\//i.test(scanTarget) && FS?.cacheDirectory) {
               const dest = `${FS.cacheDirectory}qr_viewer_${Date.now()}.jpg`;
