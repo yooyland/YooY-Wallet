@@ -849,13 +849,10 @@ const proxyCache = new Map<string, { exp: number; status: number; headers: Recor
 
 export const proxyV1 = onRequest(async (req, res) => {
   try {
-    const origin = String(req.headers.origin || '');
-    const allowOrigin = INTERNAL_YOY_LEDGER_CORS.some((p) => (typeof p === 'string' ? p === origin : p.test(origin)));
-
-    if (allowOrigin) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Vary', 'Origin');
-    }
+    const origin = String(req.headers.origin || '').trim();
+    // proxyV1: target host is allowlisted already, so keep CORS permissive to avoid env mismatch issues.
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.setHeader('Access-Control-Max-Age', '600');

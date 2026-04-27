@@ -1244,12 +1244,24 @@ export default function WalletScreen() {
   useEffect(() => {
     try {
       const ref = collection(firestore, 'claim_vouchers');
-      const q = query(ref, where('createdByEmail', '==', currentUserEmail), orderBy('createdAt', 'desc'));
-      const unsub = onSnapshot(q, (snap) => {
-        const items: ClaimVoucher[] = [];
-        snap.forEach((d)=> items.push(d.data() as ClaimVoucher));
-        setGiftList(items);
-      });
+      // Avoid composite index requirement by sorting client-side.
+      const q = query(ref, where('createdByEmail', '==', currentUserEmail));
+      const unsub = onSnapshot(
+        q,
+        (snap) => {
+          const items: ClaimVoucher[] = [];
+          snap.forEach((d) => items.push(d.data() as ClaimVoucher));
+          items.sort((a: any, b: any) => {
+            const ta = Number(a?.createdAt?.toMillis?.() || a?.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+            const tb = Number(b?.createdAt?.toMillis?.() || b?.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+            return tb - ta;
+          });
+          setGiftList(items);
+        },
+        (err) => {
+          try { console.warn('[giftList][onSnapshot] error', String((err as any)?.message || err)); } catch {}
+        }
+      );
       // 수령 알림 구독
       const nref = collection(firestore, 'claim_notifications');
       const nq = query(nref, where('createdByEmail', '==', currentUserEmail));

@@ -128,11 +128,18 @@ export async function fetchBalances(address: string): Promise<Record<string, str
 }
 
 export async function fetchTransactions(address: string, page = 1, limit = 100): Promise<MonitorTx[]> {
-  const base = await getEthMonitorHttp();
-  const res = await fetch(`${base}/transactions?address=${encodeURIComponent(address)}&page=${page}&limit=${limit}`);
-  if (!res.ok) return [];
-  const j = await res.json().catch(() => ({}));
-  return Array.isArray(j?.transactions) ? (j.transactions as MonitorTx[]) : [];
+  try {
+    const raw = String(address || '').trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(raw)) return [];
+    const addr = raw.toLowerCase();
+    const base = await getEthMonitorHttp();
+    const res = await fetch(`${base}/transactions?address=${encodeURIComponent(addr)}&page=${page}&limit=${limit}`);
+    if (!res.ok) return [];
+    const j = await res.json().catch(() => ({}));
+    return Array.isArray(j?.transactions) ? (j.transactions as MonitorTx[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 // Authenticated variants (Firebase ID token required)

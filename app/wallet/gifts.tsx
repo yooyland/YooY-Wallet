@@ -86,12 +86,24 @@ export default function GiftsPage() {
 
   useEffect(() => {
     const ref = collection(firestore, 'claim_vouchers');
-    const q = query(ref, where('createdByEmail', '==', email), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(q, (snap) => {
-      const items: ClaimVoucher[] = [];
-      snap.forEach((doc) => items.push(doc.data() as ClaimVoucher));
-      setList(items);
-    });
+    // Avoid composite index requirement by sorting client-side.
+    const q = query(ref, where('createdByEmail', '==', email));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const items: ClaimVoucher[] = [];
+        snap.forEach((doc) => items.push(doc.data() as ClaimVoucher));
+        items.sort((a: any, b: any) => {
+          const ta = Number(a?.createdAt?.toMillis?.() || a?.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
+          const tb = Number(b?.createdAt?.toMillis?.() || b?.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+          return tb - ta;
+        });
+        setList(items);
+      },
+      (err) => {
+        try { console.warn('[Gifts][onSnapshot] error', String((err as any)?.message || err)); } catch {}
+      }
+    );
     // notifications
     const nref = collection(firestore, 'claim_notifications');
     const nq = query(nref, where('createdByEmail', '==', email));
