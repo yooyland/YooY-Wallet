@@ -436,34 +436,38 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
   },
 }));
 
-// 초기 하이드레이트: 앱 시작 직후 캐시된 잔액을 즉시 표시(로그인 직후를 기다리지 않음)
-(async () => {
-  try {
-    // 1) 현재 로그인 사용자 확인
-    const u = (firebaseAuth as any)?.currentUser;
-    let uid: string | null = u?.uid || null;
-    // 2) 마지막으로 성공한 uid가 저장되어 있으면 사용(로그인 직후 race 대비)
-    if (!uid) {
-      try {
-        const savedUid = await AsyncStorage.getItem('monitor.lastKnownUid');
-        if (savedUid) uid = savedUid;
-      } catch {}
-    }
-    if (!uid) return;
-    // 3) 캐시 로드하여 바로 상태 반영
-    const cached = await loadCachedMeBalances(uid);
-    if (cached && Object.keys(cached).length > 0) {
-      const arr = balancesMapToArray(cached, null);
-      useMonitorStore.setState({ uid, balancesMap: cached, balancesArray: arr });
-      console.log('[SYNC][EARLY] hydrated from cache for uid=', uid, 'keys=', Object.keys(cached).length);
-    }
-  } catch {}
-})();
+// 웹 정적 렌더링/SSR 단계에서 모듈 로드시 side-effect가 실행되면 번들 초기화 순서에 영향을 줄 수 있어
+// 브라우저 런타임에서만 하이드레이트/subscribe를 수행한다.
+if (typeof window !== 'undefined') {
+  // 초기 하이드레이트: 앱 시작 직후 캐시된 잔액을 즉시 표시(로그인 직후를 기다리지 않음)
+  (async () => {
+    try {
+      // 1) 현재 로그인 사용자 확인
+      const u = (firebaseAuth as any)?.currentUser;
+      let uid: string | null = u?.uid || null;
+      // 2) 마지막으로 성공한 uid가 저장되어 있으면 사용(로그인 직후 race 대비)
+      if (!uid) {
+        try {
+          const savedUid = await AsyncStorage.getItem('monitor.lastKnownUid');
+          if (savedUid) uid = savedUid;
+        } catch {}
+      }
+      if (!uid) return;
+      // 3) 캐시 로드하여 바로 상태 반영
+      const cached = await loadCachedMeBalances(uid);
+      if (cached && Object.keys(cached).length > 0) {
+        const arr = balancesMapToArray(cached, null);
+        useMonitorStore.setState({ uid, balancesMap: cached, balancesArray: arr });
+        console.log('[SYNC][EARLY] hydrated from cache for uid=', uid, 'keys=', Object.keys(cached).length);
+      }
+    } catch {}
+  })();
 
-// 마지막 성공 uid를 저장하여 다음 실행 시 즉시 하이드레이트 가능하게 함
-useMonitorStore.subscribe((state) => {
-  if (state.lastSuccessAt && state.uid) {
-    try { AsyncStorage.setItem('monitor.lastKnownUid', state.uid); } catch {}
-  }
-});
+  // 마지막 성공 uid를 저장하여 다음 실행 시 즉시 하이드레이트 가능하게 함
+  useMonitorStore.subscribe((state) => {
+    if (state.lastSuccessAt && state.uid) {
+      try { AsyncStorage.setItem('monitor.lastKnownUid', state.uid); } catch {}
+    }
+  });
+}
 

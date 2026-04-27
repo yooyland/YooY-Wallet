@@ -77,6 +77,14 @@ const firebaseConfig = {
   measurementId: process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID || FALLBACKS[ENV]?.measurementId,
 };
 
+// 일부 모듈(웹 프록시 등)에서 firebaseApp import 없이도 projectId를 알 수 있도록 전역 힌트를 제공
+try {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).__YOY_FB_PROJECT_ID__ = String(firebaseConfig.projectId || '').trim();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).__YOY_FB_ENV__ = String(ENV || '').trim();
+} catch {}
+
 let app: FirebaseApp;
 if (!getApps().length) {
   app = initializeApp(firebaseConfig);

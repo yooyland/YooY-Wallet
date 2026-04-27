@@ -1,7 +1,6 @@
 // Upbit API integration for real-time cryptocurrency prices
 import { Platform } from 'react-native';
 import { YOY_INFO } from './yoy';
-import { firebaseApp } from '@/lib/firebase';
 
 export interface UpbitTicker {
   market: string;
@@ -43,11 +42,11 @@ const UPBIT_API_BASE = 'https://api.upbit.com/v1';
 // 웹 CORS 우회용 프록시 시도 헬퍼
 export async function fetchJsonWithProxy(url: string, init?: RequestInit): Promise<any> {
   const origin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : '';
-  const appProjectId = String((firebaseApp as any)?.options?.projectId || '').trim();
   const projectId =
     (process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID as string | undefined) ||
     (process.env.EXPO_PUBLIC_FIREBASE_PROJECT as string | undefined) ||
-    appProjectId ||
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    String((globalThis as any)?.__YOY_FB_PROJECT_ID__ || '').trim() ||
     '';
   const region = String((process.env.EXPO_PUBLIC_FIREBASE_FUNCTIONS_REGION as string | undefined) || 'us-central1').trim() || 'us-central1';
   const fnProxy = projectId ? `https://${region}-${projectId}.cloudfunctions.net/proxyV1?url=${encodeURIComponent(url)}` : '';
@@ -74,6 +73,7 @@ export async function fetchJsonWithProxy(url: string, init?: RequestInit): Promi
           }
           throw new Error('HTTP 429');
         }
+        // 451: geo/legal restriction (Binance 등). 다른 후보 시도 후, 호출부가 fallback할 수 있게 에러로 처리.
         throw new Error(`HTTP ${res.status}`);
       }
       // 단일 read: 먼저 text로 읽고 JSON 파싱 시도
