@@ -187,6 +187,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           displayName: user.displayName || undefined,
           photoURL: user.photoURL || undefined
         });
+        // 전역 UID 힌트(순환 import 없이 store에서 참조용)
+        try { (globalThis as any).__YOY_UID__ = user.uid; } catch {}
         // 동적 import가 네트워크/청크 이슈로 끝나지 않으면 await가 finally를 막아 웹이 영구 로딩됨 → 백그라운드만
         void (async () => {
           try {
@@ -211,6 +213,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // 토큰/세션 상태는 즉시 반영. AsyncStorage/SecureStore await가 멈추면 finally가 실행되지 않아 웹에서 로그인 화면으로 넘어가지 못함.
         setAccessToken(null);
         setCurrentUser(null);
+        try { (globalThis as any).__YOY_UID__ = ''; } catch {}
         void (async () => {
           try {
             if (Platform.OS === 'web') await AsyncStorage.removeItem(ACCESS_TOKEN_KEY);

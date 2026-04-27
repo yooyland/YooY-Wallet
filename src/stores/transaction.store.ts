@@ -2,7 +2,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { Platform } from 'react-native';
-import { firebaseAuth } from '@/lib/firebase';
+
+function currentUidHint(): string {
+  try {
+    const u = String((globalThis as any)?.__YOY_UID__ || '').trim();
+    return u;
+  } catch {
+    return '';
+  }
+}
 
 // ===== 거래 타입 정의 =====
 export type TransactionType = 
@@ -202,7 +210,7 @@ export const useTransactionStore = create<TransactionState & TransactionActions>
       error: null,
 
       addTransaction: (transactionData) => {
-        const uidFallback = String((firebaseAuth as any)?.currentUser?.uid || '').trim() || undefined;
+        const uidFallback = currentUidHint() || undefined;
         const base: Transaction = {
           id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
           timestamp: new Date().toISOString(),
@@ -438,7 +446,7 @@ export const useTransactionStore = create<TransactionState & TransactionActions>
 
       upsertTransactions: (incoming) => {
         try {
-          const uidFallback = String((firebaseAuth as any)?.currentUser?.uid || '').trim() || undefined;
+          const uidFallback = currentUidHint() || undefined;
           const list = Array.isArray(incoming) ? incoming : [];
           if (!list.length) return;
           set((state) => {
@@ -490,17 +498,17 @@ export const useTransactionStore = create<TransactionState & TransactionActions>
             : AsyncStorage;
         const scoped = {
           getItem: async (name: string) => {
-            const uid = String((firebaseAuth as any)?.currentUser?.uid || '').trim();
+            const uid = currentUidHint();
             const key = uid ? `${name}:u:${uid}` : `${name}:u:anon`;
             return await base.getItem(key);
           },
           setItem: async (name: string, value: string) => {
-            const uid = String((firebaseAuth as any)?.currentUser?.uid || '').trim();
+            const uid = currentUidHint();
             const key = uid ? `${name}:u:${uid}` : `${name}:u:anon`;
             return await base.setItem(key, value);
           },
           removeItem: async (name: string) => {
-            const uid = String((firebaseAuth as any)?.currentUser?.uid || '').trim();
+            const uid = currentUidHint();
             const key = uid ? `${name}:u:${uid}` : `${name}:u:anon`;
             return await base.removeItem(key);
           },
