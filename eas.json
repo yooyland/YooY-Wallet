@@ -9,6 +9,8 @@
       "distribution": "internal",
       "node": "20.19.4",
       "env": {
+        "EXPO_PUBLIC_ENV": "dev",
+        "EXPO_PUBLIC_FIREBASE_FUNCTIONS_REGION": "us-central1",
         "EXPO_PUBLIC_BARCODE_ENABLED": "true"
       },
       "android": {
@@ -18,11 +20,20 @@
     "preview": {
       "distribution": "internal",
       "env": {
+        "EXPO_PUBLIC_ENV": "stg",
+        "EXPO_PUBLIC_FIREBASE_FUNCTIONS_REGION": "us-central1"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
+        "EXPO_PUBLIC_ENV": "prod",
+        "EXPO_PUBLIC_FIREBASE_FUNCTIONS_REGION": "us-central1"
+      },
+      "ios": {
+        "env": {
+          "EXPO_PUBLIC_ORDER_ENABLED": "false"
+        }
       }
     },
     "store": {
@@ -32,6 +43,8 @@
       },
       "env": {
         "EXPO_USE_COMMUNITY_AUTOLINKING": "1",
+        "EXPO_PUBLIC_ENV": "prod",
+        "EXPO_PUBLIC_FIREBASE_FUNCTIONS_REGION": "us-central1",
         "EXPO_PUBLIC_SOCIAL_LOGIN_ENABLED": "false",
         "EXPO_PUBLIC_ORDER_ENABLED": "true",
         "EXPO_PUBLIC_STAKING_ENABLED": "true",
@@ -40,11 +53,20 @@
         "EXPO_PUBLIC_BARCODE_ENABLED": "true",
         "EXPO_PUBLIC_CHAIN": "mainnet",
         "EXPO_PUBLIC_RPC_MAINNET": "https://ethereum.publicnode.com"
+      },
+      "ios": {
+        "env": {
+          "EXPO_PUBLIC_ORDER_ENABLED": "false"
+        }
       }
     }
   },
   "submit": {
     "production": {
+      "ios": {
+        "ascAppId": "6762594969",
+        "appleTeamId": "788Z95G986"
+      },
       "android": {
         "track": "internal",
         "serviceAccountKeyPath": "./keys/play-service-account.json"

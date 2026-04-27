@@ -13,6 +13,7 @@ import { formatCurrency, getExchangeRates } from '@/lib/currency';
 import { getMockBalancesForUser } from '@/lib/userBalances';
 import { BlurView } from 'expo-blur';
 import QuickActionsSettings from '@/components/QuickActionsSettings';
+import { EXCHANGE_UI_ENABLED } from '@/lib/featureFlags';
 import { t } from '@/i18n';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -48,7 +49,17 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
   const { currentUser, signOut } = useAuth();
   const { yoyPriceKRW, yoyPriceUSD } = useMarket();
   const { deleteAllWallets } = useWallet();
-  const { language, currency, setLanguage, setCurrency } = usePreferences();
+  const { language, currency, webLayoutMode, webLayoutPercent } = usePreferences();
+  const tr = (ko: string, en: string, ja?: string, zh?: string) => {
+    if (language === 'ko') return ko;
+    if (language === 'ja') return ja || en;
+    if (language === 'zh') return zh || en;
+    return en;
+  };
+  const ti = (key: string, fallback: string) => {
+    const v = t(key, language as any);
+    return v === key ? fallback : v;
+  };
   const wc = (() => { try { return useWalletConnect(); } catch { return null as any; } })();
   const [rates, setRates] = useState<any>(null);
   const [slideAnim] = useState(new Animated.Value(screenWidth));
@@ -78,7 +89,7 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
   const adminRole = currentUser?.email ? getAdminRoleByEmail(currentUser.email) : null;
 
   const tabs = [
-    { id: 'APP', label: 'App Setting' },
+    { id: 'APP', label: tr('설정', 'Settings', '設定', '设置') },
   ];
 
   useEffect(() => {
@@ -148,27 +159,38 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
       return [
         { title: t('account', language), items: [
           { title: t('profile', language), icon: '👤', onPress: () => { onClose(); try { router.push('/settings/profile' as any); } catch {} } },
-          { title: t('security', language) || 'Security', icon: '🔒', onPress: () => { onClose(); try { router.push('/settings/security' as any); } catch {} } },
+          { title: ti('security', tr('보안', 'Security', 'セキュリティ', '安全')), icon: '🔒', onPress: () => { onClose(); try { router.push('/settings/security' as any); } catch {} } },
           { title: t('notifications', language), icon: '🔔', onPress: () => { onClose(); try { router.push('/settings/notifications' as any); } catch {} } },
         ]},
-        { title: 'Wallet', items: [
-          { title: wc?.state?.connected ? `외부 지갑: ${String(wc?.state?.address||'').slice(0,6)}…${String(wc?.state?.address||'').slice(-4)}` : '외부 지갑: 미연결', icon: wc?.state?.connected ? '🟢' : '⚪', onPress: () => { onClose(); try { router.push('/settings/walletconnect' as any); } catch {} } },
-          { title: wc?.state?.connected ? '외부 지갑 연결 해제' : '외부 지갑 연결', icon: '🔗', onPress: async () => { try { if (wc) { if (wc.state.connected) { await wc.disconnect(); } else { await wc.connect(); } } } catch {} } },
-          { title: t('wallet', language) || 'Wallet', icon: '💼', onPress: () => { onClose(); router.push('/(tabs)/wallet'); } },
-          { title: '니모닉(시드) 표시', icon: '🧩', onPress: async () => {
+        { title: ti('wallet', tr('지갑', 'Wallet', 'ウォレット', '钱包')), items: [
+          { title: wc?.state?.connected
+              ? tr('외부 지갑 ', 'External wallet ', '外部ウォレット ', '外部钱包 ') + `${String(wc?.state?.address||'').slice(0,6)}…${String(wc?.state?.address||'').slice(-4)}`
+              : tr('외부 지갑 미연결', 'External wallet disconnected', '外部ウォレット 未接続', '外部钱包 未连接'),
+            icon: wc?.state?.connected ? '🟢' : '⚪',
+            onPress: () => { onClose(); try { router.push('/settings/walletconnect' as any); } catch {} }
+          },
+          { title: wc?.state?.connected ? tr('연결 해제', 'Disconnect', '解除', '断开') : tr('연결', 'Connect', '接続', '连接'), icon: '🔗', onPress: async () => { try { if (wc) { if (wc.state.connected) { await wc.disconnect(); } else { await wc.connect(); } } } catch {} } },
+          { title: ti('wallet', tr('지갑', 'Wallet', 'ウォレット', '钱包')), icon: '💼', onPress: () => { onClose(); router.push('/(tabs)/wallet'); } },
+          { title: ti('orderHistory', tr('주문내역', 'Order history', '注文履歴', '订单记录')), icon: '🧾', onPress: () => { onClose(); try { router.push('/(tabs)/wallet?tab=orders' as any); } catch {} } },
+          { title: tr('니모닉 보기', 'View mnemonic', 'ニーモニック表示', '查看助记词'), icon: '🧩', onPress: async () => {
               try {
                 Alert.alert(
-                  '보안 경고',
-                  '니모닉은 지갑의 모든 권한입니다. 주변에 다른 사람이 없고 화면 캡처가 차단된 상태에서만 확인하세요.',
+                  tr('보안 경고', 'Security warning', 'セキュリティ警告', '安全警告'),
+                  tr(
+                    '니모닉은 지갑의 모든 권한입니다. 주변에 다른 사람이 없고 화면 캡처가 차단된 상태에서만 확인하세요.',
+                    'Your mnemonic grants full wallet access. View it privately with screen capture blocked.',
+                    'ニーモニックはウォレットの全権限です。周囲に人がいない状態で、画面キャプチャを無効にして確認してください。',
+                    '助记词拥有钱包全部权限。请在私密环境并关闭截屏时查看。'
+                  ),
                   [
-                    { text: '취소', style: 'cancel' },
-                    { text: '표시', style: 'destructive', onPress: async () => {
+                    { text: ti('cancel', tr('취소', 'Cancel', 'キャンセル', '取消')), style: 'cancel' },
+                    { text: tr('표시', 'Show', '表示', '显示'), style: 'destructive', onPress: async () => {
                         try {
                           await ScreenCapture.preventScreenCaptureAsync();
                         } catch {}
                         const m = await loadMnemonic();
                         if (!m) {
-                          Alert.alert('안내', '로컬에 저장된 니모닉이 없습니다.');
+                          Alert.alert(tr('안내', 'Info', '案内', '提示'), tr('로컬에 저장된 니모닉이 없습니다.', 'No mnemonic saved locally.', 'ローカルに保存されたニーモニックがありません。', '本地未保存助记词。'));
                           try { await ScreenCapture.allowScreenCaptureAsync(); } catch {}
                           return;
                         }
@@ -183,23 +205,32 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
           },
         ]},
         { title: t('preferences', language), items: [
-          { title: `${t('language', language)}: ${language?.toUpperCase?.() || ''}`, icon: '🌐', onPress: () => { setIsDirty(true); onClose(); try { router.push('/settings/language' as any); } catch {} } },
-          { title: `${t('currency', language)}: ${currency}`, icon: '💰', onPress: () => { setIsDirty(true); onClose(); try { router.push('/settings/currency' as any); } catch {} } },
-          { title: t('theme', language) || 'Theme', icon: '🎨', onPress: () => { setIsDirty(true); onClose(); try { router.push('/settings/theme' as any); } catch {} } },
+          { title: `${t('language', language)}: ${language?.toUpperCase?.() || ''}`, icon: '🌐', onPress: () => { onClose(); try { router.push('/settings/language' as any); } catch {} } },
+          { title: `${t('currency', language)}: ${currency}`, icon: '💰', onPress: () => { onClose(); try { router.push('/settings/currency' as any); } catch {} } },
+          { title: ti('theme', tr('테마', 'Theme', 'テーマ', '主题')), icon: '🎨', onPress: () => { onClose(); try { router.push('/settings/theme' as any); } catch {} } },
+          { title: (language === 'ko'
+              ? `화면 너비(PC): ${webLayoutMode === 'fluid' ? '브라우저 100%' : (webLayoutMode === 'custom' ? `${webLayoutPercent}%` : '모바일 폭')}`
+              : `Layout width: ${webLayoutMode === 'fluid' ? 'Browser 100%' : (webLayoutMode === 'custom' ? `${webLayoutPercent}%` : 'Phone')}`),
+            icon: '🖥️',
+            onPress: () => { onClose(); try { router.push('/settings/layout' as any); } catch {} }
+          },
           { title: t('quickActionsSettings', language), icon: '⚡', onPress: () => { onClose(); try { router.push('/settings/quick-actions' as any); } catch {} } },
-          { title: 'Wallet Connect', icon: '🔗', onPress: () => { onClose(); try { router.push('/settings/walletconnect' as any); } catch {} } },
+          { title: 'WalletConnect', icon: '🔗', onPress: () => { onClose(); try { router.push('/settings/walletconnect' as any); } catch {} } },
           { title: 'Sync Debug', icon: '🛠️', onPress: () => { onClose(); try { router.push('/settings/sync-debug' as any); } catch {} } },
-          { title: 'Link Address', icon: '🔗', onPress: () => { onClose(); try { router.push('/settings/link-address' as any); } catch {} } },
+          { title: tr('주소 연결', 'Link Address', 'アドレス連携', '绑定地址'), icon: '🔗', onPress: () => { onClose(); try { router.push('/settings/link-address' as any); } catch {} } },
         ]},
-        { title: (language==='ko'?'고객지원':language==='ja'?'サポート':language==='zh'?'客服支持':'Support'), items: [
-          { title: (language==='ko'?'버그 신고':language==='ja'?'バグ報告':language==='zh'?'错误反馈':'Bug report'), icon: '🐞', onPress: () => { onClose(); try { router.push('/support/bug' as any); } catch {} } },
-          { title: (language==='ko'?'문의하기':language==='ja'?'お問い合わせ':language==='zh'?'咨询':'Inquiry'), icon: '✉️', onPress: () => { onClose(); try { router.push('/support/inquiry' as any); } catch {} } },
-          { title: (language==='ko'?'신고하기':language==='ja'?'通報':language==='zh'?'举报':'Report'), icon: '🚨', onPress: () => { onClose(); try { router.push('/support/report' as any); } catch {} } },
-          { title: '앱 캐시 초기화', icon: '🧹', onPress: async () => {
+        { title: tr('고객지원', 'Support', 'サポート', '支持'), items: [
+          { title: tr('버그 신고', 'Bug report', 'バグ報告', '错误反馈'), icon: '🐞', onPress: () => { onClose(); try { router.push('/support/bug' as any); } catch {} } },
+          { title: tr('문의하기', 'Inquiry', 'お問い合わせ', '咨询'), icon: '✉️', onPress: () => { onClose(); try { router.push('/support/inquiry' as any); } catch {} } },
+          { title: tr('신고하기', 'Report', '通報', '举报'), icon: '🚨', onPress: () => { onClose(); try { router.push('/support/report' as any); } catch {} } },
+          { title: tr('앱 캐시 초기화', 'Clear app cache', 'アプリキャッシュ初期化', '清除应用缓存'), icon: '🧹', onPress: async () => {
               try {
-                Alert.alert('확인', '앱 캐시(프로필/잔액 캐시/친구목록 등)를 삭제합니다. 지갑 니모닉/주소는 유지됩니다.', [
-                  { text: '취소', style: 'cancel' },
-                  { text: '삭제', style: 'destructive', onPress: async () => {
+                Alert.alert(
+                  tr('확인', 'Confirm', '確認', '确认'),
+                  tr('앱 캐시(프로필/잔액 캐시/친구목록 등)를 삭제합니다. 지갑 니모닉/주소는 유지됩니다.', 'This clears app cache (profile/balances/friends). Wallet mnemonic/address will be kept.', 'アプリキャッシュ(プロフィール/残高/友達など)を削除します。ニーモニック/アドレスは保持されます。', '将清除应用缓存(资料/余额/好友等)。助记词/地址会保留。'),
+                  [
+                  { text: ti('cancel', tr('취소', 'Cancel', 'キャンセル', '取消')), style: 'cancel' },
+                  { text: ti('delete', tr('삭제', 'Delete', '削除', '删除')), style: 'destructive', onPress: async () => {
                       try {
                         const keys: string[] = await AsyncStorage.getAllKeys();
                         const uid = (currentUser as any)?.uid || '';
@@ -212,9 +243,9 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
                         if (toRemove.length > 0) {
                           await AsyncStorage.multiRemove(toRemove);
                         }
-                        Alert.alert('완료','캐시를 삭제했습니다. 앱을 재시작해 주세요.');
+                        Alert.alert(tr('완료', 'Done', '完了', '完成'), tr('캐시를 삭제했습니다. 앱을 재시작해 주세요.', 'Cache cleared. Please restart the app.', 'キャッシュを削除しました。アプリを再起動してください。', '缓存已清除，请重启应用。'));
                       } catch {
-                        Alert.alert('오류','캐시 삭제에 실패했습니다.');
+                        Alert.alert(ti('error', tr('오류', 'Error', 'エラー', '错误')), tr('캐시 삭제에 실패했습니다.', 'Failed to clear cache.', 'キャッシュ削除に失敗しました。', '清除缓存失败。'));
                       }
                     } 
                   }
@@ -222,7 +253,7 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
               } catch {}
             } 
           },
-          { title: '오류 로그 내보내기', icon: '📤', onPress: async () => {
+          { title: tr('오류 로그 내보내기', 'Export error logs', 'エラーログを書き出す', '导出错误日志'), icon: '📤', onPress: async () => {
               try {
                 const base = (FileSystem as any).documentDirectory || (FileSystem as any).cacheDirectory || null;
                 if (!base) {
@@ -232,11 +263,11 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
                     const txt = last ? (`${String(last?.message||'')}\n${String(last?.stack||'')}\n${String(last?.info||'')}`) : '';
                     if (txt) {
                       await Clipboard.setStringAsync(txt);
-                      Alert.alert('복사됨','최근 오류 내용을 클립보드에 복사했습니다.');
+                      Alert.alert(tr('복사됨', 'Copied', 'コピーしました', '已复制'), tr('최근 오류 내용을 클립보드에 복사했습니다.', 'Copied recent error to clipboard.', '最近のエラーをクリップボードにコピーしました。', '已复制最近的错误到剪贴板。'));
                       return;
                     }
                   } catch {}
-                  Alert.alert('안내','로그 파일 경로를 확인할 수 없습니다.\n먼저 오류를 재현한 뒤 다시 시도하세요.');
+                  Alert.alert(tr('안내', 'Info', '案内', '提示'), tr('로그 파일 경로를 확인할 수 없습니다.\n먼저 오류를 재현한 뒤 다시 시도하세요.', 'Cannot locate log file path.\nReproduce the issue and try again.', 'ログファイルのパスを確認できません。\n一度エラーを再現してから再試行してください。', '无法找到日志文件路径。\n请先复现错误后再试。'));
                   return;
                 }
                 const p = base + 'rn-error.txt';
@@ -248,11 +279,11 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
                     const txt = last ? (`${String(last?.message||'')}\n${String(last?.stack||'')}\n${String(last?.info||'')}`) : '';
                     if (txt) {
                       await Clipboard.setStringAsync(txt);
-                      Alert.alert('복사됨','최근 오류 내용을 클립보드에 복사했습니다.');
+                      Alert.alert(tr('복사됨', 'Copied', 'コピーしました', '已复制'), tr('최근 오류 내용을 클립보드에 복사했습니다.', 'Copied recent error to clipboard.', '最近のエラーをクリップボードにコピーしました。', '已复制最近的错误到剪贴板。'));
                       return;
                     }
                   } catch {}
-                  Alert.alert('안내','오류 로그가 아직 없습니다. 문제가 발생한 후 다시 시도하세요.'); 
+                  Alert.alert(tr('안내', 'Info', '案内', '提示'), tr('오류 로그가 아직 없습니다. 문제가 발생한 후 다시 시도하세요.', 'No error logs yet. Please try again after an error occurs.', 'まだエラーログがありません。問題発生後に再試行してください。', '暂无错误日志，请在发生错误后重试。')); 
                   return; 
                 }
                 // 동적 로드: expo-sharing 미설치 환경에서도 빌드 실패 방지
@@ -268,18 +299,21 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
                 if (!shared) {
                   const txt = await (FileSystem as any).readAsStringAsync(p);
                   await Clipboard.setStringAsync(txt);
-                  Alert.alert('복사됨','오류 로그를 클립보드에 복사했습니다.');
+                  Alert.alert(tr('복사됨', 'Copied', 'コピーしました', '已复制'), tr('오류 로그를 클립보드에 복사했습니다.', 'Copied error log to clipboard.', 'エラーログをクリップボードにコピーしました。', '已复制错误日志到剪贴板。'));
                 }
               } catch {
-                Alert.alert('오류','로그 내보내기에 실패했습니다.');
+                Alert.alert(ti('error', tr('오류', 'Error', 'エラー', '错误')), tr('로그 내보내기에 실패했습니다.', 'Failed to export logs.', 'ログの書き出しに失敗しました。', '导出日志失败。'));
               }
             } 
           },
-          { title: '지갑 초기화 (니모닉 삭제)', icon: '🗑️', onPress: async () => {
+          { title: tr('지갑 초기화', 'Reset wallet', 'ウォレット初期化', '重置钱包'), icon: '🗑️', onPress: async () => {
               try {
-                Alert.alert('지갑 초기화','로컬 기기의 니모닉과 주소를 삭제합니다. 복구용 니모닉이 없다면 절대 진행하지 마세요.',[
-                  { text:'취소', style:'cancel' },
-                  { text:'삭제', style:'destructive', onPress: async () => {
+                Alert.alert(
+                  tr('지갑 초기화', 'Reset wallet', 'ウォレット初期化', '重置钱包'),
+                  tr('로컬 기기의 니모닉과 주소를 삭제합니다. 복구용 니모닉이 없다면 절대 진행하지 마세요.', 'This deletes the local mnemonic and address. Do not proceed without a recovery phrase.', 'ローカルのニーモニックとアドレスを削除します。復元用ニーモニックがない場合は絶対に進めないでください。', '将删除本地助记词和地址。没有恢复助记词请勿继续。'),
+                  [
+                  { text: ti('cancel', tr('취소', 'Cancel', 'キャンセル', '取消')), style:'cancel' },
+                  { text: ti('delete', tr('삭제', 'Delete', '削除', '删除')), style:'destructive', onPress: async () => {
                       try {
                         const { clearWallet } = await import('@/src/wallet/secure');
                         await clearWallet();
@@ -303,11 +337,11 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
                           lastError: null,
                         });
                         await deleteAllWallets();
-                        Alert.alert('완료','지갑을 초기화했습니다. 지갑 설정 화면으로 이동합니다.');
+                        Alert.alert(tr('완료', 'Done', '完了', '完成'), tr('지갑을 초기화했습니다. 지갑 설정 화면으로 이동합니다.', 'Wallet reset. Redirecting to wallet setup.', 'ウォレットを初期化しました。ウォレット設定へ移動します。', '钱包已重置，将前往钱包设置。'));
                         onClose();
                         try { router.replace('/(onboarding)/wallet-setup'); } catch {}
                       } catch {
-                        Alert.alert('오류','지갑 초기화에 실패했습니다.');
+                        Alert.alert(ti('error', tr('오류', 'Error', 'エラー', '错误')), tr('지갑 초기화에 실패했습니다.', 'Failed to reset wallet.', 'ウォレット初期化に失敗しました。', '重置钱包失败。'));
                       }
                     } 
                   }
@@ -315,15 +349,24 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
               } catch {}
             } 
           },
-          { title: '지갑 복원 (니모닉 입력)', icon: '♻️', onPress: () => { onClose(); try { router.replace('/(onboarding)/wallet-setup?tab=import' as any); } catch {} } },
+          { title: tr('지갑 복원 (니모닉 입력)', 'Restore wallet (enter mnemonic)', 'ウォレット復元（ニーモニック入力）', '恢复钱包（输入助记词）'), icon: '♻️', onPress: () => { onClose(); try { router.replace('/(onboarding)/wallet-setup?tab=import' as any); } catch {} } },
         ]},
+        { title: ti('admin', tr('관리자', 'Admin', '管理者', '管理员')), items: filterAdmin([
+          { title: tr('관리자 대시보드', 'Admin Dashboard', '管理者ダッシュボード', '管理员仪表盘'), icon: '🛡️', adminOnly: true, onPress: () => { onClose(); try { router.push('/(admin)/dashboard' as any); } catch {} } },
+          { title: tr('금고 / 잔고', 'Treasury / Balances', '金庫 / 残高', '金库 / 余额'), icon: '🏦', adminOnly: true, onPress: () => { onClose(); try { router.push('/(admin)/treasury' as any); } catch {} } },
+          { title: ti('users', tr('사용자', 'Users', 'ユーザー', '用户')), icon: '👥', adminOnly: true, onPress: () => { onClose(); try { router.push('/(admin)/users' as any); } catch {} } },
+          { title: ti('transactions', tr('거래내역', 'Transactions', '取引', '交易')), icon: '🧾', adminOnly: true, onPress: () => { onClose(); try { router.push('/(admin)/transactions' as any); } catch {} } },
+          { title: ti('system', tr('시스템', 'System', 'システム', '系统')), icon: '⚙️', adminOnly: true, onPress: () => { onClose(); try { router.push('/(admin)/system' as any); } catch {} } },
+        ])},
       ];
     }
 
     if (tab === 'DEX') {
       return [
         { title: t('trading', language) || 'Trading', items: [
-          { title: t('exchangeTab', language), icon: '📈', onPress: () => { onClose(); router.push('/(tabs)/exchange'); } },
+          ...(EXCHANGE_UI_ENABLED
+            ? [{ title: t('exchangeTab', language), icon: '📈', onPress: () => { onClose(); router.push('/(tabs)/exchange'); } } as MenuItem]
+            : []),
           { title: t('wallet', language) || 'Wallet', icon: '💼', onPress: () => { onClose(); router.push('/(tabs)/wallet'); } },
         ]},
         { title: t('management', language) || 'Management', items: filterAdmin([
@@ -374,10 +417,10 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
     return [
       ...base,
       {
-        title: 'Admin',
+        title: ti('admin', tr('관리자', 'Admin', '管理者', '管理员')),
         items: [
           { title: t('dashboard', language) || 'Dashboard', icon: '📊', onPress: () => { onClose(); try { router.push('/(admin)/dashboard' as any); } catch {} } },
-          { title: 'Boards', icon: '🗂️', onPress: () => { onClose(); try { router.push('/(admin)/boards' as any); } catch {} } },
+          { title: tr('게시판', 'Boards', '掲示板', '公告板'), icon: '🗂️', onPress: () => { onClose(); try { router.push('/(admin)/boards' as any); } catch {} } },
           { title: t('users', language) || 'Users', icon: '👥', onPress: () => { onClose(); try { router.push('/(admin)/users' as any); } catch {} } },
           { title: t('transactions', language) || 'Transactions', icon: '💸', onPress: () => { onClose(); try { router.push('/(admin)/transactions' as any); } catch {} } },
           { title: t('reports', language) || 'Reports', icon: '📈', onPress: () => { onClose(); try { router.push('/(admin)/reports' as any); } catch {} } },
@@ -522,11 +565,11 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
               {mnemonicText}
             </ThemedText>
             <View style={{ flexDirection:'row', justifyContent:'flex-end', gap:8 }}>
-              <TouchableOpacity onPress={async()=>{ try { await Clipboard.setStringAsync(mnemonicText); Alert.alert('복사됨','니모닉을 클립보드에 복사했습니다.'); } catch {} }} style={{ paddingHorizontal:12, paddingVertical:8, borderWidth:1, borderColor:'#FFD700', borderRadius:8 }}>
-                <ThemedText style={{ color:'#FFD700', fontWeight:'700' }}>복사</ThemedText>
+              <TouchableOpacity onPress={async()=>{ try { await Clipboard.setStringAsync(mnemonicText); Alert.alert(tr('복사됨', 'Copied', 'コピーしました', '已复制'), tr('니모닉을 클립보드에 복사했습니다.', 'Mnemonic copied to clipboard.', 'ニーモニックをクリップボードにコピーしました。', '已复制助记词到剪贴板。')); } catch {} }} style={{ paddingHorizontal:12, paddingVertical:8, borderWidth:1, borderColor:'#FFD700', borderRadius:8 }}>
+                <ThemedText style={{ color:'#FFD700', fontWeight:'700' }}>{ti('copy', tr('복사', 'Copy', 'コピー', '复制'))}</ThemedText>
               </TouchableOpacity>
               <TouchableOpacity onPress={async()=>{ setMnemonicVisible(false); setMnemonicText(''); try { await ScreenCapture.allowScreenCaptureAsync(); } catch {} }} style={{ paddingHorizontal:12, paddingVertical:8, borderWidth:1, borderColor:'#444', borderRadius:8 }}>
-                <ThemedText style={{ color:'#DDD' }}>닫기</ThemedText>
+                <ThemedText style={{ color:'#DDD' }}>{ti('close', tr('닫기', 'Close', '閉じる', '关闭'))}</ThemedText>
               </TouchableOpacity>
             </View>
           </View>

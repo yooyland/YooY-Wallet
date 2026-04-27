@@ -5,15 +5,23 @@ const fs = require('fs');
 const path = require('path');
 
 try {
-  // 순서대로 로드 후 override — 마지막 파일이 우선. env/.env.dev에 Maps 키가 있고 루트 .env에 Firebase만 있어도 둘 다 반영됨.
+  // 환경별로 1개의 env만 선택해 로드한다.
+  // (기존처럼 모든 .env를 로드하면 마지막에 읽힌 .env가 prod/stg를 덮어써서 Functions/projectId가 꼬일 수 있음)
+  const envNameRaw = String(process.env.EXPO_PUBLIC_ENV || process.env.EXPO_PUBLIC_ENVIRONMENT || process.env.APP_ENV || '').toLowerCase();
+  const envName =
+    envNameRaw.includes('prod') ? 'prod' :
+    envNameRaw.includes('stg') || envNameRaw.includes('stag') ? 'stg' :
+    'dev';
+
+  // base -> env-specific 순서로 override
   const candidates = [
-    path.resolve(__dirname, 'env/.env.dev'),
-    path.resolve(__dirname, 'env/.env'),
-    path.resolve(__dirname, '.env.stg'),
-    path.resolve(__dirname, '.env.dev'),
-    path.resolve(__dirname, '.env.prod'),
-    path.resolve(__dirname, '.env'),
-  ];
+    path.resolve(__dirname, 'env/.env'), // optional shared secrets
+    path.resolve(__dirname, `.env.${envName}`),
+    path.resolve(__dirname, '.env'), // local dev override (dev에서만 주로 사용)
+  ].filter((p) => {
+    if (envName !== 'dev' && path.basename(p) === '.env') return false;
+    return true;
+  });
   for (const p of candidates) {
     if (fs.existsSync(p)) {
       require('dotenv').config({ path: p, override: true });
@@ -23,7 +31,22 @@ try {
 
 module.exports = ({ config }) => ({
   ...config,
-  version: '1.0.004',
+  version: '1.0.006',
+  ios: {
+    ...(config.ios || {}),
+    buildNumber: '8',
+    supportsTablet: false,
+    infoPlist: {
+      ...(config.ios?.infoPlist || {}),
+      NSContactsUsageDescription: 'Contacts are used to find and add friends.',
+      NSCameraUsageDescription: 'Camera is used for QR scanning and verification.',
+      NSPhotoLibraryUsageDescription: 'Photo library access is used to select or upload images.',
+      NSPhotoLibraryAddUsageDescription: 'Photo library is used to save images created in the app.',
+      NSMicrophoneUsageDescription: 'Microphone may be used when recording video in certain features.',
+      NSPushNotificationsUsageDescription: 'Push notifications are used for messages and important alerts.',
+      ITSAppUsesNonExemptEncryption: false,
+    },
+  },
   // 여러 스킴 허용(구버전 초대 링크 호환 + 테스트 빌드 스킴)
   scheme: ['yooy', 'appyooyland', 'yooyland'],
   android: {
@@ -77,8 +100,9 @@ module.exports = ({ config }) => ({
         list.splice(i, 1);
       }
     }
-    // push at end
+    // push at end — 권한 스트립은 다른 플러그인이 주입한 뒤 마지막에 실행
     list.push(guardPath);
+    list.push('./plugins/withStripBroadMediaReadPermissions');
     return list;
   })(),
   extra: {
