@@ -17,6 +17,7 @@ import { resolveChatDisplayNameFromUserDoc } from '../core/chatDisplayName';
 import { isRoomExplodedV2 } from '../core/ttlEngine';
 import { currentUserIsAppAdmin } from '../core/adminGhost';
 import { callAdminDeleteChatRoomV2 } from '../services/adminModerationService';
+import { onAuthStateChanged } from 'firebase/auth';
 
 type FilterKey = 'all' | 'dm' | 'group' | 'secret' | 'ttl' | 'notice';
 
@@ -74,9 +75,19 @@ const RoomItem = React.memo(function RoomItem(props: {
   const unread = Number(item.unreadCount || 0);
   const lastMessage = String(item.lastMessage || '');
   const ts = Number(item.lastMessageAt || item.updatedAt || 0);
-  const timeText = ts
-    ? new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
-    : '';
+  const timeText = (() => {
+    if (!ts) return '';
+    const now = Date.now();
+    const diff = Math.abs(now - ts);
+    // 24시간이 지나면 '시간'이 아니라 '월/일'로 표시
+    if (diff >= 24 * 60 * 60 * 1000) {
+      const d = new Date(ts);
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${mm}/${dd}`;
+    }
+    return new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+  })();
   const avatarUri = String(item.avatarUrl || '');
   const typeLabel = (() => {
     const t = roomTypeKey(item);
@@ -179,7 +190,8 @@ const RoomItem = React.memo(function RoomItem(props: {
 });
 
 export default function ChatRoomListV2() {
-  const uid = String(firebaseAuth.currentUser?.uid || '');
+  // firebaseAuth.currentUser는 변경돼도 React 렌더를 트리거하지 않으므로 state로 구독한다.
+  const [uid, setUid] = useState<string>(() => String(firebaseAuth.currentUser?.uid || ''));
   const { language } = usePreferences();
   const { currentProfile, initialize } = useChatProfileStore();
   const upsertRoom = useChatV2Store((s) => s.upsertRoom);
@@ -198,6 +210,21 @@ export default function ChatRoomListV2() {
   const [discoveryRows, setDiscoveryRows] = useState<any[]>([]);
   const discoveryReqId = useRef(0);
   const isAppAdmin = currentUserIsAppAdmin();
+
+  useEffect(() => {
+    try {
+      const unsub = onAuthStateChanged(firebaseAuth, (u) => {
+        setUid(String(u?.uid || ''));
+      });
+      return () => {
+        try {
+          unsub();
+        } catch {}
+      };
+    } catch {
+      return;
+    }
+  }, []);
 
   useEffect(() => {
     try { initialize?.(); } catch {}

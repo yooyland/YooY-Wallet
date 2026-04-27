@@ -30,8 +30,9 @@ export function sortJoinedRoomsV2(a: JoinedRoomRowV2, b: JoinedRoomRowV2) {
   const af = !!a.isFavorite;
   const bf = !!b.isFavorite;
   if (af !== bf) return af ? -1 : 1;
-  const at = Number(a.lastMessageAt || 0);
-  const bt = Number(b.lastMessageAt || 0);
+  // 초대 직후(메시지 없음)에도 리스트 최상단에 오려면 updatedAt(=join/invite 시간)을 고려해야 한다.
+  const at = Math.max(Number(a.lastMessageAt || 0), Number(a.updatedAt || 0));
+  const bt = Math.max(Number(b.lastMessageAt || 0), Number(b.updatedAt || 0));
   return bt - at;
 }
 
