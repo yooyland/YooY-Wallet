@@ -2,7 +2,7 @@
   "expo": {
     "name": "App-YooYLand",
     "slug": "App-YooYLand",
-    "version": "1.0.004",
+    "version": "1.0.006",
     "orientation": "portrait",
     "icon": "./assets/images/yoy_app_icon.png",
     "scheme": "appyooyland",
@@ -10,14 +10,16 @@
     "jsEngine": "hermes",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
+      "buildNumber": "8",
       "bundleIdentifier": "com.yooyland.wallet",
       "infoPlist": {
-        "NSContactsUsageDescription": "연락처를 불러와 친구를 추가하기 위해 사용합니다.",
-        "NSCameraUsageDescription": "QR 스캔 및 인증 기능을 위해 카메라를 사용합니다.",
-        "NSPhotoLibraryUsageDescription": "사진을 선택하거나 업로드하기 위해 사진 라이브러리에 접근합니다.",
-        "NSPhotoLibraryAddUsageDescription": "앱에서 생성한 이미지를 보관하기 위해 사진 라이브러리에 저장합니다.",
-        "NSMicrophoneUsageDescription": "동영상 녹화 등 일부 기능에서 오디오를 사용할 수 있습니다.",
+        "NSContactsUsageDescription": "Contacts are used to find and add friends.",
+        "NSCameraUsageDescription": "Camera is used for QR scanning and verification.",
+        "NSPhotoLibraryUsageDescription": "Photo library access is used to select or upload images.",
+        "NSPhotoLibraryAddUsageDescription": "Photo library is used to save images created in the app.",
+        "NSMicrophoneUsageDescription": "Microphone may be used when recording video in certain features.",
+        "NSPushNotificationsUsageDescription": "Push notifications are used for messages and important alerts.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -79,7 +81,6 @@
       "barStyle": "light-content"
     },
     "plugins": [
-      "./plugins/withStripBroadMediaReadPermissions",
       "expo-router",
       [
         "expo-splash-screen",
@@ -111,7 +112,8 @@
     ],
     "experiments": {
       "typedRoutes": true,
-      "reactCompiler": false
+      "reactCompiler": false,
+      "baseUrl": "/web"
     },
     "extra": {
       "router": {},

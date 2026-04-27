@@ -16,7 +16,7 @@ import { doc, getDoc, getDocs } from 'firebase/firestore';
 import type { ChatRoomV2 } from '../core/roomSchema';
 import { getRoomDocRef, getRoomMembersColRef, getUserJoinedRoomDocRef } from '../firebase/roomRefs';
 import { ensureMyRoomMemberDocV2, healRoomParticipantIdsIfEmptyV2, kickMemberFromRoomV2, setRoomMemberAdminV2 } from '../services/roomService';
-import { resolveRoomOwnerUidV2 } from '../core/roomPermissions';
+import { isRoomModeratorV2, resolveRoomOwnerUidV2 } from '../core/roomPermissions';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { resolveChatDisplayNameFromUserDoc } from '../core/chatDisplayName';
 
@@ -50,6 +50,8 @@ export default function RoomParticipantsModalV2(props: {
   );
   const [names, setNames] = useState<Record<string, string>>({});
   const [photos, setPhotos] = useState<Record<string, string>>({});
+  /** 익명(ID만) 모드 — 프로필 화면으로 이동하지 않음 */
+  const [anonymousById, setAnonymousById] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [idsView, setIdsView] = useState<string[]>([]);
 
@@ -79,9 +81,10 @@ export default function RoomParticipantsModalV2(props: {
   }, [room.participantIds, room.memberIds, room.ownerIds, room.adminIds, createdBy, uid, room]);
 
   const actorIsAdmin = useMemo(() => {
+    if (isRoomModeratorV2(room, uid)) return true;
     if (createdBy && uid === createdBy) return true;
     return adminSet.has(uid);
-  }, [createdBy, uid, adminSet]);
+  }, [room, createdBy, uid, adminSet]);
 
   const isDm = String(room.type) === 'dm';
 
@@ -105,11 +108,11 @@ export default function RoomParticipantsModalV2(props: {
         id,
         label: names[id] || id,
         photo: photos[id] || '',
-        section: 'member',
-        isOwner: false,
-        isAdmin: adminSet.has(id),
+        section: 'owner',
+        isOwner: true,
+        isAdmin: true,
       }));
-      return { ownerRows: [], viceRows: [], memberRows: dmRows };
+      return { ownerRows: dmRows, viceRows: [], memberRows: [] };
     }
     const ownerFromRoom =
       createdBy && participantIds.includes(createdBy)
@@ -211,6 +214,7 @@ export default function RoomParticipantsModalV2(props: {
         setIdsView(Array.from(new Set(ids.filter(Boolean))));
         const nextN: Record<string, string> = {};
         const nextP: Record<string, string> = {};
+        const nextA: Record<string, boolean> = {};
         await Promise.all(
           ids.filter(Boolean).map(async (id) => {
             try {
@@ -220,15 +224,18 @@ export default function RoomParticipantsModalV2(props: {
               const p = String(d?.photoURL || d?.avatar || d?.profileImageUrl || '').trim();
               nextN[id] = n || id;
               nextP[id] = p;
+              nextA[id] = d?.useHashInChat === true;
             } catch {
               nextN[id] = id;
               nextP[id] = '';
+              nextA[id] = false;
             }
           })
         );
         if (!alive) return;
         setNames(nextN);
         setPhotos(nextP);
+        setAnonymousById(nextA);
       } finally {
         if (alive) setLoading(false);
       }
@@ -240,6 +247,7 @@ export default function RoomParticipantsModalV2(props: {
 
   const openProfile = (targetId: string) => {
     if (!targetId || targetId === uid) return;
+    if (anonymousById[targetId]) return;
     try {
       router.push({ pathname: '/chatv2/friend-profile', params: { id: String(targetId), userId: String(targetId) } } as any);
     } catch {}

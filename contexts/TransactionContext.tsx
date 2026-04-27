@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, ReactNode, useContext, useEffect, useState } from 'react';
 import { useAuth } from './AuthContext';
+import { Platform } from 'react-native';
 
 export interface Transaction {
   id: string;
@@ -52,129 +53,30 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
   const [loading, setLoading] = useState(true);
   const { isAuthenticated, currentUser } = useAuth();
 
-  const TRANSACTIONS_KEY = 'transactions';
+  const storageBase: any =
+    Platform.OS === 'web' ? ((globalThis as any)?.localStorage || AsyncStorage) : AsyncStorage;
+
+  const TRANSACTIONS_KEY = (() => {
+    const uid = String(currentUser?.uid || '').trim();
+    return uid ? `transactions:u:${uid}` : 'transactions:u:anon';
+  })();
 
   // Load transactions from AsyncStorage
   useEffect(() => {
     loadTransactions();
-  }, []);
+  }, [TRANSACTIONS_KEY]);
 
   const loadTransactions = async () => {
     try {
       setLoading(true);
-      const savedTransactions = await AsyncStorage.getItem(TRANSACTIONS_KEY);
+      const savedTransactions = await storageBase.getItem(TRANSACTIONS_KEY);
       if (savedTransactions) {
         const parsedTransactions = JSON.parse(savedTransactions);
         setTransactions(parsedTransactions);
       } else {
-        // Initialize with some sample transactions if none exist
-        const userEmail = currentUser?.email || 'user@example.com';
-        const sampleTransactions: Transaction[] = [
-          {
-            id: '1',
-            type: 'reward',
-            from: '0x0000000000000000000000000000000000000000',
-            to: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045', // Vitalik public address (example)
-            amount: 1,
-            currency: 'YOY',
-            description: 'Daily Attendance Reward',
-            timestamp: new Date().toISOString(),
-            status: 'completed',
-            // hash intentionally omitted for demo; address/block are real so Open works
-            blockNumber: 17000000,
-            gasUsed: 21000,
-            gasPrice: 0.00000002,
-            network: 'Ethereum',
-            blockTimestamp: new Date().toISOString(),
-            memo: '출석체크 보상'
-          },
-          {
-            id: '2',
-            type: 'send',
-            from: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
-            to: '0x742d35Cc6634C0532925a3b8D4C9db96C4b4d8b',
-            amount: 5,
-            currency: 'YOY',
-            description: 'Send to friend',
-            timestamp: new Date(Date.now() - 3600000).toISOString(),
-            status: 'completed',
-            blockNumber: 17000001,
-            fee: 0.001,
-            gasUsed: 21000,
-            gasPrice: 0.00000002,
-            network: 'Ethereum',
-            blockTimestamp: new Date(Date.now() - 3600000).toISOString(),
-            memo: '친구에게 전송'
-          },
-          {
-            id: '3',
-            type: 'receive',
-            from: '0x742d35Cc6634C0532925a3b8D4C9db96C4b4d8b',
-            to: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
-            amount: 2,
-            currency: 'YOY',
-            description: 'Received payment',
-            timestamp: new Date(Date.now() - 7200000).toISOString(),
-            status: 'completed',
-            blockNumber: 17000002,
-            gasUsed: 21000,
-            gasPrice: 0.00000002,
-            network: 'Ethereum',
-            blockTimestamp: new Date(Date.now() - 7200000).toISOString()
-          },
-          {
-            id: '4',
-            type: 'send',
-            from: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
-            to: '0x0A869d79a7052C7f1b55a8EbAbbEa3420F0D1E13',
-            amount: 10,
-            currency: 'YOY',
-            description: 'Failed transfer',
-            timestamp: new Date(Date.now() - 10800000).toISOString(),
-            status: 'failed',
-            blockNumber: 17000003,
-            gasUsed: 21000,
-            gasPrice: 0.00000002,
-            network: 'Ethereum',
-            blockTimestamp: new Date(Date.now() - 10800000).toISOString()
-          },
-          {
-            id: '5',
-            type: 'receive',
-            from: '0x1be4f420882eG765036245978Jdg469f7f1e7f1e9',
-            to: '0x742d35Cc6634C0532925a3b8D4C9db96C4b4d8b6',
-            amount: 100,
-            currency: 'YOY',
-            description: 'Suspicious transaction',
-            timestamp: new Date(Date.now() - 14400000).toISOString(),
-            status: 'rejected',
-            hash: '0x5e6f7890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12',
-            blockNumber: 12345660,
-            gasUsed: 21000,
-            gasPrice: 0.00000002,
-            network: 'YOY',
-            blockTimestamp: new Date(Date.now() - 14400000).toISOString()
-          },
-          {
-            id: '6',
-            type: 'buy',
-            from: '0x742d35Cc6634C0532925a3b8D4C9db96C4b4d8b6',
-            to: '0x2cf5f531993fH876147356089Keg570g8g2f8g2f0',
-            amount: 50,
-            currency: 'YOY',
-            description: 'Buy order cancelled',
-            timestamp: new Date(Date.now() - 18000000).toISOString(),
-            status: 'cancelled',
-            hash: '0x6f7890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234',
-            blockNumber: 12345655,
-            gasUsed: 21000,
-            gasPrice: 0.00000002,
-            network: 'YOY',
-            blockTimestamp: new Date(Date.now() - 18000000).toISOString()
-          }
-        ];
-        setTransactions(sampleTransactions);
-        await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(sampleTransactions));
+        // 초기값은 빈 배열 (타 계정/데모 데이터 섞임 방지)
+        setTransactions([]);
+        await storageBase.setItem(TRANSACTIONS_KEY, JSON.stringify([]));
       }
     } catch (error) {
       console.error('Failed to load transactions:', error);
@@ -194,7 +96,7 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
       const updatedTransactions = [newTransaction, ...transactions];
       setTransactions(updatedTransactions);
       
-      await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(updatedTransactions));
+      await storageBase.setItem(TRANSACTIONS_KEY, JSON.stringify(updatedTransactions));
       
       console.log('Transaction added:', newTransaction);
     } catch (error) {
@@ -222,7 +124,7 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
   const clearTransactions = async () => {
     try {
       setTransactions([]);
-      await AsyncStorage.removeItem(TRANSACTIONS_KEY);
+      await storageBase.removeItem(TRANSACTIONS_KEY);
     } catch (error) {
       console.error('Failed to clear transactions:', error);
       throw error;
@@ -233,10 +135,9 @@ export const TransactionProvider: React.FC<TransactionProviderProps> = ({ childr
     try {
       const updated = transactions.map(tx => (tx.id === id ? { ...tx, memo } : tx));
       setTransactions(updated);
-      await AsyncStorage.setItem(TRANSACTIONS_KEY, JSON.stringify(updated));
+      await storageBase.setItem(TRANSACTIONS_KEY, JSON.stringify(updated));
     } catch (error) {
       console.error('Failed to update memo:', error);
-      throw error;
     }
   };
 

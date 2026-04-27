@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, NativeSyntheticEvent, NativeScrollEvent, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, NativeSyntheticEvent, NativeScrollEvent, Platform, Keyboard } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import type { ChatMessageV2 } from '../core/messageSchema';
 import type { ChatRoomV2 } from '../core/roomSchema';
@@ -15,8 +15,8 @@ import { resolveChatDisplayNameFromUserDoc } from '../core/chatDisplayName';
 type Props = {
   room: ChatRoomV2;
   uid: string;
-  /** DM에서 상대의 roomMembers … lastReadAt (읽음 표시용) */
-  peerLastReadAt?: number | null;
+  /** roomMembers … members/{uid}.lastReadAt(ms) — 내 말풍선 미읽음 인원(카카오식) */
+  memberLastReadByUid?: Record<string, number>;
   onLoadOlder?: () => Promise<void> | void;
   onOpenMedia?: (msg: ChatMessageV2, opts?: { albumIndex?: number }) => void;
   onReact?: (msg: ChatMessageV2) => void;
@@ -40,9 +40,11 @@ type Props = {
   keyboardHeight?: number;
   /** TTL 방: 메시지 말풍선 하단 만료 카운트다운(초). 미전달 시 room에서 계산 */
   ttlMessageExpireSeconds?: number | null;
+  /** 관리자 유령 입장 등: 롱프레스 메뉴·반응 비활성 */
+  readOnly?: boolean;
 };
 
-type SenderProfile = { name: string; avatarUrl: string };
+type SenderProfile = { name: string; avatarUrl: string; useHashInChat?: boolean };
 
 const BOTTOM_THRESHOLD_PX = 100;
 
@@ -60,7 +62,7 @@ function isNearListBottom(e: NativeSyntheticEvent<NativeScrollEvent>): boolean {
 export function MessageListV2({
   room,
   uid,
-  peerLastReadAt = null,
+  memberLastReadByUid = {},
   onLoadOlder,
   onOpenMedia,
   onReact,
@@ -81,6 +83,7 @@ export function MessageListV2({
   bottomPadding,
   keyboardHeight = 0,
   ttlMessageExpireSeconds: ttlMsgSecProp,
+  readOnly = false,
 }: Props) {
   const [ttlTick, setTtlTick] = useState(0);
   const ttlMsgSec =
@@ -97,7 +100,8 @@ export function MessageListV2({
 
   useEffect(() => {
     if (String(room.type) !== 'ttl') return;
-    const id = setInterval(() => setTtlTick((v) => (v + 1) % 1000000), 1000);
+    // TTL방: 전체 목록 필터링/정렬을 매초 돌리면 비용이 큼 → 5초로 완화
+    const id = setInterval(() => setTtlTick((v) => (v + 1) % 1000000), 5000);
     return () => clearInterval(id);
   }, [room.id, room.type]);
 
@@ -132,94 +136,52 @@ export function MessageListV2({
 
   const [senderProfiles, setSenderProfiles] = useState<Record<string, SenderProfile>>({});
 
+  const senderIdsKey = useMemo(() => {
+    const ids = Array.from(new Set(messages.map((m) => String(m.senderId || '').trim()).filter(Boolean))).sort();
+    return ids.join('|');
+  }, [messages]);
+
+  /**
+   * 발신자 users/{id} 로드
+   * - 기존: 발신자 수만큼 onSnapshot을 붙여 대형 방에서 심각한 성능 저하
+   * - 개선: 1회 getDoc + 캐시(표시명/아바타). 익명(해시) 모드 변경은 다음 메시지/재진입 시 반영.
+   */
   useEffect(() => {
-    let alive = true;
+    let cancelled = false;
     (async () => {
-      try {
-        const ids = Array.from(new Set(messages.map((m) => String(m.senderId || '')).filter(Boolean)));
-        const missing = ids.filter((id) => !senderProfiles[id]);
-        if (!missing.length) return;
-        const next: Record<string, SenderProfile> = {};
-        await Promise.all(
-          missing.map(async (id) => {
-            try {
-              const s = await getDoc(doc(firestore, 'users', id));
-              const d = s.exists() ? (s.data() as any) : {};
-              const name = resolveChatDisplayNameFromUserDoc(id, d as Record<string, unknown>).trim() || id;
-              const avatarUrl = String(d?.avatar || d?.photoURL || d?.profileImageUrl || '').trim();
-              next[id] = { name, avatarUrl };
-            } catch {
-              next[id] = { name: id, avatarUrl: '' };
-            }
-          })
-        );
-        if (!alive) return;
-        setSenderProfiles((prev) => ({ ...prev, ...next }));
-      } catch {}
+      const ids = senderIdsKey.split('|').filter(Boolean);
+      if (!ids.length) return;
+      const missing = ids.filter((id) => !senderProfiles[id]);
+      if (!missing.length) return;
+      // limit concurrency
+      let idx = 0;
+      const worker = async () => {
+        for (;;) {
+          const i = idx++;
+          if (i >= missing.length) return;
+          const id = missing[i];
+          try {
+            const snap = await getDoc(doc(firestore, 'users', id));
+            const d = snap.exists() ? (snap.data() as any) : {};
+            const name = resolveChatDisplayNameFromUserDoc(id, d as Record<string, unknown>).trim() || id;
+            const avatarUrl = String(d?.avatar || d?.photoURL || d?.profileImageUrl || '').trim();
+            const useHashInChat = d?.useHashInChat === true;
+            if (cancelled) return;
+            setSenderProfiles((prev) => ({ ...prev, [id]: { name, avatarUrl, useHashInChat } }));
+          } catch {
+            if (cancelled) return;
+            setSenderProfiles((prev) => ({ ...prev, [id]: { name: id, avatarUrl: '', useHashInChat: false } }));
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(8, missing.length) }).map(() => worker()));
     })();
-    return () => { alive = false; };
-  }, [messages, senderProfiles]);
-
-  const renderItem = useCallback(
-    ({ item, index }: { item: ChatMessageV2; index: number }) => {
-      const isMe = String(item.senderId) === String(uid);
-      const prev = index > 0 ? messages[index - 1] : undefined;
-      const showSenderMeta = !isMe && (!prev || String(prev.senderId) !== String(item.senderId));
-      const senderId = String(item.senderId || '');
-      const profile = senderProfiles[senderId];
-      return (
-        <MessageBubbleV2
-          msg={item}
-          isMe={isMe}
-          uid={uid}
-          isRoomModerator={isRoomModerator}
-          roomType={room.type}
-          ttlMessageExpireSeconds={ttlMsgSec}
-          peerLastReadAt={peerLastReadAt}
-          senderName={profile?.name || senderId || '알 수 없음'}
-          senderAvatarUrl={profile?.avatarUrl || ''}
-          showSenderMeta={showSenderMeta}
-          allowExternalShare={allowExternalShareInBubble}
-          onOpenSenderProfile={onOpenSenderProfile}
-          onReply={onReply}
-          onDeleteMine={onDeleteMine}
-          onForward={onForward}
-          onArchive={onArchive}
-          onJumpToMessage={onJumpToMessage || jumpToMessageInternal}
-          onOpenMedia={onOpenMedia}
-          onReact={onReact}
-          onApplyReaction={onApplyReaction}
-          onHideMessage={onHideMessage}
-          onDeleteForEveryone={onDeleteForEveryone}
-          onRetryMedia={onRetryMedia}
-          onVotePoll={onVotePoll}
-          fontSize={fontSize}
-          bubbleShape={bubbleShape}
-        />
-      );
-    },
-    [uid, peerLastReadAt, room.type, ttlMsgSec, isRoomModerator, onOpenMedia, onReact, onApplyReaction, onHideMessage, onDeleteForEveryone, onRetryMedia, onVotePoll, onOpenSenderProfile, onReply, onDeleteMine, onForward, onArchive, onJumpToMessage, jumpToMessageInternal, allowExternalShareInBubble, fontSize, bubbleShape, messages, senderProfiles]
-  );
-
-  const keyExtractor = useCallback((m: ChatMessageV2) => String(m.id), []);
-
-  const updateJumpVisibility = useCallback(
-    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (messages.length === 0) {
-        setShowJumpToBottom(false);
-        return;
-      }
-      setShowJumpToBottom(!isNearListBottom(e));
-    },
-    [messages.length]
-  );
-
-  const jumpToBottom = useCallback(() => {
-    try {
-      listRef.current?.scrollToEnd({ animated: true });
-    } catch {}
-    setShowJumpToBottom(false);
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+    // senderProfiles intentionally omitted: we only load missing once per key change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [senderIdsKey]);
 
   const jumpToMessageInternal = useCallback(
     (messageId: string) => {
@@ -256,6 +218,99 @@ export function MessageListV2({
     [messages, hasMore, onLoadOlder, room.id]
   );
 
+  const renderItem = useCallback(
+    ({ item, index }: { item: ChatMessageV2; index: number }) => {
+      const isMe = String(item.senderId) === String(uid);
+      const prev = index > 0 ? messages[index - 1] : undefined;
+      const showSenderMeta = !isMe && (!prev || String(prev.senderId) !== String(item.senderId));
+      const senderId = String(item.senderId || '');
+      const profile = senderProfiles[senderId];
+      return (
+        <MessageBubbleV2
+          msg={item}
+          isMe={isMe}
+          uid={uid}
+          isRoomModerator={isRoomModerator}
+          roomType={room.type}
+          ttlMessageExpireSeconds={ttlMsgSec}
+          memberLastReadByUid={memberLastReadByUid}
+          participantIdsForRead={
+            Array.isArray(room.participantIds) ? room.participantIds.map((x: any) => String(x)).filter(Boolean) : []
+          }
+          senderName={profile?.name || senderId || '알 수 없음'}
+          senderAvatarUrl={profile?.avatarUrl || ''}
+          profileTapDisabled={!isMe && profile?.useHashInChat === true}
+          showSenderMeta={showSenderMeta}
+          allowExternalShare={allowExternalShareInBubble}
+          readOnly={readOnly}
+          onOpenSenderProfile={onOpenSenderProfile}
+          onReply={onReply}
+          onDeleteMine={onDeleteMine}
+          onForward={onForward}
+          onArchive={onArchive}
+          onJumpToMessage={onJumpToMessage || jumpToMessageInternal}
+          onOpenMedia={onOpenMedia}
+          onReact={onReact}
+          onApplyReaction={onApplyReaction}
+          onHideMessage={onHideMessage}
+          onDeleteForEveryone={onDeleteForEveryone}
+          onRetryMedia={onRetryMedia}
+          onVotePoll={onVotePoll}
+          fontSize={fontSize}
+          bubbleShape={bubbleShape}
+        />
+      );
+    },
+    [
+      uid,
+      memberLastReadByUid,
+      room.type,
+      room.participantIds,
+      ttlMsgSec,
+      isRoomModerator,
+      readOnly,
+      onOpenMedia,
+      onReact,
+      onApplyReaction,
+      onHideMessage,
+      onDeleteForEveryone,
+      onRetryMedia,
+      onVotePoll,
+      onOpenSenderProfile,
+      onReply,
+      onDeleteMine,
+      onForward,
+      onArchive,
+      onJumpToMessage,
+      jumpToMessageInternal,
+      allowExternalShareInBubble,
+      fontSize,
+      bubbleShape,
+      messages,
+      senderProfiles,
+    ]
+  );
+
+  const keyExtractor = useCallback((m: ChatMessageV2) => String(m.id), []);
+
+  const updateJumpVisibility = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (messages.length === 0) {
+        setShowJumpToBottom(false);
+        return;
+      }
+      setShowJumpToBottom(!isNearListBottom(e));
+    },
+    [messages.length]
+  );
+
+  const jumpToBottom = useCallback(() => {
+    try {
+      listRef.current?.scrollToEnd({ animated: true });
+    } catch {}
+    setShowJumpToBottom(false);
+  }, []);
+
   const prevKbRef = useRef(0);
   useEffect(() => {
     const h = Math.max(0, Number(keyboardHeight || 0));
@@ -277,12 +332,19 @@ export function MessageListV2({
         estimatedItemSize={72}
         keyExtractor={keyExtractor}
         renderItem={renderItem as any}
-        keyboardDismissMode="none"
-        keyboardShouldPersistTaps="always"
+        keyboardDismissMode="on-drag"
+        keyboardShouldPersistTaps="handled"
+        onScrollBeginDrag={() => {
+          if (Platform.OS === 'ios') Keyboard.dismiss();
+        }}
+        onTouchStart={() => {
+          // 빈 영역 탭으로 키보드 자연스럽게 닫힘 (버블/버튼 탭은 handled로 통과)
+          if (Platform.OS === 'ios') Keyboard.dismiss();
+        }}
         onScroll={updateJumpVisibility}
         onMomentumScrollEnd={updateJumpVisibility}
-        scrollEventThrottle={100}
-        contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: Math.max(120, Number(bottomPadding || 0)), paddingTop: 8 }}
+        scrollEventThrottle={160}
+        contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: Math.max(24, Number(bottomPadding || 0)), paddingTop: 8 }}
         ListHeaderComponent={
           hasMore && typeof onLoadOlder === 'function' ? (
             <TouchableOpacity

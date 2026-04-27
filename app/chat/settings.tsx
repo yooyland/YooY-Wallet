@@ -50,11 +50,11 @@ export default function ChatSettingsScreen() {
           <>
             {/* 빠른 이동: 친구 리스트 / 채팅방 리스트 */}
             <View style={{ marginTop: 12 }}>
-              <TouchableOpacity onPress={()=>{ try { router.push('/chat/friends'); } catch {} }} style={{ paddingVertical:12, paddingHorizontal:14, borderWidth:1, borderColor:'#1E1E1E', borderRadius:8, backgroundColor:'#0B0B0B', flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+              <TouchableOpacity onPress={()=>{ try { router.push('/chatv2/friends'); } catch {} }} style={{ paddingVertical:12, paddingHorizontal:14, borderWidth:1, borderColor:'#1E1E1E', borderRadius:8, backgroundColor:'#0B0B0B', flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
                 <Text style={{ color:'#F6F6F6' }}>{t('friendsList', language)}</Text>
                 <Text style={{ color:'#777' }}>▶</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={()=>{ try { router.push('/chat/rooms'); } catch {} }} style={{ paddingVertical:12, paddingHorizontal:14, borderWidth:1, borderColor:'#1E1E1E', borderRadius:8, backgroundColor:'#0B0B0B', flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+              <TouchableOpacity onPress={()=>{ try { router.push('/chatv2/rooms'); } catch {} }} style={{ paddingVertical:12, paddingHorizontal:14, borderWidth:1, borderColor:'#1E1E1E', borderRadius:8, backgroundColor:'#0B0B0B', flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
                 <Text style={{ color:'#F6F6F6' }}>{t('chatRoomsList', language)}</Text>
                 <Text style={{ color:'#777' }}>▶</Text>
               </TouchableOpacity>
@@ -157,7 +157,7 @@ export default function ChatSettingsScreen() {
                           try {
                             await resetChatDataLocal();
                             Alert.alert('완료', '채팅 로컬 데이터가 초기화되었습니다. 방 목록이 비어 있습니다.');
-                            try { router.push('/chat/rooms'); } catch {}
+                            try { router.push('/chatv2/rooms'); } catch {}
                           } catch (e) {
                             Alert.alert('오류', '초기화 중 오류가 발생했습니다.');
                           }

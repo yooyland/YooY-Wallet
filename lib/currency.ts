@@ -1,4 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Platform } from 'react-native';
+import { fetchJsonWithProxy } from '@/lib/upbit';
 
 export type SupportedCurrency = 'USD' | 'KRW' | 'JPY' | 'CNY' | 'EUR';
 
@@ -37,8 +39,13 @@ export async function getExchangeRates(): Promise<ExchangeRates> {
     }
 
     // Fetch fresh rates
-    const response = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
-    const data = await response.json();
+    const url = 'https://api.exchangerate-api.com/v4/latest/USD';
+    const data = Platform.OS === 'web'
+      ? await fetchJsonWithProxy(url)
+      : await (async () => {
+          const response = await fetch(url);
+          return await response.json();
+        })();
     
     const rates: ExchangeRates = {
       USD: 1,

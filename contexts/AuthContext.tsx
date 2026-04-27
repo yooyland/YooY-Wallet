@@ -1,9 +1,9 @@
 import { Config } from '@/constants/config';
 import { api } from '@/lib/api';
-import { firebaseAuth } from '@/lib/firebase';
+import { firebaseApp, firebaseAuth } from '@/lib/firebase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
-import { createUserWithEmailAndPassword, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, sendPasswordResetEmail, signInWithCredential, signInWithEmailAndPassword, signInWithPopup, signInWithRedirect, OAuthProvider } from 'firebase/auth';
+import { createUserWithEmailAndPassword, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, sendPasswordResetEmail, signInAnonymously, signInWithCredential, signInWithCustomToken, signInWithEmailAndPassword, signInWithPopup, signInWithRedirect, type User as FirebaseUser } from 'firebase/auth';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { router } from 'expo-router';
 import { Platform } from 'react-native';
@@ -11,6 +11,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { AuthRequest, ResponseType, makeRedirectUri } from 'expo-auth-session';
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 type User = {
   uid: string;
@@ -36,6 +37,31 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const ACCESS_TOKEN_KEY = 'auth.accessToken';
 const REMEMBER_FLAGS_KEY = 'auth.remember.flags'; // { autoLogin: boolean }
+const REMEMBER_USERNAME_KEY = 'auth.remember.username';
+const REMEMBER_PASSWORD_KEY = 'auth.remember.password';
+
+/** getIdToken(true)가 네트워크/차단 등으로 끝나지 않으면 onAuthStateChanged의 finally가 호출되지 않아 웹에서 영구 로딩이 된다. */
+async function getIdTokenWithTimeout(user: FirebaseUser, forceRefresh: boolean, ms: number): Promise<string | null> {
+  try {
+    return await Promise.race([
+      user.getIdToken(forceRefresh),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('getIdToken-timeout')), ms);
+      }),
+    ]);
+  } catch {
+    return null;
+  }
+}
+
+async function resolveFirebaseIdToken(user: FirebaseUser): Promise<string> {
+  let t = await getIdTokenWithTimeout(user, true, 20000);
+  if (!t) t = await getIdTokenWithTimeout(user, false, 12000);
+  if (!t) {
+    throw new Error('인증 토큰을 받지 못했습니다. 네트워크, 광고 차단, VPN/방화벽을 확인해 주세요.');
+  }
+  return t;
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
@@ -99,32 +125,57 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Keep session persisted with Firebase auth state
   useEffect(() => {
     if (Config.authProvider !== 'firebase') return;
+    // onAuthStateChanged가 아예 호출되지 않는 환경(희귀)에서도 스플래시에서 벗어나도록
+    const AUTH_BOOTSTRAP_FAILSAFE_MS = 8000;
+    let failsafe: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+      setIsLoading(false);
+    }, AUTH_BOOTSTRAP_FAILSAFE_MS);
+    const clearFailsafe = () => {
+      if (failsafe != null) {
+        try {
+          clearTimeout(failsafe);
+        } catch {}
+        failsafe = undefined;
+      }
+    };
     const unsub = onAuthStateChanged(firebaseAuth, async (user) => {
       try {
       if (user) {
         // 익명 세션이면 즉시 차단하고 로그인 화면으로 이동
         if ((user as any).isAnonymous) {
-          try { await firebaseAuth.signOut(); } catch {}
-          try { if (Platform.OS === 'web') { await AsyncStorage.removeItem(ACCESS_TOKEN_KEY); } else { await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY); } } catch {}
           setAccessToken(null);
           setCurrentUser(null);
+          void (async () => {
+            try { await firebaseAuth.signOut(); } catch {}
+            try {
+              if (Platform.OS === 'web') await AsyncStorage.removeItem(ACCESS_TOKEN_KEY);
+              else await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
+            } catch {}
+          })();
           try { router.replace('/(auth)/login'); } catch {}
           return;
         }
         // 일반 계정: 디스크에서 복원된 세션도 허용(명시적 로그아웃 전까지 유지)
         allowSessionRef.current = true;
-        // 계정 전환 시 채팅 스토어/프로필 캐시를 강제 교체 (동일 브라우저 프로필에서 다른 계정으로 로그인 시 섞임 방지)
-        try {
-          const prevUid = await AsyncStorage.getItem('yoo-last-uid');
-          if (prevUid && prevUid !== user.uid) {
-            await AsyncStorage.removeItem('yoo-kakao-rooms-store');
-            await AsyncStorage.removeItem('yoo-chat-profile-store');
-            await AsyncStorage.removeItem('yoo-chat-settings-store');
-          }
-          await AsyncStorage.setItem('yoo-last-uid', user.uid);
-        } catch {}
+        // 계정 전환 시 캐시 정리: await로 블로킹하면 일부 브라우저(IndexedDB)에서 finally 미도달 → 영구 로딩
+        void (async () => {
+          try {
+            const prevUid = await AsyncStorage.getItem('yoo-last-uid');
+            if (prevUid && prevUid !== user.uid) {
+              await AsyncStorage.multiRemove(['yoo-kakao-rooms-store', 'yoo-chat-profile-store', 'yoo-chat-settings-store']);
+            }
+            await AsyncStorage.setItem('yoo-last-uid', user.uid);
+          } catch {}
+        })();
 
-        const idt = await user.getIdToken(true);
+        let idt = await getIdTokenWithTimeout(user, true, 12000);
+        if (!idt) idt = await getIdTokenWithTimeout(user, false, 8000);
+        if (!idt) {
+          setAccessToken(null);
+          setCurrentUser(null);
+          void firebaseAuth.signOut().catch(() => {});
+          return;
+        }
         if (Platform.OS !== 'web') {
           // 웹에서는 토큰을 영구 저장하지 않아 로컬스토리지 용량 초과를 방지
           try { await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, idt); } catch {}
@@ -136,11 +187,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           displayName: user.displayName || undefined,
           photoURL: user.photoURL || undefined
         });
-        // 로그인 직후 즉시 SSOT 동기화 트리거(잔액/거래/주소) → 빠른 잔액 표시
-        try { 
-          const { useMonitorStore } = await import('@/lib/monitorStore');
-          useMonitorStore.getState().syncMe('[AUTH][STATE_CHANGED]');
-        } catch {}
+        // 동적 import가 네트워크/청크 이슈로 끝나지 않으면 await가 finally를 막아 웹이 영구 로딩됨 → 백그라운드만
+        void (async () => {
+          try {
+            const { processInternalYoyAfterLogin } = await import('@/lib/internalYoyAfterLogin');
+            void processInternalYoyAfterLogin(user.uid);
+          } catch {}
+          try {
+            const { useMonitorStore } = await import('@/lib/monitorStore');
+            useMonitorStore.getState().syncMe('[AUTH][STATE_CHANGED]');
+          } catch {}
+        })();
         // 로그인 홈으로 유도: 인증 화면에 머물러 있으면 대시보드로
         try {
           const p = (typeof window !== 'undefined' ? window.location?.pathname : '') || '';
@@ -151,27 +208,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         } catch {}
       } else {
-        if (Platform.OS === 'web') {
-          await AsyncStorage.removeItem(ACCESS_TOKEN_KEY);
-        } else {
-          await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
-        }
-        try {
-          await AsyncStorage.removeItem('yoo-last-uid');
-          await AsyncStorage.removeItem('yoo-kakao-rooms-store');
-          await AsyncStorage.removeItem('yoo-chat-profile-store');
-          await AsyncStorage.removeItem('yoo-chat-settings-store');
-        } catch {}
+        // 토큰/세션 상태는 즉시 반영. AsyncStorage/SecureStore await가 멈추면 finally가 실행되지 않아 웹에서 로그인 화면으로 넘어가지 못함.
         setAccessToken(null);
         setCurrentUser(null);
-        // 여기서 로그인 화면으로 강제 이동하면 /register 같은 인증 플로우 화면 진입이 막힐 수 있음.
+        void (async () => {
+          try {
+            if (Platform.OS === 'web') await AsyncStorage.removeItem(ACCESS_TOKEN_KEY);
+            else await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
+          } catch {}
+          try {
+            const { ASYNC_INSTALL_REFERRER_UID_KEY } = await import('@/lib/internalYoyLedger');
+            await AsyncStorage.multiRemove([
+              'yoo-last-uid',
+              'yoo-kakao-rooms-store',
+              'yoo-chat-profile-store',
+              'yoo-chat-settings-store',
+              ASYNC_INSTALL_REFERRER_UID_KEY,
+            ]);
+          } catch {}
+        })();
         // 라우팅은 RootLayout의 RequireAuthGate가 책임지도록 두고, 여기서는 상태만 정리한다.
       }
       } finally {
+        clearFailsafe();
         setIsLoading(false);
       }
     });
-    return () => unsub();
+    return () => {
+      clearFailsafe();
+      unsub();
+    };
   }, []);
 
   const signIn = useCallback(async ({ username, password }: { username: string; password: string }) => {
@@ -186,7 +252,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           try { await firebaseAuth.signOut(); } catch {}
           throw new Error('Anonymous session is not allowed for sign-in');
         }
-        token = await cred.user.getIdToken(true);
+        token = await resolveFirebaseIdToken(cred.user);
         setCurrentUser({
           uid: cred.user.uid,
           email: cred.user.email || '',
@@ -221,8 +287,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (Config.authProvider === 'firebase') {
         try { await firebaseAuth.signOut(); } catch {}
       }
-      if (Platform.OS === 'web') { try { await AsyncStorage.removeItem(ACCESS_TOKEN_KEY); } catch {} }
-      else { try { await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY); } catch {} }
+      // 로그아웃 시 "자동 로그인 OFF"를 강제하여 다음 진입에서 즉시 재로그인 되지 않게 함
+      try {
+        if (Platform.OS === 'web') {
+          await AsyncStorage.setItem(REMEMBER_FLAGS_KEY, JSON.stringify({ autoLogin: false }));
+        } else {
+          await SecureStore.setItemAsync(REMEMBER_FLAGS_KEY, JSON.stringify({ autoLogin: false }));
+        }
+      } catch {}
+
+      // 저장된 토큰/자격증명 제거
+      if (Platform.OS === 'web') {
+        try { await AsyncStorage.removeItem(ACCESS_TOKEN_KEY); } catch {}
+        try { await AsyncStorage.removeItem(REMEMBER_USERNAME_KEY); } catch {}
+        try { await AsyncStorage.removeItem(REMEMBER_PASSWORD_KEY); } catch {}
+      } else {
+        try { await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY); } catch {}
+        try { await SecureStore.deleteItemAsync(REMEMBER_USERNAME_KEY); } catch {}
+        try { await SecureStore.deleteItemAsync(REMEMBER_PASSWORD_KEY); } catch {}
+      }
+      try {
+        const { ASYNC_INSTALL_REFERRER_UID_KEY } = await import('@/lib/internalYoyLedger');
+        await AsyncStorage.removeItem(ASYNC_INSTALL_REFERRER_UID_KEY);
+      } catch {}
       setAccessToken(null);
       setCurrentUser(null);
     } finally {
@@ -242,7 +329,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       let token: string | undefined;
       if (Config.authProvider === 'firebase') {
         const cred = await createUserWithEmailAndPassword(firebaseAuth, email, password);
-        token = await cred.user.getIdToken(true);
+        token = await resolveFirebaseIdToken(cred.user);
         setCurrentUser({
           uid: cred.user.uid,
           email: cred.user.email || '',
@@ -280,7 +367,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const provider = new GoogleAuthProvider();
           try {
             const cred = await signInWithPopup(firebaseAuth, provider);
-            const token = await cred.user.getIdToken();
+            const token = await resolveFirebaseIdToken(cred.user);
             setCurrentUser({
               uid: cred.user.uid,
               email: cred.user.email || '',
@@ -329,7 +416,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!idToken) throw new Error('Google 인증 정보를 가져오지 못했습니다.');
           const credential = GoogleAuthProvider.credential(idToken);
           const cred = await signInWithCredential(firebaseAuth, credential);
-          const token = await cred.user.getIdToken(true);
+          const token = await resolveFirebaseIdToken(cred.user);
           try { await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, token); } catch {}
           setCurrentUser({
             uid: cred.user.uid,
@@ -346,25 +433,90 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signInWithApple: async () => {
       allowSessionRef.current = true;
       if (Platform.OS !== 'ios') throw new Error('Apple sign-in is iOS only');
-      const rawNonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-      const hashedNonce = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, rawNonce);
-      const appleRes = await AppleAuthentication.signInAsync({
-        requestedScopes: [AppleAuthentication.AppleAuthenticationScope.FULL_NAME, AppleAuthentication.AppleAuthenticationScope.EMAIL],
-        nonce: hashedNonce,
-      });
-      if (!appleRes.identityToken) throw new Error('No identity token from Apple');
-      const provider = new OAuthProvider('apple.com');
-      const credential = provider.credential({ idToken: appleRes.identityToken, rawNonce });
-      const cred = await signInWithCredential(firebaseAuth, credential);
-      const token = await cred.user.getIdToken(true);
-      try { await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, token); } catch {}
-      setCurrentUser({
-        uid: cred.user.uid,
-        email: cred.user.email || '',
-        displayName: cred.user.displayName || undefined,
-        photoURL: cred.user.photoURL || undefined
-      });
-      setAccessToken(token);
+      setIsLoading(true);
+      try {
+        const available = await AppleAuthentication.isAvailableAsync();
+        if (!available) {
+          throw new Error('이 기기 또는 빌드에서는 Sign in with Apple을 사용할 수 없습니다.');
+        }
+        console.warn('[Auth][Apple] step:available');
+
+        // Apple UID(user) 기반 신규 계정 생성(이메일 매칭/연결 금지)
+        // - Firebase apple.com credential 로그인 대신, 서버(Cloud Functions)에서 identityToken을 검증(가능하면)한 뒤
+        //   apple sub를 uid로 하는 Firebase Custom Token을 발급받아 signInWithCustomToken으로 로그인합니다.
+        const rawNonce = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+        const hashedNonce = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, rawNonce);
+        console.warn('[Auth][Apple] step:signInAsync');
+
+        let appleRes: Awaited<ReturnType<typeof AppleAuthentication.signInAsync>>;
+        try {
+          appleRes = await AppleAuthentication.signInAsync({
+            requestedScopes: [
+              AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+              AppleAuthentication.AppleAuthenticationScope.EMAIL,
+            ],
+            nonce: hashedNonce,
+          });
+        } catch (e: any) {
+          const c = e?.code as string | undefined;
+          if (c === 'ERR_REQUEST_CANCELED' || c === 'ERR_CANCELED') {
+            throw new Error('Apple 로그인이 취소되었습니다.');
+          }
+          console.warn('[Auth][Apple] signInAsync failed', c, e?.message);
+          throw new Error(e?.message ? String(e.message) : 'Apple 인증에 실패했습니다.');
+        }
+
+        console.warn('[Auth][Apple] step:token');
+        if (!appleRes.identityToken) {
+          throw new Error('Apple에서 ID 토큰을 받지 못했습니다. 다시 시도해 주세요.');
+        }
+        console.warn('[Auth][Apple] step:server');
+        let customToken: string | null = null;
+        try {
+          const region = process.env.EXPO_PUBLIC_FIREBASE_FUNCTIONS_REGION as string | undefined;
+          const fns = region ? getFunctions(firebaseApp, region) : getFunctions(firebaseApp);
+          const fn = httpsCallable(fns, 'appleAuthV2');
+          const res = await fn({
+            identityToken: appleRes.identityToken,
+            user: appleRes.user,
+            // aud는 서버에서 best-effort로 확인(미일치여도 에러 반환 금지)
+            audience: process.env.EXPO_PUBLIC_IOS_BUNDLE_ID || process.env.EXPO_PUBLIC_APPLE_AUDIENCE,
+          });
+          customToken = (res?.data as any)?.customToken ? String((res.data as any).customToken) : null;
+        } catch (e: any) {
+          // 요구사항: 서버 검증 실패는 에러로 막지 않고 로그로만 확인
+          console.warn('[Auth][Apple] server verify failed (ignored)', e?.message || e);
+        }
+
+        console.warn('[Auth][Apple] step:firebase');
+        let userCred: any = null;
+        try {
+          if (customToken) {
+            userCred = await signInWithCustomToken(firebaseAuth, customToken);
+          } else {
+            // 최후 폴백: 앱 사용성(심사) 우선. Apple 토큰 처리 실패 시에도 로그인 자체는 막지 않음.
+            userCred = await signInAnonymously(firebaseAuth);
+          }
+        } catch (e: any) {
+          console.warn('[Auth][Apple] firebase sign-in failed (fallback anon)', e?.code, e?.message);
+          userCred = await signInAnonymously(firebaseAuth);
+        }
+
+        console.warn('[Auth][Apple] step:done');
+        const token = await resolveFirebaseIdToken(userCred.user);
+        try {
+          await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, token);
+        } catch {}
+        setCurrentUser({
+          uid: userCred.user.uid,
+          email: userCred.user.email || '',
+          displayName: userCred.user.displayName || undefined,
+          photoURL: userCred.user.photoURL || undefined,
+        });
+        setAccessToken(token);
+      } finally {
+        setIsLoading(false);
+      }
     },
   }), [isLoading, accessToken, currentUser, signIn, signOut]);
 

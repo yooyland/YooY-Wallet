@@ -1,6 +1,7 @@
 import type { Firestore } from 'firebase/firestore';
 import { doc, getDoc, setDoc, updateDoc, arrayUnion, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { parseYooYLinkV2 } from '../core/linkRouting';
+import { isRoomExplodedV2 } from '../core/ttlEngine';
 import { getRoomDocRef, getRoomMemberDocRef, getUserJoinedRoomDocRef } from '../firebase/roomRefs';
 import { normalizeRoomId } from '../utils/roomId';
 import { getOrCreateDmRoomV2 } from './roomService';
@@ -74,6 +75,10 @@ export async function ensureRoomEntryReadyV2(input: {
   if (!roomSnap.exists()) throw new Error('room_not_found');
   const room = roomSnap.data() as any;
   const type = String(room?.type || 'group');
+  if (type === 'ttl') {
+    const probe = { type: 'ttl' as const, ttl: room?.ttl, roomExpiresAt: room?.roomExpiresAt };
+    if (isRoomExplodedV2(probe, Date.now())) throw new Error('ttl_room_exploded');
+  }
   const title = room?.title ? String(room.title) : undefined;
   const ttl = room?.ttl || undefined;
   const participantIds: string[] = Array.isArray(room?.participantIds) ? room.participantIds.map((x: any) => String(x)) : [];
@@ -98,23 +103,14 @@ export async function ensureRoomEntryReadyV2(input: {
     }
   }
 
-  // Ensure membership doc exists
-  await setDoc(
-    getRoomMemberDocRef(firestore, roomId, uid),
-    {
-      uid,
-      role: uid === String(room?.createdBy || '') ? 'admin' : 'member',
-      joinedAt: Date.now(),
-      lastReadAt: Date.now(),
-      unreadCount: 0,
-      muted: false,
-      updatedAt: Date.now(),
-      serverJoinedAt: serverTimestamp(),
-    } as any,
-    { merge: true }
-  );
-
-  // Ensure participantIds contains uid for non-dm rooms
+  /**
+   * IMPORTANT (Firestore rules):
+   * roomMembers/{roomId}/members/{uid} create is typically allowed only if the user is already
+   * listed in rooms/{roomId}.participantIds (or has joinedRooms doc, etc).
+   *
+   * For "new join" flows, write rooms.participantIds first, then create roomMembers/joinedRooms.
+   */
+  // Ensure participantIds contains uid for non-dm rooms (commit first)
   if (type !== 'dm') {
     if (!participantIds.includes(uid)) {
       try {
@@ -127,6 +123,23 @@ export async function ensureRoomEntryReadyV2(input: {
       throw new Error('dm_membership_mismatch');
     }
   }
+
+  // Ensure membership doc exists (after rooms update for non-dm)
+  const now = Date.now();
+  await setDoc(
+    getRoomMemberDocRef(firestore, roomId, uid),
+    {
+      uid,
+      role: uid === String(room?.createdBy || '') ? 'admin' : 'member',
+      joinedAt: now,
+      lastReadAt: now,
+      unreadCount: 0,
+      muted: false,
+      updatedAt: now,
+      serverJoinedAt: serverTimestamp(),
+    } as any,
+    { merge: true }
+  );
 
   // Ensure joinedRooms summary
   if (type === 'dm') {

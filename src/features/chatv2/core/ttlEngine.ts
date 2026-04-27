@@ -69,6 +69,15 @@ export function getTtlStatusV2(room: Pick<ChatRoomV2, 'type' | 'ttl'>, nowMs: nu
   return isRoomExplodedV2(room, nowMs) ? 'expired' : 'active';
 }
 
+/** TTL 방이 폭파 시각을 지났는지 — joinedRooms 요약(ttl만)으로도 판별 */
+export function isJoinedTtlRowExplodedV2(
+  row: { type?: string; ttl?: ChatRoomV2['ttl'] },
+  nowMs: number
+): boolean {
+  if (String(row?.type || '').toLowerCase() !== 'ttl') return false;
+  return isRoomExplodedV2({ type: 'ttl', ttl: row.ttl } as Pick<ChatRoomV2, 'type' | 'ttl'>, nowMs);
+}
+
 /**
  * Deterministic TTL filter (UI-side):
  * - for TTL room: drop expired messages

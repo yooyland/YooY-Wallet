@@ -1,0 +1,9 @@
+# Apache: yooyland.com/web/ 하위에서 Expo 정적 라우트 폴백
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /web/
+  RewriteRule ^index\.html$ - [L]
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . index.html [L]
+</IfModule>

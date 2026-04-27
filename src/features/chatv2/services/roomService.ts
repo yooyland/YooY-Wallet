@@ -1,16 +1,30 @@
-import { collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, where, writeBatch } from 'firebase/firestore';
-import type { Firestore } from 'firebase/firestore';
+import { arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, where, writeBatch } from 'firebase/firestore';
+import type { CollectionReference, Firestore } from 'firebase/firestore';
 import type { FirebaseStorage } from 'firebase/storage';
 import { getDownloadURL, ref as storageRef, uploadBytes, uploadString } from 'firebase/storage';
 import { v4 as uuidv4 } from 'uuid';
 import type { ChatRoomV2, ChatRoomTypeV2, RoomPermissionsV2, RoomSettingsDocV2 } from '../core/roomSchema';
 import { getDmPairKeyV2 } from '../core/roomSchema';
 import { chatV2Paths } from '../core/firestorePaths';
-import { getRoomDocRef, getRoomMemberDocRef, getRoomMessagesItemsColRef, getUserJoinedRoomDocRef } from '../firebase/roomRefs';
+import {
+  getRoomDocRef,
+  getRoomMemberDocRef,
+  getRoomMembersColRef,
+  getRoomMessagesItemsColRef,
+  getUserJoinedRoomDocRef,
+  getUserRoomPreferenceDocRef,
+} from '../firebase/roomRefs';
+import { isRoomExplodedV2 } from '../core/ttlEngine';
 import { assertValidRoomId } from '../utils/roomId';
 import { clearUnreadOnEnterV2 } from '../core/unreadEngine';
 import { logYyRoom } from '../core/roomLog';
-import { buildInviteQrPayloadV2, generateInviteCodeV2, generateInviteTokenV2, logInviteGenerateResult } from './roomInviteService';
+import {
+  buildInviteQrPayloadV2,
+  generateInviteCodeV2,
+  generateInviteTokenV2,
+  logInviteGenerateResult,
+  sanitizeOwnerJoinCodeV2,
+} from './roomInviteService';
 import { resolveChatDisplayNameFromUserDoc } from '../core/chatDisplayName';
 
 export type CreateRoomInputV2 = {
@@ -23,6 +37,8 @@ export type CreateRoomInputV2 = {
   photoURL?: string | null;
   maxParticipants?: number;
   ttl?: ChatRoomV2['ttl'];
+  /** group/ttl/notice 등: 참여 코드 필수(비밀) 모드 — 켜면 초대 QR/코드 생성 */
+  isSecret?: boolean;
 };
 
 /** 쉼표/공백 기준 태그 정규화, 최대 10개 */
@@ -200,12 +216,12 @@ export async function createRoomV2(firestore: Firestore, input: CreateRoomInputV
   const tags = Array.isArray(input.tags) ? input.tags.slice(0, 10) : [];
   const maxP = Math.max(2, Math.min(500, Number(input.maxParticipants || 100)));
   const td = typeDefaults(input.type);
-  const inviteCode = input.type !== 'dm' ? generateInviteCodeV2() : undefined;
-  const inviteToken = input.type !== 'dm' ? generateInviteTokenV2() : undefined;
+  const secretRoom = input.type === 'secret' || td.isSecret === true || input.isSecret === true;
+  const wantsInvite = input.type !== 'dm' && secretRoom;
+  const inviteCode = wantsInvite ? generateInviteCodeV2() : undefined;
+  const inviteToken = wantsInvite ? generateInviteTokenV2() : undefined;
   const inviteQrValue =
-    input.type !== 'dm' && inviteCode && inviteToken
-      ? buildInviteQrPayloadV2({ roomId, inviteToken, inviteCode })
-      : undefined;
+    wantsInvite && inviteCode && inviteToken ? buildInviteQrPayloadV2({ roomId, inviteToken, inviteCode }) : undefined;
 
   const photoURL = input.photoURL ? String(input.photoURL) : undefined;
   const ttlBlock =
@@ -241,7 +257,7 @@ export async function createRoomV2(firestore: Firestore, input: CreateRoomInputV
     maxParticipants: input.type === 'dm' ? 2 : maxP,
     roomStatus: 'active',
     searchVisible: td.searchVisible !== false,
-    isSecret: td.isSecret,
+    isSecret: td.isSecret === true || input.isSecret === true,
     settings: Object.keys(td.settings || {}).length ? td.settings : input.type === 'notice' ? { noticeOnlyAdminWrite: true } : undefined,
     permissions: td.permissions,
     inviteCode,
@@ -737,6 +753,67 @@ export async function ensureEnterParticipantV2(input: { firestore: Firestore; ro
 }
 
 /** 방장/관리자 부재 방 차단. 복구 불가하면 roomStatus=closed 처리 후 입장 금지 */
+/**
+ * TTL 폭파 시각 경과 후: 메시지·멤버·참가자 joinedRooms·방 문서 삭제 (연장 없이 0이 되면 기록 소멸).
+ * 호출자는 아직 rooms.participantIds / roomMembers에 남아 있어야 규칙상 삭제 가능.
+ */
+export async function purgeExplodedTtlRoomV2(input: { firestore: Firestore; roomId: string; actorUid: string }): Promise<{ ok: boolean; reason?: string }> {
+  const { firestore, roomId, actorUid } = input;
+  assertValidRoomId(roomId, 'purgeExplodedTtlRoomV2');
+  const roomSnap = await getDoc(getRoomDocRef(firestore, roomId));
+  if (!roomSnap.exists()) return { ok: false, reason: 'room_not_found' };
+  const r = roomSnap.data() as any;
+  if (String(r?.type) !== 'ttl') return { ok: false, reason: 'not_ttl' };
+  const probe = { type: 'ttl' as const, ttl: r?.ttl, roomExpiresAt: r?.roomExpiresAt };
+  if (!isRoomExplodedV2(probe, Date.now())) return { ok: false, reason: 'not_exploded' };
+
+  const participantIds: string[] = Array.isArray(r?.participantIds) ? r.participantIds.map((x: any) => String(x)).filter(Boolean) : [];
+
+  const deleteChunks = async (coll: CollectionReference) => {
+    const chunk = 400;
+    for (;;) {
+      const qy = query(coll, limit(chunk));
+      const snap = await getDocs(qy);
+      if (snap.empty) break;
+      const batch = writeBatch(firestore);
+      snap.docs.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+      if (snap.size < chunk) break;
+    }
+  };
+
+  try {
+    await deleteChunks(getRoomMessagesItemsColRef(firestore, roomId));
+  } catch (e: any) {
+    logYyRoom('ttl.purge.messages.fail', { roomId, error: String(e?.message || e) });
+  }
+  try {
+    await deleteChunks(getRoomMembersColRef(firestore, roomId));
+  } catch (e: any) {
+    logYyRoom('ttl.purge.members.fail', { roomId, error: String(e?.message || e) });
+  }
+
+  for (const uid of participantIds) {
+    try {
+      await deleteDoc(getUserJoinedRoomDocRef(firestore, uid, roomId));
+    } catch {}
+  }
+
+  try {
+    await deleteDoc(getUserRoomPreferenceDocRef(firestore, actorUid, roomId));
+  } catch {}
+
+  try {
+    await deleteDoc(getRoomDocRef(firestore, roomId));
+  } catch (e: any) {
+    logYyRoom('ttl.purge.roomDoc.fail', { roomId, error: String(e?.message || e) });
+    return { ok: false, reason: 'room_delete_failed' };
+  }
+
+  logYyRoom('ttl.purge.ok', { roomId, actorUid, participantCount: participantIds.length });
+  return { ok: true };
+}
+
 export async function ensureRoomHasAdminOrCloseV2(input: { firestore: Firestore; roomId: string }): Promise<void> {
   const { firestore, roomId } = input;
   const roomSnap = await getDoc(getRoomDocRef(firestore, roomId));
@@ -773,6 +850,18 @@ export async function ensureRoomHasAdminOrCloseV2(input: { firestore: Firestore;
 }
 
 export async function enterRoomV2(input: { firestore: Firestore; roomId: string; uid: string; lastReadMessageId?: string }): Promise<void> {
+  const pre = await getDoc(getRoomDocRef(input.firestore, input.roomId));
+  if (pre.exists()) {
+    const pr = pre.data() as any;
+    if (String(pr?.type) === 'ttl') {
+      const probe = { type: 'ttl' as const, ttl: pr?.ttl, roomExpiresAt: pr?.roomExpiresAt };
+      if (isRoomExplodedV2(probe, Date.now())) {
+        await purgeExplodedTtlRoomV2({ firestore: input.firestore, roomId: input.roomId, actorUid: input.uid }).catch(() => {});
+        throw new Error('ttl_room_exploded');
+      }
+    }
+  }
+
   try {
     await healDmRoomStructureV2({ firestore: input.firestore, roomId: input.roomId, uid: input.uid });
   } catch {}
@@ -894,12 +983,124 @@ export async function setRoomMemberAdminV2(input: { firestore: Firestore; roomId
   await batch.commit();
 }
 
-export async function regenerateRoomInviteV2(input: { firestore: Firestore; roomId: string; uid: string }): Promise<{ inviteCode: string; inviteToken: string; inviteQrValue: string }> {
+/**
+ * 방장/관리자 또는 멤버초대 권한이 있는 멤버가 UID로 멤버 추가(링크·참여코드 없이).
+ * Firestore 규칙: rooms.participantIds 갱신 + 동일 배치에서 roomMembers·joinedRooms 초기행.
+ */
+export async function inviteUserToRoomByUidV2(input: { firestore: Firestore; roomId: string; actorUid: string; targetUid: string }): Promise<void> {
+  const { firestore, roomId, actorUid, targetUid } = input;
+  const tid = String(targetUid || '').trim();
+  const aid = String(actorUid || '').trim();
+  if (!tid || !aid) throw new Error('invalid_uid');
+  if (tid === aid) throw new Error('cannot_invite_self');
+  const roomSnap = await getDoc(getRoomDocRef(firestore, roomId));
+  if (!roomSnap.exists()) throw new Error('room_not_found');
+  const r = roomSnap.data() as any;
+  if (String(r?.type) === 'dm') throw new Error('dm_no_invite');
+  if (String(r?.type) === 'ttl') {
+    const probe = { type: 'ttl' as const, ttl: r?.ttl, roomExpiresAt: r?.roomExpiresAt };
+    if (isRoomExplodedV2(probe, Date.now())) throw new Error('ttl_room_exploded');
+  }
+  const participantIds: string[] = Array.isArray(r?.participantIds) ? r.participantIds.map((x: any) => String(x)) : [];
+  if (participantIds.includes(tid)) throw new Error('already_member');
+  const maxP = Math.max(2, Math.min(500, Number(r?.maxParticipants || 100)));
+  if (participantIds.length >= maxP) throw new Error('room_full');
+  const admins: string[] = Array.isArray(r?.adminIds) ? r.adminIds.map((x: any) => String(x)) : [];
+  const createdBy = String(r?.createdBy || '').trim();
+  const memberCanInvite = r?.permissions?.memberCanInvite === true;
+  const allowed =
+    (createdBy && createdBy === aid) || admins.includes(aid) || (memberCanInvite && participantIds.includes(aid));
+  if (!allowed) throw new Error('not_allowed');
+
+  const type = String(r?.type || 'group');
+  const title = r?.title ? String(r.title) : undefined;
+  const ttl = r?.ttl || undefined;
+  const now = Date.now();
+  const resolveName = async (u: string) => {
+    try {
+      const snap = await getDoc(doc(firestore, 'users', u));
+      if (!snap.exists()) return u;
+      return resolveChatDisplayNameFromUserDoc(u, snap.data() as Record<string, unknown>);
+    } catch {
+      return u;
+    }
+  };
+  const peerName = await resolveName(tid);
+
+  /**
+   * IMPORTANT (Firestore rules):
+   * In a single batch, rules cannot "see" the rooms/{roomId}.participantIds update yet,
+   * so creating roomMembers/joinedRooms for the invited user can fail with
+   * "Missing or insufficient permissions".
+   *
+   * Fix: commit rooms participantIds first, then commit member docs in a second batch.
+   */
+  await setDoc(
+    getRoomDocRef(firestore, roomId),
+    {
+      participantIds: arrayUnion(tid),
+      memberIds: arrayUnion(tid),
+      members: arrayUnion(tid),
+      updatedAt: now,
+      serverUpdatedAt: serverTimestamp(),
+    } as any,
+    { merge: true }
+  );
+
+  const batch = writeBatch(firestore);
+  batch.set(
+    getRoomMemberDocRef(firestore, roomId, tid),
+    {
+      uid: tid,
+      role: 'member',
+      joinedAt: now,
+      lastReadAt: now,
+      unreadCount: 0,
+      muted: false,
+      updatedAt: now,
+      serverJoinedAt: serverTimestamp(),
+    } as any,
+    { merge: true }
+  );
+  batch.set(
+    getUserJoinedRoomDocRef(firestore, tid, roomId),
+    {
+      roomId,
+      type,
+      title: type === 'dm' ? undefined : title,
+      peerDisplayName: type === 'dm' ? undefined : undefined,
+      ttl: type === 'ttl' ? ttl : undefined,
+      unreadCount: 0,
+      lastMessage: '',
+      lastMessageAt: now,
+      isFavorite: false,
+      muted: false,
+      updatedAt: now,
+    } as any,
+    { merge: true }
+  );
+  await batch.commit();
+  logYyRoom('room.invite.by_uid', { roomId, actorUid: aid, targetUid: tid, peerName });
+}
+
+export async function regenerateRoomInviteV2(input: {
+  firestore: Firestore;
+  roomId: string;
+  uid: string;
+  /** 방장이 지정하는 참여 코드(비밀). 비우면 자동 생성 */
+  inviteCodeOverride?: string | null;
+}): Promise<{ inviteCode: string; inviteToken: string; inviteQrValue: string }> {
   const { firestore, roomId, uid } = input;
   const roomSnap = await getDoc(getRoomDocRef(firestore, roomId));
   if (!roomSnap.exists()) throw new Error('room_not_found');
   const r = roomSnap.data() as any;
   if (String(r?.type) === 'dm') throw new Error('dm_no_invite');
+  const secretLike = r?.isSecret === true || String(r?.type) === 'secret';
+  if (!secretLike) throw new Error('invite_not_secret_mode');
+  if (String(r?.type) === 'ttl') {
+    const probe = { type: 'ttl' as const, ttl: r?.ttl, roomExpiresAt: r?.roomExpiresAt };
+    if (isRoomExplodedV2(probe, Date.now())) throw new Error('ttl_room_exploded');
+  }
   const admins: string[] = Array.isArray(r?.adminIds) ? r.adminIds.map((x: any) => String(x)) : [];
   const createdBy = String(r?.createdBy || '').trim();
   const participantIds: string[] = Array.isArray(r?.participantIds) ? r.participantIds.map((x: any) => String(x)) : [];
@@ -910,7 +1111,10 @@ export async function regenerateRoomInviteV2(input: { firestore: Firestore; room
     admins.includes(uid) ||
     (memberCanInvite && participantIds.includes(uid));
   if (!allowed) throw new Error('not_admin');
-  const inviteCode = generateInviteCodeV2();
+  const inviteCode =
+    input.inviteCodeOverride != null && String(input.inviteCodeOverride).trim()
+      ? sanitizeOwnerJoinCodeV2(String(input.inviteCodeOverride))
+      : generateInviteCodeV2();
   const inviteToken = generateInviteTokenV2();
   const inviteQrValue = buildInviteQrPayloadV2({ roomId, inviteToken, inviteCode });
   await setDoc(

@@ -49,6 +49,23 @@ export function buildOpenStreetMapEmbedPageUrl(lat: number, lng: number, spanDeg
   return `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(bbox)}&layer=mapnik&marker=${encodeURIComponent(`${lat},${lng}`)}`;
 }
 
+/** 정적 지도 PNG (OSM) — Web에서 WebView 폴백 대신 사용 */
+export function buildOpenStreetMapStaticMapImageUrlForPreview(
+  lat: number,
+  lng: number,
+  widthPx: number,
+  heightPx: number,
+  zoom = 16,
+): string {
+  const sw = Math.min(1024, Math.max(1, Math.floor(widthPx)));
+  const sh = Math.min(1024, Math.max(1, Math.floor(heightPx)));
+  const center = `${lat},${lng}`;
+  // https://staticmap.openstreetmap.de/ 사용 (키 불필요, 단 외부 서비스 의존)
+  return `https://staticmap.openstreetmap.de/staticmap.php?center=${encodeURIComponent(center)}&zoom=${encodeURIComponent(
+    String(zoom)
+  )}&size=${encodeURIComponent(`${sw}x${sh}`)}&markers=${encodeURIComponent(`${center},red-pushpin`)}`;
+}
+
 export type ReverseGeocodeFullV2 = {
   /** UI 우선 표시: 예) 강남구 테헤란로 323 */
   roadAddress: string;
@@ -218,6 +235,55 @@ async function tryGoogleReverseFull(latN: number, lngN: number, mapUrl: string):
   };
 }
 
+async function tryOsmReverseFull(latN: number, lngN: number, mapUrl: string): Promise<ReverseGeocodeFullV2 | null> {
+  try {
+    // Nominatim reverse (키 불필요). Web에서도 동작.
+    const u = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&namedetails=1&lat=${encodeURIComponent(
+      String(latN)
+    )}&lon=${encodeURIComponent(String(lngN))}&accept-language=ko,en`;
+    const r = await fetch(u, {
+      headers: {
+        Accept: 'application/json',
+        // 일부 환경에서 UA가 없으면 차단될 수 있어 간단히 명시
+        'User-Agent': 'yooyland-app',
+      } as any,
+    });
+    if (!r.ok) return null;
+    const j: any = await r.json().catch(() => ({}));
+    const dispRaw = String(j?.display_name || '').trim();
+    const addr = j?.address && typeof j.address === 'object' ? j.address : {};
+    const road = String(addr.road || addr.pedestrian || addr.path || '').trim();
+    const house = String(addr.house_number || '').trim();
+    const suburb = String(addr.suburb || addr.neighbourhood || '').trim();
+    const city = String(addr.city || addr.town || addr.village || '').trim();
+    const county = String(addr.county || '').trim(); // 한국: 구/군
+    const state = String(addr.state || '').trim(); // 시/도
+
+    const left =
+      [state, city, county, suburb]
+        .filter(Boolean)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const roadLine = [road, house].filter(Boolean).join(' ').trim();
+    let roadAddress = [left, roadLine].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    roadAddress = normalizeKoreanFormattedForDisplay(roadAddress);
+
+    const formatted = dispRaw ? normalizeKoreanFormattedForDisplay(dispRaw) : '';
+    const primary = roadAddress || formatted;
+    if (!primary) return null;
+    const shortAddress = shortFromRoadOrFormatted(primary);
+    return {
+      roadAddress: primary,
+      shortAddress,
+      formattedAddress: formatted || primary,
+      mapUrl,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function reverseGeocodeFullV2(lat: number, lng: number): Promise<ReverseGeocodeFullV2> {
   const mapUrl = buildMapUrl(lat, lng);
   const latN = Number(lat);
@@ -266,6 +332,13 @@ export async function reverseGeocodeFullV2(lat: number, lng: number): Promise<Re
     /* noop */
   }
 
+  let osmFull: ReverseGeocodeFullV2 | null = null;
+  try {
+    osmFull = await tryOsmReverseFull(latN, lngN, mapUrl);
+  } catch {
+    /* noop */
+  }
+
   // (1) Google — API 키가 있으면 도로명 정확도가 높아 먼저 채택 (완전한 도로명일 때)
   if (googleFull?.roadAddress && !isIncompleteRoadAddressKorea(googleFull.roadAddress)) {
     return googleFull;
@@ -274,9 +347,17 @@ export async function reverseGeocodeFullV2(lat: number, lng: number): Promise<Re
   if (expoBuilt && !isIncompleteRoadAddressKorea(expoBuilt.roadAddress)) {
     return expoBuilt;
   }
+  // (3) OSM — Web에서 Google 키가 없을 때도 도로명/표시명 제공 가능
+  if (osmFull?.roadAddress && !isIncompleteRoadAddressKorea(osmFull.roadAddress)) {
+    return osmFull;
+  }
   // (3) Google 결과가 있으면 expo 불완전보다 우선 (도로명이 약해도)
   if (googleFull?.roadAddress) {
     return googleFull;
+  }
+  // (4) OSM fallback
+  if (osmFull?.roadAddress) {
+    return osmFull;
   }
   // (4) expo만 있을 때
   if (expoBuilt?.roadAddress) {

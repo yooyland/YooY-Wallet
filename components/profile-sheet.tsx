@@ -1,13 +1,14 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
-import { firebaseAuth, firestore, firebaseStorage } from '@/lib/firebase';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { firebaseApp, firebaseAuth, firestore, firebaseStorage } from '@/lib/firebase';
+import { doc, setDoc, serverTimestamp, deleteDoc, collection, getDocs, getDoc } from 'firebase/firestore';
 import { ref as storageRef, uploadString, getDownloadURL } from 'firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { t } from '@/i18n';
 import * as ImagePicker from 'expo-image-picker';
-import { onAuthStateChanged } from 'firebase/auth';
+import { deleteUser, onAuthStateChanged, EmailAuthProvider, reauthenticateWithCredential, updatePassword } from 'firebase/auth';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useChatProfileStore } from '@/src/features/chat/store/chat-profile.store';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Easing, Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -33,6 +34,12 @@ export default function ProfileSheet({ visible, onClose, onSaved }: Props) {
   const [firstName, setFirstName] = useState<string>('');
   const [lastName, setLastName] = useState<string>('');
   const [username, setUsername] = useState<string>('');
+  const [deleting, setDeleting] = useState(false);
+  const [pwModalOpen, setPwModalOpen] = useState(false);
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwCurrent, setPwCurrent] = useState('');
+  const [pwNext, setPwNext] = useState('');
+  const [pwNext2, setPwNext2] = useState('');
 
   useEffect(() => {
     Animated.timing(slide, {
@@ -64,20 +71,40 @@ export default function ProfileSheet({ visible, onClose, onSaved }: Props) {
   useEffect(() => {
     if (!visible) return;
     (async () => {
-      const saved = await AsyncStorage.getItem(basePhotoKey(currentUser?.uid));
-      if (saved) setPhotoUri(saved);
-      const savedInfo = await AsyncStorage.getItem(baseInfoKey(currentUser?.uid));
+      const uid = currentUser?.uid || firebaseAuth.currentUser?.uid || undefined;
+      // 1) Firestore 프로필(계정 단일 소스) 우선
+      try {
+        if (uid) {
+          const snap = await getDoc(doc(firestore, 'users', uid));
+          if (snap.exists()) {
+            const d: any = snap.data() || {};
+            const fsPhoto = String(d?.photoURL || d?.avatarUrl || d?.avatar || '').trim();
+            const fsFirst = String(d?.firstName || '').trim();
+            const fsLast = String(d?.lastName || '').trim();
+            const fsUser = String(d?.username || '').trim();
+            if (fsPhoto) setPhotoUri(fsPhoto);
+            if (fsFirst) setFirstName(fsFirst);
+            if (fsLast) setLastName(fsLast);
+            if (fsUser) setUsername(fsUser);
+          }
+        }
+      } catch {}
+
+      // 2) 로컬 캐시(하위호환)
+      const saved = await AsyncStorage.getItem(basePhotoKey(uid));
+      if (saved && !photoUri) setPhotoUri(saved);
+      const savedInfo = await AsyncStorage.getItem(baseInfoKey(uid));
       if (savedInfo) {
         try {
           const parsed = JSON.parse(savedInfo);
-          if (parsed.firstName) setFirstName(parsed.firstName);
-          if (parsed.lastName) setLastName(parsed.lastName);
-          if (parsed.username) setUsername(parsed.username);
+          if (parsed.firstName && !firstName) setFirstName(parsed.firstName);
+          if (parsed.lastName && !lastName) setLastName(parsed.lastName);
+          if (parsed.username && !username) setUsername(parsed.username);
         } catch {}
       }
       const currentEmail = currentUser?.email || firebaseAuth.currentUser?.email || '';
       setEmail(currentEmail);
-      if (!savedInfo) deriveFromEmail(currentEmail);
+      if (!savedInfo && !firstName && !lastName && !username) deriveFromEmail(currentEmail);
       try {
         const prof = useChatProfileStore.getState().currentProfile;
         setUseHash(Boolean((prof as any)?.useHashInChat));
@@ -103,20 +130,7 @@ export default function ProfileSheet({ visible, onClose, onSaved }: Props) {
 
   const pickImage = async () => {
     try {
-      // 갤러리 권한 요청 및 즉시 갤러리 열기 (웹/네이티브 공통 제스처 컨텍스트에서 실행)
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert(
-          '권한 필요',
-          '프로필 사진을 변경하려면 갤러리 접근 권한이 필요합니다.',
-          [
-            { text: '취소', style: 'cancel' },
-            { text: '설정으로 이동', onPress: () => Linking.openSettings() }
-          ]
-        );
-        return;
-      }
-
+      // Android Photo Picker / 시스템 선택 UI — READ_MEDIA_* 광범위 권한 없이 선택
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
@@ -156,11 +170,11 @@ export default function ProfileSheet({ visible, onClose, onSaved }: Props) {
 
   const handleDone = async () => {
     try {
+      const uid = currentUser?.uid || firebaseAuth.currentUser?.uid;
       if (photoUri) {
-        await AsyncStorage.setItem(basePhotoKey(currentUser?.uid), photoUri);
+        await AsyncStorage.setItem(basePhotoKey(uid || undefined), photoUri);
         // 업로드 및 Firestore 반영: 친구목록에서도 프사가 보이도록
         try {
-          const uid = currentUser?.uid || firebaseAuth.currentUser?.uid;
           if (uid) {
             let publicUrl = '';
             if (/^https?:\/\//i.test(photoUri)) {
@@ -186,7 +200,24 @@ export default function ProfileSheet({ visible, onClose, onSaved }: Props) {
         } catch {}
       }
       const info = { firstName, lastName, username };
-      await AsyncStorage.setItem(baseInfoKey(currentUser?.uid), JSON.stringify(info));
+      await AsyncStorage.setItem(baseInfoKey(uid || undefined), JSON.stringify(info));
+      // 계정 단일 소스: Firestore users/{uid}에도 반영 (다른 디바이스/웹에서 동일)
+      try {
+        if (uid) {
+          await setDoc(
+            doc(firestore, 'users', uid),
+            {
+              firstName: String(firstName || '').trim(),
+              lastName: String(lastName || '').trim(),
+              // username은 별도 화면(usernames 트랜잭션)에서도 설정되지만, 여기서도 안전하게 저장
+              username: String(username || '').trim(),
+              displayName: String(`${String(firstName || '').trim()} ${String(lastName || '').trim()}`).trim() || String(username || '').trim(),
+              updatedAt: serverTimestamp(),
+            } as any,
+            { merge: true }
+          );
+        }
+      } catch {}
       try {
         const nick = String(chatNick || '').trim();
         if (nick || useHash !== undefined) {
@@ -198,6 +229,125 @@ export default function ProfileSheet({ visible, onClose, onSaved }: Props) {
     } catch (error) {
       console.error('Error saving profile:', error);
       Alert.alert('오류', '프로필 저장 중 오류가 발생했습니다.');
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (deleting) return;
+    Alert.alert(
+      language === 'en' ? 'Delete account?' : '계정 삭제',
+      language === 'en'
+        ? 'Are you sure you want to delete your account? All data will be permanently deleted.'
+        : '계정을 삭제하시겠습니까? 모든 데이터가 영구적으로 삭제됩니다.',
+      [
+        { text: language === 'en' ? 'Cancel' : '취소', style: 'cancel' },
+        {
+          text: language === 'en' ? 'Delete' : '삭제',
+          style: 'destructive',
+          onPress: async () => {
+            setDeleting(true);
+            try {
+              // 1) Server-side deletion (preferred): deletes Auth + Firestore without recent-login issues
+              try {
+                const region = process.env.EXPO_PUBLIC_FIREBASE_FUNCTIONS_REGION as string | undefined;
+                const fns = region ? getFunctions(firebaseApp, region) : getFunctions(firebaseApp);
+                const fn = httpsCallable(fns, 'deleteMyAccountV1');
+                await fn({});
+              } catch (e) {
+                // 2) Client-side fallback (best-effort)
+                try {
+                  const uid = currentUser?.uid || firebaseAuth.currentUser?.uid;
+                  if (uid) {
+                    // delete known user document + subcollections (best-effort)
+                    try {
+                      const subcols = ['friends', 'joinedRooms', 'chatRoomPrefs', 'notifications'];
+                      for (const c of subcols) {
+                        try {
+                          const snap = await getDocs(collection(firestore, 'users', uid, c));
+                          for (const d of snap.docs) {
+                            try { await deleteDoc(d.ref); } catch {}
+                          }
+                        } catch {}
+                      }
+                      await deleteDoc(doc(firestore, 'users', uid)).catch(() => {});
+                    } catch {}
+                  }
+                } catch {}
+                try {
+                  const u = firebaseAuth.currentUser;
+                  if (u) await deleteUser(u);
+                } catch {}
+              }
+
+              // 3) Local sign-out + reset (auto-login OFF is enforced in signOut())
+              try { await signOut(); } catch {}
+              try { await AsyncStorage.removeItem('yoo-kakao-rooms-store'); } catch {}
+              try { await AsyncStorage.removeItem('yoo-chat-profile-store'); } catch {}
+              try { await AsyncStorage.removeItem('yoo-chat-settings-store'); } catch {}
+              try { require('expo-router').router.replace('/(auth)/login'); } catch {}
+              onClose();
+            } finally {
+              setDeleting(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const handleChangePassword = async () => {
+    if (pwBusy) return;
+    const user = firebaseAuth.currentUser;
+    if (!user) {
+      Alert.alert('오류', '로그인이 필요합니다.');
+      return;
+    }
+    const providerIds = ((user as any)?.providerData || []).map((p: any) => String(p?.providerId || ''));
+    const isPasswordProvider = providerIds.includes('password') || !!user.email;
+    if (!isPasswordProvider) {
+      Alert.alert('안내', '이 계정은 비밀번호 방식이 아닙니다. (Google/Apple 등) 비밀번호 변경을 사용할 수 없습니다.');
+      return;
+    }
+    const cur = String(pwCurrent || '');
+    const n1 = String(pwNext || '');
+    const n2 = String(pwNext2 || '');
+    if (!cur.trim() || !n1.trim() || !n2.trim()) {
+      Alert.alert('오류', '기존 비밀번호/새 비밀번호/확인 비밀번호를 모두 입력해 주세요.');
+      return;
+    }
+    if (n1 !== n2) {
+      Alert.alert('오류', '새 비밀번호와 확인 비밀번호가 일치하지 않습니다.');
+      return;
+    }
+    if (n1.length < 6) {
+      Alert.alert('오류', '새 비밀번호는 최소 6자 이상이어야 합니다.');
+      return;
+    }
+    if (!user.email) {
+      Alert.alert('오류', '이메일 계정에서만 비밀번호 변경이 가능합니다.');
+      return;
+    }
+    setPwBusy(true);
+    try {
+      const cred = EmailAuthProvider.credential(user.email, cur);
+      await reauthenticateWithCredential(user, cred);
+      await updatePassword(user, n1);
+      Alert.alert('완료', '비밀번호가 변경되었습니다.');
+      setPwModalOpen(false);
+      setPwCurrent('');
+      setPwNext('');
+      setPwNext2('');
+    } catch (e: any) {
+      const msg = String(e?.message || e || '');
+      if (msg.toLowerCase().includes('wrong-password') || msg.toLowerCase().includes('invalid-credential')) {
+        Alert.alert('오류', '기존 비밀번호가 올바르지 않습니다.');
+      } else if (msg.toLowerCase().includes('requires-recent-login')) {
+        Alert.alert('오류', '보안을 위해 다시 로그인 후 시도해 주세요.');
+      } else {
+        Alert.alert('오류', msg || '비밀번호 변경에 실패했습니다.');
+      }
+    } finally {
+      setPwBusy(false);
     }
   };
 
@@ -236,6 +386,13 @@ export default function ProfileSheet({ visible, onClose, onSaved }: Props) {
               <View style={{ alignItems: 'flex-end' }}>
                 <TouchableOpacity
                   accessibilityRole="button"
+                  onPress={() => setPwModalOpen(true)}
+                  style={[styles.logoutBtn, { marginBottom: 6, backgroundColor: '#1A1A1A', borderColor: GOLD }]}
+                >
+                  <Text style={styles.logoutBtnText}>비밀번호 변경</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  accessibilityRole="button"
                   onPress={async () => {
                     try { await signOut(); } catch {}
                     try { await AsyncStorage.removeItem('yoo-kakao-rooms-store'); } catch {}
@@ -265,6 +422,52 @@ export default function ProfileSheet({ visible, onClose, onSaved }: Props) {
               </View>
             </View>
           </View>
+
+          <Modal transparent visible={pwModalOpen} animationType="fade" onRequestClose={() => setPwModalOpen(false)}>
+            <Pressable style={styles.pwBackdrop} onPress={() => setPwModalOpen(false)} />
+            <View style={styles.pwModalCard}>
+              <Text style={styles.pwTitle}>비밀번호 변경</Text>
+              <Text style={styles.pwDesc}>기존 비밀번호로 재인증 후 새 비밀번호로 변경합니다.</Text>
+              <Text style={styles.label}>기존 비밀번호</Text>
+              <TextInput
+                style={styles.input}
+                value={pwCurrent}
+                onChangeText={setPwCurrent}
+                placeholder="Current password"
+                placeholderTextColor="#9BA1A6"
+                secureTextEntry
+                autoCapitalize="none"
+              />
+              <Text style={[styles.label, { marginTop: 10 }]}>새 비밀번호</Text>
+              <TextInput
+                style={styles.input}
+                value={pwNext}
+                onChangeText={setPwNext}
+                placeholder="New password"
+                placeholderTextColor="#9BA1A6"
+                secureTextEntry
+                autoCapitalize="none"
+              />
+              <Text style={[styles.label, { marginTop: 10 }]}>새 비밀번호 확인</Text>
+              <TextInput
+                style={styles.input}
+                value={pwNext2}
+                onChangeText={setPwNext2}
+                placeholder="Confirm new password"
+                placeholderTextColor="#9BA1A6"
+                secureTextEntry
+                autoCapitalize="none"
+              />
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 14, justifyContent: 'flex-end' }}>
+                <TouchableOpacity onPress={() => setPwModalOpen(false)} style={[styles.pwBtn, { backgroundColor: '#111' }]} disabled={pwBusy}>
+                  <Text style={styles.pwBtnText}>취소</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleChangePassword} style={[styles.pwBtn, { backgroundColor: GOLD }]} disabled={pwBusy}>
+                  <Text style={[styles.pwBtnText, { color: '#000' }]}>{pwBusy ? '변경 중...' : '변경'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>{t('basicInfo', language)}</Text>
@@ -326,7 +529,20 @@ export default function ProfileSheet({ visible, onClose, onSaved }: Props) {
             </View>
           </View>
 
-          <Pressable onPress={handleDone} style={styles.closeBtn}><Text style={styles.closeText}>{t('apply', language) || t('save', language)}</Text></Pressable>
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={handleDeleteAccount}
+            disabled={deleting}
+            style={[styles.deleteBtn, deleting && { opacity: 0.6 }]}
+          >
+            <Text style={styles.deleteBtnText}>
+              {deleting ? (language === 'en' ? 'Deleting...' : '삭제 중...') : (language === 'en' ? 'Delete Account' : '계정 삭제')}
+            </Text>
+          </TouchableOpacity>
+
+          <Pressable onPress={handleDone} style={styles.closeBtn}>
+            <Text style={styles.closeText}>{t('apply', language) || t('save', language)}</Text>
+          </Pressable>
         </ScrollView>
       </Animated.View>
     </Modal>
@@ -387,9 +603,27 @@ const styles = StyleSheet.create({
   photoBtnText: { color: '#000', fontWeight: '700' },
   closeBtn: { marginTop: 8, backgroundColor: GOLD, paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
   closeText: { color: '#000', fontWeight: '700' },
+  deleteBtn: { marginTop: 8, borderWidth: 1, borderColor: '#E35D6A', backgroundColor: 'rgba(227,93,106,0.12)', paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
+  deleteBtnText: { color: '#E35D6A', fontWeight: '800' },
   logoutBtn: { borderWidth: 1, borderColor: GOLD, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: 'rgba(212,175,55,0.12)' },
   logoutBtnText: { color: GOLD, fontWeight: '700' },
   accountActions: { flexDirection: 'row', alignItems: 'flex-end' },
+  pwBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' },
+  pwModalCard: {
+    position: 'absolute',
+    left: 18,
+    right: 18,
+    top: '20%',
+    backgroundColor: '#0A0A0A',
+    borderWidth: 1,
+    borderColor: GOLD,
+    borderRadius: 14,
+    padding: 14,
+  },
+  pwTitle: { color: '#fff', fontWeight: '900', fontSize: 16, marginBottom: 6 },
+  pwDesc: { color: '#9BA1A6', fontSize: 12, marginBottom: 12 },
+  pwBtn: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: '#2A2A2A' },
+  pwBtnText: { color: '#fff', fontWeight: '800' },
 });
 
 

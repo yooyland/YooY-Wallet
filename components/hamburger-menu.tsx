@@ -28,7 +28,9 @@ import {
     Animated,
     Dimensions,
     Image,
+    Linking,
     Modal,
+    Platform,
     Pressable,
     ScrollView,
     StyleSheet,
@@ -220,6 +222,16 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
           { title: tr('주소 연결', 'Link Address', 'アドレス連携', '绑定地址'), icon: '🔗', onPress: () => { onClose(); try { router.push('/settings/link-address' as any); } catch {} } },
         ]},
         { title: tr('고객지원', 'Support', 'サポート', '支持'), items: [
+          ...(Platform.OS === 'web'
+            ? [{
+                title: tr('메인 홈페이지', 'Main homepage', 'メインホーム', '主站首页'),
+                icon: '🏠',
+                onPress: () => {
+                  onClose();
+                  try { void Linking.openURL('https://yooyland.com/'); } catch {}
+                },
+              } as MenuItem]
+            : []),
           { title: tr('버그 신고', 'Bug report', 'バグ報告', '错误反馈'), icon: '🐞', onPress: () => { onClose(); try { router.push('/support/bug' as any); } catch {} } },
           { title: tr('문의하기', 'Inquiry', 'お問い合わせ', '咨询'), icon: '✉️', onPress: () => { onClose(); try { router.push('/support/inquiry' as any); } catch {} } },
           { title: tr('신고하기', 'Report', '通報', '举报'), icon: '🚨', onPress: () => { onClose(); try { router.push('/support/report' as any); } catch {} } },
@@ -237,7 +249,8 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
                         const toRemove = keys.filter(k => 
                           k.startsWith('monitor.') ||
                           k.startsWith('user_balances_') ||
-                          k.startsWith('yoo-') ||
+                          // NOTE: 거래/리워드 기록은 자산의 일부이므로 캐시 삭제에서 제외
+                          (k.startsWith('yoo-') && k !== 'yoo-transaction-store') ||
                           (uid ? k.startsWith(`u:${uid}:`) : false)
                         );
                         if (toRemove.length > 0) {
@@ -489,6 +502,18 @@ export default function HamburgerMenu({ visible, onClose, avatarUri }: Hamburger
                    )}
                  </View>
               </View>
+              {Platform.OS === 'web' ? (
+                <TouchableOpacity
+                  onPress={() => {
+                    try { void Linking.openURL('https://yooyland.com/'); } catch {}
+                  }}
+                  style={styles.headerLogoBtn}
+                  accessibilityRole="link"
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Image source={require('@/assets/images/YooY_simbol_1024.png')} style={styles.headerLogo} resizeMode="contain" />
+                </TouchableOpacity>
+              ) : null}
               <TouchableOpacity onPress={onClose} style={styles.closeButton}>
                 <ThemedText style={styles.closeIcon}>✕</ThemedText>
               </TouchableOpacity>
@@ -621,6 +646,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
+  },
+  headerLogoBtn: {
+    marginRight: 10,
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(212,175,55,0.35)',
+    backgroundColor: 'rgba(0,0,0,0.10)',
+    alignSelf: 'center',
+  },
+  headerLogo: {
+    width: 92,
+    height: 34,
   },
   avatarImage: {
     width: 50,

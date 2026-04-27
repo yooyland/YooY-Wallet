@@ -9,8 +9,8 @@ import { getCoinDisplayName, getCoinsByMarket } from '@/lib/managedCoins';
 import { getCoinPriceByCurrency, getCoinSymbolFromMarket, getMarketDefaultCurrency, updateRealTimePrices } from '@/lib/priceManager';
 import { fetchJsonWithProxy, getAllUpbitMarkets } from '@/lib/upbit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ORDER_ENABLED as isOrderEnabled } from '@/lib/featureFlags';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { IOS_APP_STORE_SHELF, TRADING_UI_ENABLED } from '@/lib/featureFlags';
+import { Redirect, Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -29,6 +29,9 @@ import {
 const { width } = Dimensions.get('window');
 
 export default function MarketDetailScreen() {
+  if (IOS_APP_STORE_SHELF) {
+    return <Redirect href="/(tabs)/dashboard" />;
+  }
   const { id, tab } = useLocalSearchParams();
   const { currentUser, accessToken } = useAuth();
   const router = useRouter();
@@ -39,13 +42,17 @@ export default function MarketDetailScreen() {
   // 상태 관리
   const [selectedTab, setSelectedTab] = useState(() => {
     const init = tab ? String(tab) : 'order';
-    return !isOrderEnabled && init === 'order' ? 'chart' : init;
+    if (!TRADING_UI_ENABLED && (init === 'order' || init === 'orderbook')) return 'chart';
+    return init;
   });
 
-  // 스토어 안전 모드: 주문 탭 비활성 시 강제 전환
-  if (!isOrderEnabled && selectedTab === 'order') {
-    setSelectedTab('chart');
-  }
+  // iOS 심사 대응: trading/order/orderbook 탭은 강제 차단 (라우팅으로 진입해도 chart로 보냄)
+  useEffect(() => {
+    if (TRADING_UI_ENABLED) return;
+    if (selectedTab === 'order' || selectedTab === 'orderbook') {
+      setSelectedTab('chart');
+    }
+  }, [selectedTab]);
   const [selectedOrderBookView, setSelectedOrderBookView] = useState<'full' | 'buy' | 'sell'>('full');
   const [coin, setCoin] = useState<any>(null);
   const [orderType, setOrderType] = useState<'buy' | 'sell'>('buy');
@@ -853,6 +860,7 @@ export default function MarketDetailScreen() {
 
   // 호가 가격 클릭 처리
   const handleOrderBookPriceClick = (price: number, type: 'buy' | 'sell') => {
+    if (!TRADING_UI_ENABLED) return;
     setSelectedTab('order');
     setOrderType(type);
     setPriceInputRaw(price.toString());
@@ -1285,7 +1293,9 @@ export default function MarketDetailScreen() {
 
           {/* 탭 메뉴 */}
           <View style={styles.tabs}>
-            {['order', 'orderbook', 'chart', 'news', 'info', 'ai-analysis'].filter(t => isOrderEnabled || t !== 'order').map((tabName) => (
+            {['order', 'orderbook', 'chart', 'news', 'info', 'ai-analysis']
+              .filter((t) => (TRADING_UI_ENABLED ? true : (t !== 'order' && t !== 'orderbook')))
+              .map((tabName) => (
               <TouchableOpacity
                 key={tabName}
                 style={[styles.tab, selectedTab === tabName && styles.activeTab]}
@@ -1309,7 +1319,7 @@ export default function MarketDetailScreen() {
           </View>
 
           {/* 주문 탭 - 새로운 구조 */}
-          {isOrderEnabled && selectedTab === 'order' && (
+          {TRADING_UI_ENABLED && selectedTab === 'order' && (
             <View style={styles.orderContainer}>
               {/* Buy | Sell */}
               <View style={styles.orderTypeContainer}>
@@ -1623,8 +1633,8 @@ export default function MarketDetailScreen() {
 
           {/* 주문내역 탭 제거: /market/[id]에서는 상단 탭에서 '주문'을 기본으로 사용 */}
 
-          {/* 호가 탭 - 바이낸스 스타일 */}
-          {selectedTab === 'orderbook' && (
+          {/* 호가 탭 - trading UI (iOS에서는 숨김) */}
+          {TRADING_UI_ENABLED && selectedTab === 'orderbook' && (
             <View style={styles.binanceOrderBookContainer}>
                 {/* 상단 텍스트 탭들 */}
                 <View style={styles.orderBookTabs}>

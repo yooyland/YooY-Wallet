@@ -30,6 +30,8 @@ export default function ChatFriendsV2() {
 
   const [favorites, setFavorites] = useState<Record<string, boolean>>({});
   const [peerCache, setPeerCache] = useState<Record<string, { name: string; avatarUrl: string }>>({});
+  /** true = Firestore users/{id} 존재(가입·앱 사용자), false = 없음, undefined = 아직 조회 전 */
+  const [friendHasUserDoc, setFriendHasUserDoc] = useState<Record<string, boolean | undefined>>({});
 
   const inviteStoreUrl = useMemo(() => {
     const androidId = String(process.env.EXPO_PUBLIC_ANDROID_PACKAGE_ID || 'com.yooyland.wallet');
@@ -146,6 +148,43 @@ export default function ChatFriendsV2() {
     };
   }, [friendsDocs, peerCache]);
 
+  useEffect(() => {
+    let alive = true;
+    const ids = friendsAll.map((f) => f.friendId).filter(Boolean);
+    if (ids.length === 0) {
+      setFriendHasUserDoc({});
+      return () => {
+        alive = false;
+      };
+    }
+    void (async () => {
+      const unique = Array.from(new Set(ids));
+      const next: Record<string, boolean | undefined> = {};
+      for (let i = 0; i < unique.length; i += 30) {
+        const chunk = unique.slice(i, i + 30);
+        const snaps = await Promise.allSettled(chunk.map((id) => getDoc(doc(firestore, 'users', id))));
+        if (!alive) return;
+        snaps.forEach((r, j) => {
+          const id = chunk[j];
+          next[id] = r.status === 'fulfilled' && r.value.exists();
+        });
+      }
+      if (!alive) return;
+      setFriendHasUserDoc((prev) => ({ ...prev, ...next }));
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [friendsAll]);
+
+  const showInviteForFriend = useCallback((f: FriendRow) => {
+    if (String(f.status || '').toLowerCase() === 'linked') return false;
+    const reg = friendHasUserDoc[f.friendId];
+    if (reg === true) return false;
+    if (reg === undefined) return false;
+    return true;
+  }, [friendHasUserDoc]);
+
   const friendsFav = useMemo(() => friendsAll.filter((f) => !!favorites[f.friendId]), [friendsAll, favorites]);
   const friendsNonFav = useMemo(() => friendsAll.filter((f) => !favorites[f.friendId]), [friendsAll, favorites]);
 
@@ -256,7 +295,7 @@ export default function ChatFriendsV2() {
           <TouchableOpacity style={styles.headerIcon} onPress={() => router.push('/chatv2/rooms')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Text style={styles.iconText}>💬</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.headerIcon} onPress={() => router.push('/chatv2/rooms')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <TouchableOpacity style={styles.headerIcon} onPress={() => router.push('/chatv2/settings' as any)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Text style={styles.iconText}>⚙️</Text>
           </TouchableOpacity>
         </View>
@@ -426,14 +465,16 @@ export default function ChatFriendsV2() {
                   >
                     <Text style={[styles.actionStar, isFav && styles.actionStarOn]}>{isFav ? '★' : '☆'}</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() => onInvite(f)}
-                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                    style={styles.actionChip}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.actionText}>초대</Text>
-                  </TouchableOpacity>
+                  {showInviteForFriend(f) ? (
+                    <TouchableOpacity
+                      onPress={() => onInvite(f)}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      style={styles.actionChip}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.actionText}>초대</Text>
+                    </TouchableOpacity>
+                  ) : null}
                   <TouchableOpacity
                     onPress={() => { void onChat(f.friendId); }}
                     hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}

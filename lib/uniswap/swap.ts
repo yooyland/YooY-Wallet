@@ -14,6 +14,7 @@ import {
     TOKEN_INFO
 } from './constants';
 import { getTokenAddressBySymbol, isAllowedPair, SwapSymbol } from '@/lib/swapConfig';
+import { SWAP_ENABLED } from '@/lib/featureFlags';
 import { quoteExactInputSingle } from './quote';
 
 // Mock ethers.js types (실제로는 ethers.js import 필요)
@@ -155,6 +156,9 @@ export async function executeSwap(
   signer: Signer,
   slippage: number = DEFAULT_SLIPPAGE
 ): Promise<string> {
+  if (!SWAP_ENABLED) {
+    throw new Error('Swap is not available on this platform.');
+  }
   try {
     console.log(`스왑 시작: ${amountIn} ${fromToken} → ${toToken}`);
     // 동적 import (웹 번들 최적화)

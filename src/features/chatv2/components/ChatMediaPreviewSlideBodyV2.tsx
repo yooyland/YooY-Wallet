@@ -23,6 +23,7 @@ import { shouldLoadRequestInChatWebView, WEBVIEW_MOBILE_USER_AGENT } from '../co
 import {
   buildGoogleStaticMapImageUrlForPreview,
   buildOpenStreetMapEmbedPageUrl,
+  buildOpenStreetMapStaticMapImageUrlForPreview,
 } from '../services/locationService';
 import { openAttachmentInExternalApp } from '../core/openAttachmentExternal';
 import { ZoomableImagePreviewV2, type ZoomableImagePreviewV2Ref } from './ZoomableImagePreviewV2';
@@ -203,35 +204,60 @@ function ChatLocationPreviewMap(props: {
     [coords.lat, coords.lng, mapPxW, mapPxH],
   );
   const osmEmbedUri = useMemo(() => buildOpenStreetMapEmbedPageUrl(coords.lat, coords.lng), [coords.lat, coords.lng]);
+  const osmStaticUri = useMemo(
+    () => buildOpenStreetMapStaticMapImageUrlForPreview(coords.lat, coords.lng, mapPxW, mapPxH),
+    [coords.lat, coords.lng, mapPxW, mapPxH],
+  );
   const [staticImageFailed, setStaticImageFailed] = useState(false);
+  const [osmImageFailed, setOsmImageFailed] = useState(false);
 
   useEffect(() => {
     setStaticImageFailed(false);
-  }, [coords.lat, coords.lng, googleStaticUri]);
+    setOsmImageFailed(false);
+  }, [coords.lat, coords.lng, googleStaticUri, osmStaticUri]);
 
   const useOsmWebView = !googleStaticUri || staticImageFailed;
 
   return (
     <View style={{ width: winW, height, backgroundColor: '#111' }}>
       {useOsmWebView ? (
-        <WebView
-          originWhitelist={['*']}
-          source={{ uri: osmEmbedUri }}
-          style={{ width: winW, height, backgroundColor: '#111' }}
-          javaScriptEnabled
-          domStorageEnabled
-          nestedScrollEnabled
-          setSupportMultipleWindows={false}
-          allowsInlineMediaPlayback
-          {...(Platform.OS === 'android'
-            ? {
-                androidLayerType: 'hardware' as const,
-                thirdPartyCookiesEnabled: true,
-                mixedContentMode: 'compatibility' as const,
-              }
-            : {})}
-          onShouldStartLoadWithRequest={(req) => shouldLoadRequestInChatWebView(req.url)}
-        />
+        Platform.OS === 'web' ? (
+          osmImageFailed ? (
+            <View style={{ width: winW, height, alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+              <Text style={{ color: '#DDD', fontWeight: '800' }}>지도 미리보기를 불러오지 못했습니다.</Text>
+              <TouchableOpacity onPress={() => Linking.openURL(mapsOpenUrl)} style={{ marginTop: 10 }}>
+                <Text style={{ color: '#1a73e8', fontWeight: '800' }}>큰 지도 보기</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <EImage
+              source={{ uri: osmStaticUri }}
+              style={{ width: winW, height }}
+              contentFit="cover"
+              recyclingKey={osmStaticUri}
+              onError={() => setOsmImageFailed(true)}
+            />
+          )
+        ) : (
+          <WebView
+            originWhitelist={['*']}
+            source={{ uri: osmEmbedUri }}
+            style={{ width: winW, height, backgroundColor: '#111' }}
+            javaScriptEnabled
+            domStorageEnabled
+            nestedScrollEnabled
+            setSupportMultipleWindows={false}
+            allowsInlineMediaPlayback
+            {...(Platform.OS === 'android'
+              ? {
+                  androidLayerType: 'hardware' as const,
+                  thirdPartyCookiesEnabled: true,
+                  mixedContentMode: 'compatibility' as const,
+                }
+              : {})}
+            onShouldStartLoadWithRequest={(req) => shouldLoadRequestInChatWebView(req.url)}
+          />
+        )
       ) : (
         <EImage
           source={{ uri: googleStaticUri }}

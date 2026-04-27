@@ -71,6 +71,40 @@ service cloud.firestore {
         memberUid in get(/databases/$(db)/documents/rooms/$(roomId)).data.participantIds;
     }
 
+    function isRoomOwnerActor(roomId, actorUid) {
+      return exists(/databases/$(db)/documents/rooms/$(roomId)) &&
+        get(/databases/$(db)/documents/rooms/$(roomId)).data.createdBy == actorUid;
+    }
+
+    function isRoomAdminActor(roomId, actorUid) {
+      return exists(/databases/$(db)/documents/rooms/$(roomId)) &&
+        get(/databases/$(db)/documents/rooms/$(roomId)).data.keys().hasAll(['adminIds']) &&
+        get(/databases/$(db)/documents/rooms/$(roomId)).data.adminIds is list &&
+        actorUid in get(/databases/$(db)/documents/rooms/$(roomId)).data.adminIds;
+    }
+
+    function roomMemberCanInviteEnabled(roomId) {
+      return exists(/databases/$(db)/documents/rooms/$(roomId)) &&
+        get(/databases/$(db)/documents/rooms/$(roomId)).data.keys().hasAll(['permissions']) &&
+        get(/databases/$(db)/documents/rooms/$(roomId)).data.permissions.keys().hasAll(['memberCanInvite']) &&
+        get(/databases/$(db)/documents/rooms/$(roomId)).data.permissions.memberCanInvite == true;
+    }
+
+    /** 배치에서 rooms.participantIds 에 초대 대상이 포함된 뒤, 방장/관리자/멤버초대 허용 멤버가 타인 roomMembers·joinedRooms 초기행 작성 */
+    function actorMayInviteNewMember(roomId, invitedUid) {
+      return isSignedIn() &&
+        request.auth.uid != invitedUid &&
+        isRoomParticipant(roomId, request.auth.uid) &&
+        exists(/databases/$(db)/documents/rooms/$(roomId)) &&
+        get(/databases/$(db)/documents/rooms/$(roomId)).data.participantIds is list &&
+        invitedUid in get(/databases/$(db)/documents/rooms/$(roomId)).data.participantIds &&
+        (
+          isRoomOwnerActor(roomId, request.auth.uid) ||
+          isRoomAdminActor(roomId, request.auth.uid) ||
+          roomMemberCanInviteEnabled(roomId)
+        );
+    }
+
     /**
      * 본인 roomMembers/{roomId}/members/{memberUid} 문서 생성·갱신(알림·테마 등 settings)
      * — joinedRooms 또는 participantIds 또는 기존 멤버 문서로 입증 (matches 룰 누락 시에도 저장 가능)
@@ -105,6 +139,24 @@ service cloud.firestore {
         ]);
     }
 
+    function requestTimeMs() {
+      return request.time.seconds * 1000 + request.time.nanoseconds / 1000000;
+    }
+
+    function isUserChatSuspended(uid) {
+      let p = /databases/$(db)/documents/user_chat_suspensions/$(uid);
+      return exists(p) && get(p).data.suspended == true &&
+        (!('untilMs' in get(p).data) || get(p).data.untilMs == null || get(p).data.untilMs == 0 ||
+          get(p).data.untilMs > requestTimeMs());
+    }
+
+    function isRoomBanned(roomId, uid) {
+      let p = /databases/$(db)/documents/room_bans/$(roomId)/uids/$(uid);
+      return exists(p) && get(p).data.banned == true &&
+        (!('untilMs' in get(p).data) || get(p).data.untilMs == null || get(p).data.untilMs == 0 ||
+          get(p).data.untilMs > requestTimeMs());
+    }
+
     /* -----------------------------
      * users 컬렉션 및 하위
      * ----------------------------- */
@@ -133,10 +185,11 @@ service cloud.firestore {
         // v2 send/update writes joinedRooms for "other participants" as well.
         // - 본인 행 / 멤버끼리 동기화 / 방 생성 시 createdBy 가 참가자별 초기 행 작성
         allow read: if isSignedIn() && (isMe(uid) || isRoomParticipant(roomId, request.auth.uid));
-        allow create: if isSignedIn() && (
+        allow create: if isSignedIn() && !isUserChatSuspended(uid) && (
           isMe(uid) ||
           roomCreatorBootstrap(roomId, uid) ||
-          bothInRoomParticipantIds(roomId, request.auth.uid, uid)
+          bothInRoomParticipantIds(roomId, request.auth.uid, uid) ||
+          actorMayInviteNewMember(roomId, uid)
         );
         allow update, delete: if isSignedIn() && (
           isMe(uid) ||
@@ -155,6 +208,13 @@ service cloud.firestore {
         allow read: if isMe(uid);
         allow create: if isSignedIn();
         allow update, delete: if isMe(uid);
+      }
+
+      /** 내부 YOY 원장 이벤트 로그(리워드/TTL 수수료 등) — 본인만 읽기 */
+      match /internalYoyEvents/{eventId} {
+        allow read: if isMe(uid);
+        // 클라에서 직접 쓰지 않음(Functions/Admin SDK만 작성)
+        allow write: if false;
       }
     }
 
@@ -184,14 +244,15 @@ service cloud.firestore {
     // chatV2 collections
     // -----------------------------
     match /roomMembers/{roomId}/members/{memberUid} {
-      allow read: if isSignedIn() && isRoomParticipant(roomId, request.auth.uid);
-      allow create: if isSignedIn() && (
+      allow read: if isSignedIn() && (isRoomParticipant(roomId, request.auth.uid) || isAdmin());
+      allow create: if isSignedIn() && !isUserChatSuspended(memberUid) && !isRoomBanned(roomId, memberUid) && (
         mayWriteOwnRoomMemberDoc(roomId, memberUid) ||
         mayUpsertOwnRoomMemberFromRoomDoc(roomId, memberUid) ||
         (isRoomParticipant(roomId, request.auth.uid) && isRoomParticipant(roomId, memberUid)) ||
-        roomCreatorBootstrap(roomId, memberUid)
+        roomCreatorBootstrap(roomId, memberUid) ||
+        actorMayInviteNewMember(roomId, memberUid)
       );
-      allow update: if isSignedIn() && (
+      allow update: if isSignedIn() && !isUserChatSuspended(memberUid) && !isRoomBanned(roomId, memberUid) && (
         mayWriteOwnRoomMemberDoc(roomId, memberUid) ||
         mayUpsertOwnRoomMemberFromRoomDoc(roomId, memberUid) ||
         (isRoomParticipant(roomId, request.auth.uid) && isRoomParticipant(roomId, memberUid))
@@ -200,8 +261,45 @@ service cloud.firestore {
     }
 
     match /roomMessages/{roomId}/items/{messageId} {
-      allow read: if isSignedIn() && isRoomParticipant(roomId, request.auth.uid);
-      allow write: if isSignedIn() && isRoomParticipant(roomId, request.auth.uid);
+      allow read: if isSignedIn() && (isRoomParticipant(roomId, request.auth.uid) || isAdmin());
+      allow write: if isSignedIn() && isRoomParticipant(roomId, request.auth.uid)
+        && !isUserChatSuspended(request.auth.uid)
+        && !isRoomBanned(roomId, request.auth.uid);
+    }
+
+    /** Written only by Cloud Functions (Admin SDK) */
+    match /user_chat_suspensions/{uid} {
+      allow read: if isSignedIn() && (isMe(uid) || isAdmin());
+      allow write: if false;
+    }
+
+    match /room_bans/{roomId}/uids/{bannedUid} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    match /admin_audit_logs/{logId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    /** 내부 YOY 원장: Cloud Functions(Admin SDK)만 쓰기. 사용자는 본인 잔액 문서만 읽기. */
+    match /internal_yoy_balances/{docId} {
+      allow read: if isSignedIn() && docId == request.auth.uid;
+      allow write: if false;
+    }
+
+    /** 거래 메모: 본인만 읽기/쓰기 (영구 보관) */
+    match /users/{uid}/transactionMemos/{txId} {
+      allow read, write: if isMe(uid);
+    }
+
+    match /internal_yoy_claims/{claimId} {
+      allow read, write: if false;
+    }
+
+    match /internal_yoy_ops/{opId} {
+      allow read, write: if false;
     }
 
     // 레거시 평면 선호 (마이그레이션·구버전 앱). 신규는 users/{uid}/chatRoomPrefs/{roomId} 사용

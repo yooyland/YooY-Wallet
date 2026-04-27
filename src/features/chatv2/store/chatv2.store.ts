@@ -29,6 +29,8 @@ type ChatV2Actions = {
   setCurrentRoom: (roomId?: string) => void;
 
   upsertRoom: (room: ChatRoomV2) => void;
+  /** 방 문서·메시지 캐시 제거 (TTL 폭파 후 등) */
+  evictRoom: (roomId: string) => void;
   setRoomIds: (roomIds: string[]) => void;
 
   /** Replace message list slice (used on initial load). */
@@ -54,6 +56,22 @@ export const useChatV2Store = create<ChatV2State & ChatV2Actions>((set) => ({
   ...initial,
   resetAll: () => set({ ...initial }),
   setCurrentRoom: (roomId) => set({ currentRoomId: roomId }),
+
+  evictRoom: (roomIdRaw) =>
+    set((s) => {
+      const id = normalizeRoomId(roomIdRaw, 'chatv2.store.evictRoom');
+      if (id === null) return s;
+      const { [id]: _r, ...restRooms } = s.roomsById;
+      const { [id]: _m, ...restMsgs } = s.roomMessages;
+      const { [id]: _c, ...restComposer } = s.composerByRoomId;
+      return {
+        roomsById: restRooms,
+        roomIds: s.roomIds.filter((x) => x !== id),
+        roomMessages: restMsgs,
+        composerByRoomId: restComposer,
+        currentRoomId: s.currentRoomId === id ? undefined : s.currentRoomId,
+      };
+    }),
 
   upsertRoom: (room) =>
     set((s) => {

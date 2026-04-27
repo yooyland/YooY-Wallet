@@ -1007,6 +1007,28 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
     }
   }, [currentProfile, addToGallery]);
 
+  /** 익명 모드 스위치: 저장 버튼 없이 즉시 Firestore·스토어 반영 (대화 중에도 실시간 적용) */
+  const persistUseHashToggle = useCallback(
+    async (next: boolean) => {
+      setUseHash(next);
+      try {
+        updateProfile({ useHashInChat: next });
+        const uid = firebaseAuth.currentUser?.uid;
+        if (uid) {
+          const { setDoc, doc, serverTimestamp } = await import('firebase/firestore');
+          await setDoc(
+            doc(firestore, 'users', uid),
+            { useHashInChat: next, updatedAt: serverTimestamp() } as any,
+            { merge: true }
+          );
+        }
+      } catch {
+        // 네트워크 실패 시 로컬 스위치만 유지
+      }
+    },
+    [updateProfile]
+  );
+
   const saveUsername = useCallback(async () => {
     try {
       const uid = firebaseAuth.currentUser?.uid;
@@ -1661,10 +1683,13 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
       try {
         const uid = firebaseAuth.currentUser?.uid;
         if (uid) {
+          const { setDoc, doc, serverTimestamp } = await import('firebase/firestore');
           const payload: any = {
             displayName: displayName.trim(),
             chatName: displayName.trim(),
+            useHashInChat: Boolean(useHash),
             customStatus: (customStatus || '').trim(),
+            bio: bio.trim(),
             avatar: finalAvatarUri || null,
             updatedAt: serverTimestamp(),
           };
@@ -1854,11 +1879,11 @@ function FixedBottomBar({ children, style }: { children: React.ReactNode; style?
             placeholderTextColor="#666"
             maxLength={20}
           />
-        <View style={{ flexDirection:'row', alignItems:'center', marginTop:8 }}>
-          <TouchableOpacity onPress={()=>setUseHash(v=>!v)} style={{ borderWidth:1, borderColor:'#2A2A2A', borderRadius:999, paddingHorizontal:12, paddingVertical:6, backgroundColor: useHash ? '#1f1f1f':'#111' }}>
+        <View style={{ flexDirection:'row', alignItems:'center', flexWrap:'wrap', marginTop:8 }}>
+          <TouchableOpacity onPress={() => void persistUseHashToggle(!useHash)} style={{ borderWidth:1, borderColor:'#2A2A2A', borderRadius:999, paddingHorizontal:12, paddingVertical:6, backgroundColor: useHash ? '#1f1f1f':'#111' }}>
             <ThemedText style={{ color:'#FFD700', fontWeight:'700' }}>{useHash?t('hashOn', language):t('hashOff', language)}</ThemedText>
           </TouchableOpacity>
-          <ThemedText style={{ color:'#9BA1A6', marginLeft:8, fontSize:12 }}>Use hash in chat</ThemedText>
+          <ThemedText style={{ color:'#9BA1A6', marginLeft:8, fontSize:12, flex:1 }}>{t('anonymousChatModeHint', language)}</ThemedText>
         </View>
         </View>
 

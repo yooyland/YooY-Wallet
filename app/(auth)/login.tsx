@@ -7,7 +7,12 @@ import { useState, useEffect, useRef } from 'react';
 import { ActivityIndicator, Image, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, KeyboardAvoidingView, Switch } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SOCIAL_LOGIN_ENABLED } from '@/lib/featureFlags';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
+
+const REMEMBER_FLAGS_KEY = 'auth.remember.flags';
+const REMEMBER_USERNAME_KEY = 'auth.remember.username';
+const REMEMBER_PASSWORD_KEY = 'auth.remember.password';
 
 export default function LoginScreen() {
   const { isAuthenticated, isLoading, signIn, signInWithGoogle, signInWithApple } = useAuth();
@@ -22,14 +27,26 @@ export default function LoginScreen() {
   const [autoLogin, setAutoLogin] = useState(false);
   const triedAutoRef = useRef(false);
 
-  // Load saved credentials
+  // Load saved credentials (웹은 AsyncStorage — AuthContext·SecureStore 웹 이슈와 동일 키)
   useEffect(() => {
     (async () => {
       try {
-        const flagsRaw = await SecureStore.getItemAsync('auth.remember.flags'); // { autoLogin }
+        const getFlags = () =>
+          Platform.OS === 'web'
+            ? AsyncStorage.getItem(REMEMBER_FLAGS_KEY)
+            : SecureStore.getItemAsync(REMEMBER_FLAGS_KEY);
+        const getUser = () =>
+          Platform.OS === 'web'
+            ? AsyncStorage.getItem(REMEMBER_USERNAME_KEY)
+            : SecureStore.getItemAsync(REMEMBER_USERNAME_KEY);
+        const getPw = () =>
+          Platform.OS === 'web'
+            ? AsyncStorage.getItem(REMEMBER_PASSWORD_KEY)
+            : SecureStore.getItemAsync(REMEMBER_PASSWORD_KEY);
+        const flagsRaw = await getFlags();
         if (flagsRaw) { try { const f = JSON.parse(flagsRaw) as { autoLogin?: boolean }; setAutoLogin(!!f.autoLogin); } catch {} }
-        const savedId = await SecureStore.getItemAsync('auth.remember.username');
-        const savedPw = await SecureStore.getItemAsync('auth.remember.password');
+        const savedId = await getUser();
+        const savedPw = await getPw();
         if (savedId) setUsername(savedId);
         if (savedPw) setPassword(savedPw);
       } catch {}
@@ -76,7 +93,7 @@ export default function LoginScreen() {
 
             <View style={styles.formArea}>
               <Image source={require('@/assets/images/logo.png')} style={styles.logo} resizeMode="contain" />
-              {(isLoading || submitting) ? <ActivityIndicator /> : null}
+              {(Platform.OS === 'web' ? submitting : isLoading || submitting) ? <ActivityIndicator /> : null}
               <TextInput
                 style={styles.input}
                 placeholder={t('email', language as any)}
@@ -124,13 +141,23 @@ export default function LoginScreen() {
                     await signIn({ username, password });
                     // 자동 로그인 설정에 따라 자격 증명 저장/삭제
                     try {
-                      await SecureStore.setItemAsync('auth.remember.flags', JSON.stringify({ autoLogin }));
-                      if (autoLogin) {
-                        await SecureStore.setItemAsync('auth.remember.username', username);
-                        await SecureStore.setItemAsync('auth.remember.password', password);
+                      if (Platform.OS === 'web') {
+                        await AsyncStorage.setItem(REMEMBER_FLAGS_KEY, JSON.stringify({ autoLogin }));
+                        if (autoLogin) {
+                          await AsyncStorage.setItem(REMEMBER_USERNAME_KEY, username);
+                          await AsyncStorage.setItem(REMEMBER_PASSWORD_KEY, password);
+                        } else {
+                          await AsyncStorage.multiRemove([REMEMBER_USERNAME_KEY, REMEMBER_PASSWORD_KEY]);
+                        }
                       } else {
-                        await SecureStore.deleteItemAsync('auth.remember.username');
-                        await SecureStore.deleteItemAsync('auth.remember.password');
+                        await SecureStore.setItemAsync(REMEMBER_FLAGS_KEY, JSON.stringify({ autoLogin }));
+                        if (autoLogin) {
+                          await SecureStore.setItemAsync(REMEMBER_USERNAME_KEY, username);
+                          await SecureStore.setItemAsync(REMEMBER_PASSWORD_KEY, password);
+                        } else {
+                          await SecureStore.deleteItemAsync(REMEMBER_USERNAME_KEY);
+                          await SecureStore.deleteItemAsync(REMEMBER_PASSWORD_KEY);
+                        }
                       }
                     } catch {}
                   } catch (e: any) {

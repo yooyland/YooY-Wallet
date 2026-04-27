@@ -17,6 +17,23 @@ export async function resolveWalletAddressForUser(
     }
   } catch {}
 
+  // 계정 단일 소스(우선): monitor 서버에 링크된 주소 목록 사용 → 어떤 기기에서 로그인해도 동일
+  try {
+    if (uid) {
+      const { firebaseAuth } = await import('@/lib/firebase');
+      const u = (firebaseAuth as any)?.currentUser;
+      const idt = u ? await u.getIdToken(true) : null;
+      if (idt) {
+        const { fetchMeAddresses } = await import('@/lib/monitor');
+        const arr = await fetchMeAddresses(idt, { timeoutMs: 12_000 } as any);
+        const first = Array.isArray(arr) ? String(arr[0] || '').trim() : '';
+        if (first && /^0x[a-fA-F0-9]{40}$/i.test(first)) {
+          return first;
+        }
+      }
+    }
+  } catch {}
+
   try {
     const { getLocalWallet } = await import('@/src/wallet/wallet');
     const local = await getLocalWallet().catch(() => null);

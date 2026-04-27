@@ -10,6 +10,8 @@ import { getCoinPriceByCurrency } from '@/lib/priceManager';
 import { UpbitTicker } from '@/lib/upbit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useRef, useState } from 'react';
+import { Redirect } from 'expo-router';
+import { IOS_APP_STORE_SHELF, ORDER_ENABLED, STAKING_ENABLED, SWAP_ENABLED, WEB_TRADE_BLOCKED } from '@/lib/featureFlags';
 import { t } from '@/i18n';
 import { Alert, RefreshControl, ScrollView, StyleSheet, TextInput, TouchableOpacity, View, Image, Modal, Linking, Animated, Easing, Dimensions } from 'react-native';
 
@@ -24,7 +26,7 @@ import { mockBalances } from '@/data/balances';
 // 전역 거래 스토어 import
 import { useTransactionStore } from '@/src/stores/transaction.store';
 
-export default function PaymentsScreen() {
+function PaymentsScreenContent() {
   const { currentUser } = useAuth();
   const { language, currency } = usePreferences();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1205,6 +1207,13 @@ export default function PaymentsScreen() {
       />
     </ThemedView>
   );
+}
+
+export default function PaymentsScreen() {
+  if (WEB_TRADE_BLOCKED || IOS_APP_STORE_SHELF || !(SWAP_ENABLED && ORDER_ENABLED && STAKING_ENABLED)) {
+    return <Redirect href="/(tabs)/dashboard" />;
+  }
+  return <PaymentsScreenContent />;
 }
 
 const styles = StyleSheet.create({

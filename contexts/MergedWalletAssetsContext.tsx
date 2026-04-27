@@ -110,9 +110,22 @@ export function MergedWalletAssetsProvider({ children }: { children: React.React
     return onChainSnapToAssetRows(onChainSnap, usdToKrwRate, { priceBySymbol: marketUsdOverrides });
   }, [onChainSnap, usdToKrwRate, marketUsdOverrides]);
 
+  /**
+   * 중복 합산 방지:
+   * - monitorStore.balancesArray(=internalAssets)가 이미 온체인 잔액을 포함하는 환경이 있어
+   *   onchainAssets와 merge 시 2배로 보이는 문제가 발생.
+   * - 원칙: "온체인 스냅이 제공하는 심볼"은 온체인 값을 우선하고 internal에서는 제외한다.
+   */
+  const internalAssetsDeduped = useMemo(() => {
+    const internal = Array.isArray(internalAssets) ? internalAssets : [];
+    const onSyms = new Set((onchainAssets || []).map((a: any) => String(a?.symbol || '').toUpperCase().trim()).filter(Boolean));
+    if (onSyms.size === 0) return internal;
+    return internal.filter((a: any) => !onSyms.has(String(a?.symbol || '').toUpperCase().trim()));
+  }, [internalAssets, onchainAssets]);
+
   const mergedAssets = useMemo(() => {
-    return mergeAssets(onchainAssets, internalAssets, { usdToKrw: usdToKrwRate });
-  }, [onchainAssets, internalAssets, usdToKrwRate]);
+    return mergeAssets(onchainAssets, internalAssetsDeduped, { usdToKrw: usdToKrwRate });
+  }, [onchainAssets, internalAssetsDeduped, usdToKrwRate]);
 
   useEffect(() => {
     if (typeof __DEV__ === 'undefined' || !__DEV__) return;

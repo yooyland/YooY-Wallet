@@ -1,0 +1,9 @@
+# Apache: https://yooyland.com/web/ 하위 SPA 라우팅
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /web/
+  RewriteRule ^index\.html$ - [L]
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . /web/index.html [L]
+</IfModule>

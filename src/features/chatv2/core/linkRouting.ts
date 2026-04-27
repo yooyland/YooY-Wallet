@@ -11,6 +11,25 @@ export type YooYRouteV2 =
  * One unified router for QR + app-links (v2).
  * Keep parsing deterministic and side-effect free.
  */
+/**
+ * YooYLand 앱 초대용 https 링크 (`/chatv2/join`).
+ * Composer에서 이 URL은 `sendLinkV2`(URL 카드) 대신 일반 텍스트로 보내
+ * 카카오톡식 링크 미리보기 카드·WebView 오류(domain undefined)를 피합니다.
+ */
+export function isChatV2InviteJoinHttpsUrl(url: string): boolean {
+  const s = String(url || '').trim();
+  if (!/^https?:\/\//i.test(s)) return false;
+  try {
+    const u = new URL(s);
+    const h = String(u.hostname || '').toLowerCase();
+    if (!h.includes('yooy')) return false;
+    const p = String(u.pathname || '').toLowerCase();
+    return p.includes('chatv2/join');
+  } catch {
+    return false;
+  }
+}
+
 export function parseYooYLinkV2(raw: string): YooYRouteV2 {
   const s = String(raw || '').trim();
   if (!s) return { type: 'unknown', raw: s };

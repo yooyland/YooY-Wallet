@@ -24,6 +24,7 @@ import { getAllUpbitMarkets, UpbitTicker } from '@/lib/upbit';
 import { getMockBalancesForUser } from '@/lib/userBalances';
 import { useTransactionStore } from '@/src/stores/transaction.store';
 import { useMonitorStore } from '@/lib/monitorStore';
+import { EXCHANGE_UI_ENABLED, IOS_APP_STORE_SHELF, TRADING_UI_ENABLED } from '@/lib/featureFlags';
 import { scanQRFromImage } from '@/lib/qrScanner';
 import { createVoucher, buildClaimUri, endVoucher, parseClaimUri, getVoucher, claimVoucher, type ClaimVoucher } from '@/lib/claims';
 import { collection, onSnapshot, orderBy, query, where, deleteDoc, doc as fsDoc } from 'firebase/firestore';
@@ -1988,17 +1989,13 @@ export default function WalletScreen() {
   useEffect(() => {
     (async () => {
       if (currentUser?.uid) {
-        const info = await AsyncStorage.getItem(`u:${currentUser.uid}:profile.info`);
-        if (info) {
-          try {
-            const parsedInfo = JSON.parse(info);
-            setUsername(parsedInfo.username || currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
-          } catch {
-            setUsername(currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
-          }
-        } else {
-          setUsername(currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
-        }
+        const { loadUserProfileLite } = await import('@/lib/userProfile');
+        const p = await loadUserProfileLite({
+          uid: currentUser.uid,
+          displayName: (currentUser as any)?.displayName,
+          email: (currentUser as any)?.email,
+        });
+        setUsername(p.username || (currentUser?.email?.split('@')[0] || 'User'));
       }
     })();
   }, [currentUser?.uid]);
@@ -2016,10 +2013,17 @@ export default function WalletScreen() {
   
   // URL 파라미터로 전달된 탭 설정
   useEffect(() => {
-    if (tab && ['assets', 'send', 'receive', 'gift', 'history'].includes(tab)) {
-      setActiveTab(tab as TabKey);
-    }
+    if (!tab) return;
+    const allowed = IOS_APP_STORE_SHELF ? ['assets', 'send', 'receive'] : ['assets', 'send', 'receive', 'gift', 'history'];
+    if (allowed.includes(String(tab))) setActiveTab(tab as TabKey);
   }, [tab]);
+
+  useEffect(() => {
+    if (!IOS_APP_STORE_SHELF) return;
+    if (activeTab === 'gift' || activeTab === 'history' || activeTab === 'orders') {
+      setActiveTab('assets');
+    }
+  }, [activeTab]);
 
   // 딥링크(yooy://pay) 처리: AsyncStorage에서 데이터 읽어서 보내기 폼에 자동 입력
   useEffect(() => {
@@ -2062,6 +2066,12 @@ export default function WalletScreen() {
 
   // 마켓 페이지로 이동하는 함수
   const handleNavigateToMarket = useCallback(async (coinSymbol: string) => {
+    if (IOS_APP_STORE_SHELF) {
+      try {
+        router.push(`/(tabs)/wallet?coin=${encodeURIComponent(coinSymbol)}&tab=assets`);
+      } catch {}
+      return;
+    }
     try {
       // 먼저 KRW 마켓이 있는지 확인
       const krwMarketSymbol = coinSymbol === 'YOY' ? 'KRW-YOY' : `KRW-${coinSymbol}`;
@@ -2076,10 +2086,10 @@ export default function WalletScreen() {
       if (availableMarkets.length > 0) {
         // KRW 마켓이 있으면 KRW 마켓으로, 없으면 첫 번째 사용 가능한 마켓으로 이동
         const targetMarket = availableMarkets.find((market: any) => market.market.startsWith('KRW-')) || availableMarkets[0];
-        router.push(`/market/${targetMarket.market}?tab=주문`);
+        router.push(`/market/${targetMarket.market}?tab=${TRADING_UI_ENABLED ? '주문' : '차트'}`);
       } else {
         // 마켓이 전혀 없는 경우 기본 KRW 마켓으로 이동
-        router.push(`/market/${krwMarketSymbol}?tab=주문`);
+        router.push(`/market/${krwMarketSymbol}?tab=${TRADING_UI_ENABLED ? '주문' : '차트'}`);
       }
     } catch (error) {
       console.error('마켓 정보 조회 오류:', error);
@@ -2093,34 +2103,26 @@ export default function WalletScreen() {
   const persistTransactionMemo = useCallback(async (id: string, memo: string) => {
     useTransactionStore.getState().updateTransaction(id, { memo });
     try {
+      const { saveTransactionMemo } = await import('@/lib/transactionMemos');
+      await saveTransactionMemo(id, memo);
+    } catch {}
+    try {
       await updateTransactionMemo(id, memo);
     } catch {}
   }, [updateTransactionMemo]);
   const [memoEditingId, setMemoEditingId] = useState<string|null>(null);
   const [txDetail, setTxDetail] = useState<any|null>(null);
 
+  // 로그인 직후 지갑 진입 시 카메라 권한 팝업이 뜨지 않도록: 요청은 QR 스캔 모달(scanOpen)에서만 수행
   useEffect(() => {
     (async () => {
       try {
-        if (VisionCamera) {
-          const camStatus = await VisionCamera.requestCameraPermission();
-          setHasCamPerm(camStatus === 'authorized');
-        } else {
-          // VisionCamera가 없을 때는 Expo Camera 또는 BarCodeScanner 권한으로 대체 시도
-          try {
-            if (ExpoCameraModule?.requestCameraPermissionsAsync) {
-              const perm = await ExpoCameraModule.requestCameraPermissionsAsync();
-              setHasCamPerm(perm.status === 'granted');
-            } else if (ExpoBarcode?.requestPermissionsAsync) {
-              const perm = await ExpoBarcode.requestPermissionsAsync();
-              setHasCamPerm(perm.status === 'granted');
-            } else {
-              setHasCamPerm(false);
-            }
-          } catch {
-            setHasCamPerm(false);
-          }
+        if (ExpoCameraModule?.getCameraPermissionsAsync) {
+          const perm = await ExpoCameraModule.getCameraPermissionsAsync();
+          setHasCamPerm(perm.status === 'granted');
+          return;
         }
+        setHasCamPerm(false);
       } catch {
         setHasCamPerm(false);
       }
@@ -3790,7 +3792,8 @@ export default function WalletScreen() {
   useEffect(() => {
     try {
       // 탭 전환
-      if (tab && ['assets','send','receive','gift','history','orders'].includes(String(tab))) {
+      const tabAllow = IOS_APP_STORE_SHELF ? ['assets', 'send', 'receive'] : ['assets', 'send', 'receive', 'gift', 'history', 'orders'];
+      if (tab && tabAllow.includes(String(tab))) {
         setActiveTab(String(tab) as TabKey);
       }
       // 코인 선택
@@ -4872,7 +4875,8 @@ export default function WalletScreen() {
     }
   };
   // 빠른 액션 엔트리(아이콘/라벨 매핑)
-  const quickEntries = useMemo(() => ([
+  const quickEntries = useMemo(() => {
+    const all = [
     { key: 'send', labelEn: 'Send', labelKo: '보내기', icon: '↗' },
     { key: 'receive', labelEn: 'Receive', labelKo: '받기', icon: '↘' },
     { key: 'qr', labelEn: 'QR Code', labelKo: 'QR 코드', icon: '▦' },
@@ -4888,7 +4892,15 @@ export default function WalletScreen() {
     { key: 'diary', labelEn: 'Diary', labelKo: '일기', icon: '◌' },
     { key: 'accountBook', labelEn: 'Account Book', labelKo: '가계부', icon: '◐' },
     { key: 'memo', labelEn: 'Memo', labelKo: '메모', icon: '◑' },
-  ]), [language]);
+    ];
+    if (IOS_APP_STORE_SHELF) {
+      return all.filter((e) => ['send', 'receive', 'qr'].includes(e.key));
+    }
+    if (!EXCHANGE_UI_ENABLED) {
+      return all.filter((e) => !['shop', 'nft', 'buy', 'sell'].includes(e.key));
+    }
+    return all;
+  }, [language, EXCHANGE_UI_ENABLED]);
 
   const renderQuickTile = (entry: any) => (
     <TouchableOpacity key={`qa-${entry.key}`} style={styles.quickTile}
@@ -4904,16 +4916,58 @@ export default function WalletScreen() {
         else if (entry.key === 'schedule') {
           router.push('/(tabs)/todo');
         } else if (entry.key === 'reward') {
-          router.push('/(tabs)/dashboard');
+          void (async () => {
+            try {
+              const { claimDailyRewardFromServer } = await import('@/lib/dailyRewardClaim');
+              const res = await claimDailyRewardFromServer({
+                isAuthenticated: !!accessToken,
+                currentUserEmail,
+                recordReward: useTransactionStore.getState().recordReward,
+              });
+              if (!res.ok) {
+                if (res.reason === 'auth') {
+                  Alert.alert(language === 'en' ? 'Error' : '오류', language === 'en' ? 'Please log in.' : '로그인이 필요합니다.');
+                } else if (res.message === 'treasury_insufficient') {
+                  Alert.alert(
+                    language === 'en' ? 'Notice' : '알림',
+                    language === 'en' ? 'Reward pool is temporarily low. Try again later.' : '보상 풀 일시 부족입니다. 잠시 후 다시 시도해 주세요.'
+                  );
+                } else {
+                  Alert.alert(
+                    language === 'en' ? 'Error' : '오류',
+                    language === 'en' ? 'Could not claim reward.' : '출석 보상 처리에 실패했습니다.'
+                  );
+                }
+                return;
+              }
+              if (res.already) {
+                Alert.alert(
+                  language === 'en' ? 'Already claimed' : '알림',
+                  language === 'en' ? 'You already claimed today.' : '오늘 출석 보상은 이미 받으셨습니다.'
+                );
+                return;
+              }
+              Alert.alert(
+                language === 'en' ? 'Daily reward' : '출석 보상',
+                language === 'en' ? `+${res.credited} YOY` : `+${res.credited} YOY를 받았습니다.`
+              );
+            } catch (e: any) {
+              Alert.alert(language === 'en' ? 'Error' : '오류', String(e?.message || e));
+            }
+          })();
         } else if (entry.key === 'chat') {
           try { router.push('/chatv2'); } catch { router.push('/chatv2'); }
         } else if (entry.key === 'shop') {
+          if (!EXCHANGE_UI_ENABLED) { Alert.alert('알림', '현재 버전에서는 해당 기능을 사용할 수 없습니다.'); return; }
           router.push('/(tabs)/exchange');
         } else if (entry.key === 'nft') {
+          if (!EXCHANGE_UI_ENABLED) { Alert.alert('알림', '현재 버전에서는 해당 기능을 사용할 수 없습니다.'); return; }
           router.push('/(tabs)/exchange');
         } else if (entry.key === 'buy') {
+          if (!EXCHANGE_UI_ENABLED) { Alert.alert('알림', '현재 버전에서는 해당 기능을 사용할 수 없습니다.'); return; }
           router.push('/(tabs)/exchange');
         } else if (entry.key === 'sell') {
+          if (!EXCHANGE_UI_ENABLED) { Alert.alert('알림', '현재 버전에서는 해당 기능을 사용할 수 없습니다.'); return; }
           router.push('/(tabs)/exchange');
         } else if (entry.key === 'diary') {
           router.push('/(tabs)/todo');
@@ -4943,6 +4997,44 @@ export default function WalletScreen() {
   });
   // 거래내역 페이지네이션
   const [historyPage, setHistoryPage] = useState(1);
+
+  // Memo auto-hydration (Firestore users/{uid}/transactionMemos)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        if (activeTab !== 'history') return;
+        if (memoEditingId) return; // 편집 중이면 덮어쓰기 방지
+        const uid = String((currentUser as any)?.uid || '').trim();
+        if (!uid) return;
+        const all = (getTransactions({ limit: 1000 }) as any[]) || [];
+        const sorted = all
+          .slice()
+          .sort((a, b) => {
+            const am = ((a as any).timestampMs ?? (Date.parse(String((a as any).timestamp || '')) || 0));
+            const bm = ((b as any).timestampMs ?? (Date.parse(String((b as any).timestamp || '')) || 0));
+            return bm - am;
+          });
+        const page = Math.max(1, Number(historyPage || 1));
+        const visible = sorted.slice((page - 1) * 40, page * 40);
+        const need = visible
+          .map((tx) => ({ id: String(tx?.id || '').trim(), memo: String(tx?.memo || '').trim() }))
+          .filter((x) => x.id && !x.memo)
+          .map((x) => x.id);
+        if (!need.length) return;
+        const { loadTransactionMemosBulk } = await import('@/lib/transactionMemos');
+        const map = await loadTransactionMemosBulk(need, uid, { concurrency: 8 });
+        if (cancelled) return;
+        for (const [id, memo] of Object.entries(map || {})) {
+          if (!memo) continue;
+          try { useTransactionStore.getState().updateTransaction(id, { memo }); } catch {}
+        }
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, historyPage, memoEditingId, currentUser?.uid]);
 
   useEffect(() => {
     (async () => {
@@ -5477,14 +5569,20 @@ export default function WalletScreen() {
       >
         {/* 탭 바 */}
         <View style={styles.tabBar}>
-          {[
-            { key: 'assets', label: t('walletAssets', language) },
-            { key: 'send', label: t('walletSend', language) },
-            { key: 'receive', label: t('walletReceive', language) },
-            { key: 'history', label: language === 'en' ? 'History' : t('walletHistory', language) },
-            
-            { key: 'gift', label: language === 'en' ? 'Gift' : '기프트' },
-          ].map(t => (
+          {(IOS_APP_STORE_SHELF
+            ? [
+                { key: 'assets', label: t('walletAssets', language) },
+                { key: 'send', label: t('walletSend', language) },
+                { key: 'receive', label: t('walletReceive', language) },
+              ]
+            : [
+                { key: 'assets', label: t('walletAssets', language) },
+                { key: 'send', label: t('walletSend', language) },
+                { key: 'receive', label: t('walletReceive', language) },
+                { key: 'history', label: language === 'en' ? 'History' : t('walletHistory', language) },
+                { key: 'gift', label: language === 'en' ? 'Gift' : '기프트' },
+              ]
+          ).map(t => (
             <TouchableOpacity key={t.key} style={[styles.tabBtn, activeTab === (t.key as TabKey) && styles.tabBtnActive]} onPress={() => setActiveTab(t.key as TabKey)}>
               <ThemedText style={[styles.tabText, activeTab === (t.key as TabKey) && styles.tabTextActive]}>{t.label}</ThemedText>
             </TouchableOpacity>
@@ -5506,7 +5604,13 @@ export default function WalletScreen() {
                       {(balancesForHoldingsUi.filter((b: any) => (b?.amount || 0) > 0).length)} Assets
                     </ThemedText>
                   </View>
-                  <ThemedText style={[styles.totalAmount,{ color:'#FFD700', textAlign:'center' }]}>
+                  <ThemedText
+                    style={[styles.totalAmount, { color: '#FFD700', textAlign: 'center' }]}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.72}
+                    ellipsizeMode="clip"
+                  >
                     {(() => {
                       const hasAnyAmount = Array.isArray(balancesForHoldingsUi) && balancesForHoldingsUi.some((b: any) => (b?.amount || 0) > 0);
                       let v = Number(displayTotal);
@@ -7802,7 +7906,11 @@ export default function WalletScreen() {
                 // 전역 거래 스토어에서 모든 거래 기록 가져오기
                 // 모든 거래 유형을 표시 (보내기/받기/보상/스왑/실패/성공 등)
                 const allTransactions = getTransactions({ limit: 1000 })
-                  .sort((a,b)=> new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+                  .sort((a, b) => {
+                    const am = ((a as any).timestampMs ?? (Date.parse(String(a.timestamp || '')) || 0));
+                    const bm = ((b as any).timestampMs ?? (Date.parse(String(b.timestamp || '')) || 0));
+                    return bm - am;
+                  });
                 const paginatedTransactions = allTransactions.slice(((historyPage||1)-1)*40, (historyPage||1)*40);
                 
                 return paginatedTransactions.map(tx => (
@@ -7819,31 +7927,19 @@ export default function WalletScreen() {
                     <ThemedText style={[styles.txCell, {flex:1.2}]} numberOfLines={1}>
                       {(() => {
                         try {
-                          // ISO 형식 또는 기존 형식 모두 처리
-                          let date: Date;
-                          if (tx.timestamp.includes('T')) {
-                            // ISO 형식인 경우
-                            date = new Date(tx.timestamp);
-                          } else {
-                            // 기존 한국어 형식인 경우
-                            date = new Date(tx.timestamp.replace(/\./g, '-'));
-                          }
-                          
-                          if (isNaN(date.getTime())) {
-                            // 여전히 유효하지 않은 경우 현재 날짜 사용
-                            date = new Date();
-                          }
-                          
-                          return date.toLocaleDateString('ko-KR', { 
-                            month: 'short', 
-                            day: 'numeric' 
+                          const ms = ((tx as any).timestampMs ?? (Date.parse(String(tx.timestamp || '')) || NaN));
+                          if (!Number.isFinite(ms)) return '--';
+                          const date = new Date(ms);
+                          // 날짜+시간을 항상 고정 표시(혼동 방지)
+                          return date.toLocaleString('ko-KR', {
+                            year: '2-digit',
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit',
                           });
                         } catch (error) {
-                          // 오류 발생 시 현재 날짜 사용
-                          return new Date().toLocaleDateString('ko-KR', { 
-                            month: 'short', 
-                            day: 'numeric' 
-                          });
+                          return '--';
                         }
                       })()}
                     </ThemedText>
@@ -8808,7 +8904,8 @@ const styles = StyleSheet.create({
   assetDivider: { height: 0 },
   totalTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   totalTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
-  totalAmount: { color: '#FFFFFF', fontSize: 28, fontWeight: '900', letterSpacing: 0.2, marginVertical: 20 },
+  // iOS에서 큰 숫자 텍스트가 카드 상단에서 잘리는 현상 방지: lineHeight/paddingTop 확보
+  totalAmount: { color: '#FFFFFF', fontSize: 28, lineHeight: 34, paddingTop: 2, fontWeight: '900', letterSpacing: 0.2, marginVertical: 18 },
   totalBottomRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   totalMetaLabel: { color: '#9AA0A6' },
   assetsChip: { backgroundColor: 'rgba(212,175,55,0.12)', borderWidth: 1, borderColor: '#D4AF37', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },

@@ -194,6 +194,7 @@ export const useChatProfileStore = create<ChatProfileState & ChatProfileActions>
                 payload.usernameLower = String((updates as any).username).toLowerCase();
               }
               if (typeof updates.avatar === 'string') payload.avatar = updates.avatar;
+              if (typeof (updates as any).useHashInChat === 'boolean') payload.useHashInChat = (updates as any).useHashInChat;
               await setDoc(doc(firestore, 'users', uid), payload, { merge: true });
             } catch {
               // 네트워크/권한 오류는 조용히 무시

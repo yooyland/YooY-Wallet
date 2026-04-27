@@ -24,6 +24,8 @@ import {
 import type { ChatRoomTypeV2 } from '../core/roomSchema';
 import { logYyRoom } from '../core/roomLog';
 import * as ImagePicker from 'expo-image-picker';
+import * as Crypto from 'expo-crypto';
+import { callInternalYoyLedgerV1 } from '@/lib/internalYoyLedger';
 
 /** UI에서 선택하는 타입 (1:1 → dm) */
 type UiRoomKind = 'group' | 'dm' | 'secret' | 'ttl' | 'notice';
@@ -66,6 +68,19 @@ function ttlCreateCostYoy(totalSec: number): number {
   if (totalSec <= 86400) return 3;
   if (totalSec <= 86400 * 90) return 30;
   return 30;
+}
+
+function confirmTtlCreateCost(cost: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    Alert.alert(
+      'TTL 방 생성',
+      `선택한 기간 기준 ${cost} YOY가 차감됩니다.\n· 24시간 이하: 3 YOY\n· 24시간 초과 ~ 90일 이내: 30 YOY`,
+      [
+        { text: '취소', style: 'cancel', onPress: () => resolve(false) },
+        { text: '생성', onPress: () => resolve(true) },
+      ]
+    );
+  });
 }
 
 export default function ChatCreateRoomV2() {
@@ -116,8 +131,6 @@ export default function ChatCreateRoomV2() {
 
   const pickCover = async () => {
     try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) return;
       const res = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsMultipleSelection: false,
@@ -152,14 +165,30 @@ export default function ChatCreateRoomV2() {
     }
 
     setBusy(true);
+    let ttlChargeOpId: string | null = null;
+    let ttlChargeAmount = 0;
     try {
       if (roomType === 'ttl') {
         const sec = ttlTotalSecFromParts(ttlDays, ttlHours, ttlMinutes, ttlSeconds);
         const cost = ttlCreateCostYoy(sec);
-        Alert.alert(
-          'TTL 방 생성 비용',
-          `선택한 기간 기준 약 ${cost} YOY가 소요됩니다. (지갑 연동 후 자동 차감)\n· 24시간 이하: 3 YOY\n· 24시간 초과 ~ 90일 이내: 30 YOY`
-        );
+        const ok = await confirmTtlCreateCost(cost);
+        if (!ok) return;
+        ttlChargeOpId = await Crypto.randomUUID();
+        ttlChargeAmount = cost;
+        try {
+          await callInternalYoyLedgerV1({
+            action: 'ttl_create_charge',
+            opId: ttlChargeOpId,
+            amount: cost,
+          });
+        } catch (e: any) {
+          const msg = String(e?.message || e || '');
+          const human = msg.includes('insufficient_user_yoy')
+            ? 'YOY 잔액이 부족합니다. 설치·출석 보상으로 YOY를 받은 뒤 다시 시도해 주세요.'
+            : msg;
+          Alert.alert('알림', human);
+          return;
+        }
       }
       const ttl =
         roomType === 'ttl'
@@ -184,6 +213,13 @@ export default function ChatCreateRoomV2() {
         ttl: ttl as any,
       });
 
+      if (ttlChargeOpId && ttlChargeAmount > 0) {
+        try {
+          const { useMonitorStore } = await import('@/lib/monitorStore');
+          await useMonitorStore.getState().syncMe('[ttl_create][ledger]', { force: true });
+        } catch {}
+      }
+
       if (localPhotoUri) {
         try {
           const url = await uploadRoomCoverPhotoV2({
@@ -203,6 +239,11 @@ export default function ChatCreateRoomV2() {
 
       router.replace({ pathname: '/chatv2/room', params: { id: String(room.id), openSettings: '1' } } as any);
     } catch (e: any) {
+      if (ttlChargeOpId) {
+        try {
+          await callInternalYoyLedgerV1({ action: 'ttl_create_refund', opId: ttlChargeOpId });
+        } catch {}
+      }
       logYyRoom('room.create.fail', { error: String(e?.message || e), kind });
       Alert.alert('생성 실패', String(e?.message || e || '알 수 없는 오류'));
     } finally {

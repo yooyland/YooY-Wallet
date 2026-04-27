@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { SWAP_ENABLED } from '@/lib/featureFlags';
 import { DEFAULT_SLIPPAGE } from '../uniswap/constants';
 import { calculatePriceImpact, getQuote as fetchQuote, startQuotePolling } from '../uniswap/quote';
 import { getCoinPriceByCurrency } from '@/lib/priceManager';
@@ -163,6 +164,9 @@ export function useUniswap(provider?: Provider): UseUniswapReturn {
 
   // 스왑 실행
   const executeSwapAction = useCallback(async (signer: Signer): Promise<string> => {
+    if (!SWAP_ENABLED) {
+      throw new Error('Swap is not available on this platform.');
+    }
     const { fromToken, toToken, amountIn } = swapState;
 
     if (!amountIn || parseFloat(amountIn) <= 0) {
@@ -197,7 +201,7 @@ export function useUniswap(provider?: Provider): UseUniswapReturn {
       }));
       throw error;
     }
-  }, [swapState.fromToken, swapState.toToken, swapState.amountIn]);
+  }, [swapState.fromToken, swapState.toToken, swapState.amountIn, SWAP_ENABLED]);
 
   // 토큰 교체
   const swapTokens = useCallback(() => {
@@ -241,6 +245,7 @@ export function useUniswap(provider?: Provider): UseUniswapReturn {
 
   // 입력 변경 시 자동 환율 조회 (양방향 지원)
   useEffect(() => {
+    if (!SWAP_ENABLED) return;
     const doQuote = async () => {
       try {
         // provider가 없으면 가격지수 기반 간단 계산으로 폴백
@@ -298,17 +303,18 @@ export function useUniswap(provider?: Provider): UseUniswapReturn {
     // 디바운스
     const timeoutId = setTimeout(() => { void doQuote(); }, 400);
     return () => clearTimeout(timeoutId);
-  }, [lastEdited, swapState.amountIn, swapState.amountOut, swapState.fromToken, swapState.toToken, provider]);
+  }, [lastEdited, swapState.amountIn, swapState.amountOut, swapState.fromToken, swapState.toToken, provider, SWAP_ENABLED]);
 
   // 가스비 추정
   useEffect(() => {
+    if (!SWAP_ENABLED) return;
     if (swapState.amountIn && swapState.fromToken && swapState.toToken) {
       // 실제 추정이 어려운 환경에서는 보수적으로 상수값을 사용하고,
       // 추후 provider 기반으로 동적 추정 로직을 끼울 수 있도록 훅을 둡니다.
       // 0.005 ETH 상당 가스로 가정
       setSwapState(prev => ({ ...prev, gasFee: '0.005' }));
     }
-  }, [swapState.amountIn, swapState.fromToken, swapState.toToken]);
+  }, [swapState.amountIn, swapState.fromToken, swapState.toToken, SWAP_ENABLED]);
 
   // 스왑 유효성 검사
   const isValidSwap = Boolean(
@@ -372,7 +378,7 @@ export function useQuotePolling(
   const [isPolling, setIsPolling] = useState<boolean>(false);
 
   useEffect(() => {
-    if (!provider || !amountIn || parseFloat(amountIn) <= 0) {
+    if (!SWAP_ENABLED || !provider || !amountIn || parseFloat(amountIn) <= 0) {
       setQuote('');
       setIsPolling(false);
       return;
@@ -394,7 +400,7 @@ export function useQuotePolling(
       stopPolling();
       setIsPolling(false);
     };
-  }, [fromToken, toToken, amountIn, provider, interval]);
+  }, [fromToken, toToken, amountIn, provider, interval, SWAP_ENABLED]);
 
   return { quote, isPolling };
 }

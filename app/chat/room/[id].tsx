@@ -937,7 +937,6 @@ function RoomInner() {
   }, []);
   const pickMedia = async (mode: 'image'|'video'|'all') => {
     try {
-      try { await (ImagePicker as any).requestMediaLibraryPermissionsAsync?.(); } catch {}
       const IP: any = ImagePicker as any;
       const mediaTypes = IP.MediaTypeOptions?.[mode==='image'?'Images':mode==='video'?'Videos':'All'] || IP.MediaTypeOptions.All;
       const allowsMultiple = mode !== 'video';
@@ -1058,7 +1057,6 @@ function RoomInner() {
   const [qrLink, setQrLink] = useState<string>('');
   const sendQR = async () => {
     try {
-      try { await (ImagePicker as any).requestMediaLibraryPermissionsAsync?.(); } catch {}
       const IP: any = ImagePicker as any;
       const res: any = await IP.launchImageLibraryAsync?.({ mediaTypes: IP.MediaTypeOptions.Images, allowsMultipleSelection: false, selectionLimit: 1, quality: 1, base64: false, exif: false });
       if (res && !res.canceled && Array.isArray(res.assets) && res.assets[0]?.uri) {

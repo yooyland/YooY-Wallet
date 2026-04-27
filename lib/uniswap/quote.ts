@@ -13,6 +13,7 @@ import {
     DEFAULT_SLIPPAGE,
 } from './constants';
 import { getTokenAddressBySymbol, isAllowedPair, SwapSymbol } from '@/lib/swapConfig';
+import { SWAP_ENABLED } from '@/lib/featureFlags';
 
 // Mock ethers.js types (실제로는 ethers.js import 필요)
 interface Provider {
@@ -155,6 +156,9 @@ export async function getQuote(
   amountIn: string,
   provider: Provider
 ): Promise<string> {
+  if (!SWAP_ENABLED) {
+    return '';
+  }
   try {
     console.log(`환율 조회 시작: ${amountIn} ${fromToken} → ${toToken}`);
     
@@ -227,7 +231,8 @@ export function startQuotePolling(
   
   const poll = async () => {
     if (!isPolling) return;
-    
+    if (!SWAP_ENABLED) return;
+
     try {
       const quote = await getQuote(fromToken, toToken, amountIn, provider);
       callback(quote);

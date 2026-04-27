@@ -1,5 +1,7 @@
 // 중앙화된 코인 가격 관리 시스템
 // Exchange 페이지의 실제 API 로직을 기반으로 한 단일 소스
+import { Platform } from 'react-native';
+import { fetchJsonWithProxy } from '@/lib/upbit';
 
 export interface CoinPrice {
   symbol: string;
@@ -85,9 +87,16 @@ export async function updateRealTimePrices(): Promise<void> {
     let upbitData: any[] = [];
     
     try {
-      const response = await fetch(`https://api.upbit.com/v1/ticker?markets=${upbitKrwMarkets}`);
-      if (response.ok) {
-        upbitData = await response.json();
+      const url = `https://api.upbit.com/v1/ticker?markets=${upbitKrwMarkets}`;
+      const data = Platform.OS === 'web'
+        ? await fetchJsonWithProxy(url)
+        : await (async () => {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await response.json();
+          })();
+      if (Array.isArray(data)) {
+        upbitData = data;
         console.log(`✅ 업비트 마켓 성공: ${upbitData.length}개`);
       }
     } catch (error) {
@@ -99,9 +108,19 @@ export async function updateRealTimePrices(): Promise<void> {
     let binanceData: any[] = [];
     
     try {
-      const binanceResponse = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=[${binanceUsdtMarkets.split(',').map(s => `"${s}"`).join(',')}]`);
-      if (binanceResponse.ok) {
-        binanceData = await binanceResponse.json();
+      const url = `https://api.binance.com/api/v3/ticker/24hr?symbols=[${binanceUsdtMarkets
+        .split(',')
+        .map(s => `"${s}"`)
+        .join(',')}]`;
+      const data = Platform.OS === 'web'
+        ? await fetchJsonWithProxy(url)
+        : await (async () => {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return await response.json();
+          })();
+      if (Array.isArray(data)) {
+        binanceData = data;
         console.log(`✅ 바이낸스 마켓 성공: ${binanceData.length}개`);
       }
     } catch (error) {

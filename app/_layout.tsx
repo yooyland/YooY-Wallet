@@ -11,8 +11,7 @@ import React, { useEffect, useState } from 'react';
 import 'react-native-reanimated';
 import '../app/global.css';
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
-import { KeyboardAvoidingView, Platform, Keyboard } from 'react-native';
-import * as ReactNative from 'react-native';
+import { KeyboardAvoidingView, Platform, Keyboard, useWindowDimensions } from 'react-native';
 import { setAppStartTime, logAppStartupTime } from '@/lib/perfTimer';
 
 // Mark app start time immediately
@@ -30,11 +29,13 @@ import { Modal, Text, TouchableOpacity, View } from 'react-native';
 import { ensureAuthedUid, firebaseAuth, firestore } from '@/lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { openInternalAppLink, PENDING_DEEPLINK_KEY } from '@/src/features/chatv2/core/openInternalAppLink';
+import { ASYNC_INSTALL_REFERRER_UID_KEY } from '@/lib/internalYoyLedger';
 import { useNotificationStore } from '@/src/features/chat/store/notification.store';
 import * as SecureStore from 'expo-secure-store';
 import * as ExpoLinking from 'expo-linking';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as ScreenCapture from 'expo-screen-capture';
+import { usePlayInAppUpdates } from '@/src/hooks/usePlayInAppUpdates';
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -43,11 +44,16 @@ export const unstable_settings = {
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const [fontsLoaded] = useFonts({});
-  const isReady = fontsLoaded;
+  // 웹 정적 빌드에서 useFonts가 완료되지 않으면 LoadingOverlay가 스택을 가리며 첫 화면이 멈춘 것처럼 보임
+  const isReady = fontsLoaded || Platform.OS === 'web';
+  /** Android: Play 스토어 인앱 업데이트 자동 확인(릴리스 빌드만) */
+  usePlayInAppUpdates();
   const insetsFromCtx = React.useContext(SafeAreaInsetsContext as any) as { top: number; bottom: number; left: number; right: number } | null;
   const insets = insetsFromCtx || { top: 0, bottom: 0, left: 0, right: 0 };
   const pathname = usePathname();
   const needSafePadding = !/\/\(tabs\)\/dashboard(?:\/|$)/i.test(String(pathname || ''));
+  const win = useWindowDimensions();
+  const webIsDesktop = Platform.OS === 'web' && Number(win?.width || 0) >= 720;
 
   // Hard-block legacy chat tree (/chat/*): always keep user on v2.
   useEffect(() => {
@@ -141,16 +147,17 @@ export default function RootLayout() {
     if (typeof window !== 'undefined') {
       idle(() => { void ensureAuthedUid().catch(()=>{}); });
     }
-    // Android 시스템 내비게이션 바/버튼 색상 설정 (블랙 배경 + 라이트 아이콘)
-    (async () => {
-      try {
-        // 동적 로딩: 패키지가 없으면 무시 (웹/개발 환경 호환)
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const NavigationBar = require('expo-navigation-bar');
-        await NavigationBar.setBackgroundColorAsync('#000000');
-        await NavigationBar.setButtonStyleAsync('light');
-      } catch {}
-    })();
+    // Android 시스템 내비게이션 바/버튼 색상 설정 (블랙 배경 + 라이트 아이콘) — 웹에서는 API 없음
+    if (Platform.OS === 'android') {
+      (async () => {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const NavigationBar = require('expo-navigation-bar');
+          await NavigationBar.setBackgroundColorAsync('#000000');
+          await NavigationBar.setButtonStyleAsync('light');
+        } catch {}
+      })();
+    }
     // 성능 문제 완화: 초기 구동 시 대량 권한 요청을 수행하지 않음(각 기능 진입 시 개별 요청)
     // (기존 코드 비활성화; 필요 시 기능 화면에서 onPress 시점에 요청)
     
@@ -170,6 +177,15 @@ export default function RootLayout() {
         const path = String((parsed as any)?.path || (parsed as any)?.hostname || '').toLowerCase();
         const qp: any = (parsed as any)?.queryParams || {};
         console.log('[DeepLink] handle:', url, 'path:', path, 'qp:', qp);
+
+        const refRaw = qp?.ref ?? qp?.referrer ?? qp?.inviter;
+        const refStr = String(Array.isArray(refRaw) ? refRaw[0] ?? '' : refRaw ?? '')
+          .trim();
+        if (refStr.length >= 8) {
+          try {
+            await AsyncStorage.setItem(ASYNC_INSTALL_REFERRER_UID_KEY, refStr);
+          } catch {}
+        }
 
         // 1) yooy://pay?addr=...&sym=...&amt=... → 지갑 보내기 화면
         if (path.includes('pay') && qp?.addr) {
@@ -230,47 +246,101 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <PreferencesProvider>
-        <AuthProvider>
-          <MarketProvider>
-            <TransactionProvider>
-              <WalletProvider>
-                <QuickActionsProvider>
-                  <WalletConnectProvider>
-                  <AppErrorBoundary>
+        <AppShell
+          isReady={isReady}
+          needSafePadding={needSafePadding}
+          insetsTop={insets.top}
+          insetsBottom={insets.bottom}
+          webIsDesktop={webIsDesktop}
+        />
+      </PreferencesProvider>
+    </ThemeProvider>
+  );
+}
+
+function AppShell({
+  isReady,
+  needSafePadding,
+  insetsTop,
+  insetsBottom,
+  webIsDesktop,
+}: {
+  isReady: boolean;
+  needSafePadding: boolean;
+  insetsTop: number;
+  insetsBottom: number;
+  webIsDesktop: boolean;
+}) {
+  const { webLayoutMode, webLayoutPercent } = usePreferences();
+  const pathname = usePathname();
+
+  const usePhoneFrame = Platform.OS === 'web' && webIsDesktop && webLayoutMode === 'phone';
+  const useCustomFrame = Platform.OS === 'web' && webIsDesktop && webLayoutMode === 'custom' && Number(webLayoutPercent) >= 30 && Number(webLayoutPercent) < 100;
+  const frameWidth = usePhoneFrame ? 480 : (useCustomFrame ? (`${Math.floor(Number(webLayoutPercent))}vw` as any) : ('100%' as any));
+  // iOS 채팅방 화면은 내부에서 KeyboardAvoidingView를 별도로 사용함 → 전역 KAV까지 켜면 이중 패딩으로 "하얀 공간"이 생김
+  const disableGlobalKavForRoute = Platform.OS === 'ios' && /^\/chatv2\/room(?:\/|$)/i.test(String(pathname || ''));
+
+  return (
+    <AuthProvider>
+      <MarketProvider>
+        <TransactionProvider>
+          <WalletProvider>
+            <QuickActionsProvider>
+              <WalletConnectProvider>
+                <AppErrorBoundary>
                   <NotificationSync />
                   <AppUpdateGate />
                   <LoadingOverlay visible={!isReady} message="Preparing a golden experience..." />
                   {/* 전역 키보드 회피: Android는 adjustResize, iOS만 padding 사용 */}
                   <KeyboardAvoidingView
                     style={{ flex: 1 }}
-                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                    behavior={Platform.OS === 'ios' && !disableGlobalKavForRoute ? 'padding' : undefined}
                     // iOS에서만 상단바 높이만큼 오프셋
-                    keyboardVerticalOffset={Platform.OS === 'ios' ? ( (needSafePadding ? insets.top : 0) + 56 ) : 0}
+                    keyboardVerticalOffset={Platform.OS === 'ios' && !disableGlobalKavForRoute ? ((needSafePadding ? insetsTop : 0) + 56) : 0}
                   >
-                    {/* 대시보드 이외 모든 페이지에 안전영역 패딩 적용 */}
-                    <View style={{ flex: 1, paddingTop: needSafePadding ? insets.top : 0, paddingBottom: (needSafePadding ? insets.bottom : 0), backgroundColor: '#0C0C0C' }}>
-                  <Stack screenOptions={{ headerShown: false }}>
-                    <Stack.Screen name="(auth)" />
-                    <Stack.Screen name="(onboarding)" />
-                    <Stack.Screen name="(tabs)" />
-                    <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal', headerShown: true }} />
-                  </Stack>
-                  <RequireAuthGate />
-                  <WalletGate />
-                  <LanguageCurrencyGate />
+                    <View style={{ flex: 1, backgroundColor: '#000000' }}>
+                      <View
+                        style={{
+                          flex: 1,
+                          alignSelf: 'stretch',
+                          alignItems: (usePhoneFrame || useCustomFrame) ? 'center' : 'stretch',
+                          justifyContent: 'flex-start',
+                        }}
+                      >
+                        <View
+                          style={{
+                            flex: 1,
+                            width: frameWidth,
+                            maxWidth: frameWidth,
+                            borderLeftWidth: (usePhoneFrame || useCustomFrame) ? 1 : 0,
+                            borderRightWidth: (usePhoneFrame || useCustomFrame) ? 1 : 0,
+                            borderColor: (usePhoneFrame || useCustomFrame) ? '#2a2418' : 'transparent',
+                            backgroundColor: '#0C0C0C',
+                            paddingTop: needSafePadding ? insetsTop : 0,
+                            paddingBottom: needSafePadding ? insetsBottom : 0,
+                          }}
+                        >
+                          <Stack screenOptions={{ headerShown: false }}>
+                            <Stack.Screen name="(auth)" />
+                            <Stack.Screen name="(onboarding)" />
+                            <Stack.Screen name="(tabs)" />
+                            <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal', headerShown: true }} />
+                          </Stack>
+                          <RequireAuthGate />
+                          <WalletGate />
+                          <LanguageCurrencyGate />
+                        </View>
+                      </View>
                     </View>
                   </KeyboardAvoidingView>
-                  {/* 블랙 배경에 가독성 확보를 위해 상태바 아이콘/텍스트를 화이트로 */}
                   <StatusBar style="light" backgroundColor="#000000" />
-                  </AppErrorBoundary>
-                  </WalletConnectProvider>
-                </QuickActionsProvider>
-              </WalletProvider>
-            </TransactionProvider>
-          </MarketProvider>
-        </AuthProvider>
-      </PreferencesProvider>
-    </ThemeProvider>
+                </AppErrorBoundary>
+              </WalletConnectProvider>
+            </QuickActionsProvider>
+          </WalletProvider>
+        </TransactionProvider>
+      </MarketProvider>
+    </AuthProvider>
   );
 }
 
@@ -331,8 +401,12 @@ function WalletGate() {
         const addr = await SecureStore.getItemAsync('WALLET_ADDRESS');
         const isSetup = !!(mn && addr);
         const p = String(pathname || '');
-        const inSetup = p.includes('/(onboarding)/wallet-setup');
-        const inAuth = p.startsWith('/(auth)');
+        const inSetup = p.includes('/(onboarding)/wallet-setup') || p.includes('/wallet-setup');
+        const inAuth =
+          p.startsWith('/(auth)') ||
+          p === '/login' || p.startsWith('/login/') ||
+          p === '/register' || p.startsWith('/register/') ||
+          p === '/forgot' || p.startsWith('/forgot/');
         // 지갑 미설정: 인증 화면과 온보딩 제외한 모든 화면에서 강제 온보딩
         if (!isSetup && !inSetup && !inAuth) {
           router.replace('/(onboarding)/wallet-setup');
@@ -349,7 +423,7 @@ function NotificationSync() {
   const [uid, setUid] = React.useState<string | null>(() => firebaseAuth.currentUser?.uid || null);
   React.useEffect(() => {
     const { onAuthStateChanged } = require('firebase/auth');
-    const unsubAuth = onAuthStateChanged(firebaseAuth, (user) => {
+    const unsubAuth = onAuthStateChanged(firebaseAuth, (user: any) => {
       setUid(user?.uid || null);
     });
     return () => { try { unsubAuth(); } catch {} };

@@ -14,6 +14,7 @@ import { fetchPricesUsd } from '@/lib/prices';
 import priceManager from '@/lib/priceManager';
 import { fetchHistoricalUsd, getDecimalsForSymbol } from '@/lib/prices';
 import { perfStart, perfEnd } from '@/lib/perfTimer';
+import { mergeInternalYoyLedgerIntoBalances, sanitizeInternalYoyLedgerAdjustments } from '@/lib/internalYoyBalanceSync';
 
 type MonitorState = {
   uid: string | null;
@@ -30,6 +31,12 @@ type MonitorState = {
   timeline: Array<{ tag: string; at: number; data?: any }>;
   // actions
   syncMe: (tag?: string, opts?: { force?: boolean }) => Promise<void>;
+  applyLocalChange: (params: {
+    symbol: string;
+    delta: number;
+    type?: string;
+    description?: string;
+  }) => Promise<void>;
 };
 
 let inflight: Promise<void> | null = null;
@@ -87,6 +94,7 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
           const u0 = (firebaseAuth as any)?.currentUser;
           const uid0 = u0?.uid || null;
           if (uid0) {
+            await sanitizeInternalYoyLedgerAdjustments(uid0);
             const cached0 = await loadCachedMeBalances(uid0);
             if (cached0 && Object.keys(cached0).length > 0) {
         let arr0 = balancesMapToArray(cached0, null);
@@ -140,6 +148,9 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
             arr0 = next;
           }
         } catch {}
+        try {
+          arr0 = await mergeInternalYoyLedgerIntoBalances(uid0, arr0);
+        } catch {}
         set({ balancesMap: cached0, balancesArray: arr0, uid: uid0 });
               log('hydrate-from-cache early', { keys: Object.keys(cached0).length });
             }
@@ -161,6 +172,7 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
           set({ uid: uid, lastError: 'no token/user', syncing: false });
           inflight = null; return;
         }
+        await sanitizeInternalYoyLedgerAdjustments(uid);
         // Ensure link only when address ready, with backoff retries
         if (walletAddrLower) {
           let linked = false;
@@ -188,8 +200,9 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
         })();
         // 3) addresses
         const t0a = Date.now();
-        const addresses = await fetchMeAddresses(idt, { timeoutMs: 25_000 } as any);
-        log('GET /me/addresses', { ms: Date.now() - t0a, addresses });
+        const addressesRaw = await fetchMeAddresses(idt, { timeoutMs: 25_000 } as any);
+        const addresses = Array.from(new Set((addressesRaw || []).map((a: any) => String(a || '').toLowerCase()).filter(Boolean)));
+        log('GET /me/addresses', { ms: Date.now() - t0a, addressesRaw, addresses });
         // 4) balances: 서버 스냅샷(타임아웃 8~10s)
         const t0b = Date.now();
         const balancesRes = await fetchMeBalances(idt, { timeoutMs: 25_000 } as any);
@@ -273,6 +286,9 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
             }
             balancesArray = next;
           }
+        } catch {}
+        try {
+          balancesArray = await mergeInternalYoyLedgerIntoBalances(uid, balancesArray);
         } catch {}
         if (balancesArray.length > 0) set({ balancesMap: balances || {}, balancesArray });
         // 6) transactions (최대 50개로 제한, buyPrice 계산은 백그라운드)
@@ -401,7 +417,23 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
       }
     })();
     return inflight;
-  }
+  },
+  applyLocalChange: async ({ symbol, delta, type, description }) => {
+    const u = (firebaseAuth as any)?.currentUser?.uid as string | undefined;
+    if (!u || !String(symbol || '').trim()) return;
+    const key = `monitor.local.adjustments:${u}`;
+    const raw = await AsyncStorage.getItem(key);
+    const arr: Array<{ symbol: string; delta: number; ts?: number; type?: string; note?: string }> = raw ? JSON.parse(raw) : [];
+    arr.push({
+      symbol: String(symbol).toUpperCase(),
+      delta: Number(delta) || 0,
+      ts: Date.now(),
+      type: type || 'adjust',
+      note: description || '',
+    });
+    await AsyncStorage.setItem(key, JSON.stringify(arr));
+    await get().syncMe('[applyLocalChange]', { force: true });
+  },
 }));
 
 // 초기 하이드레이트: 앱 시작 직후 캐시된 잔액을 즉시 표시(로그인 직후를 기다리지 않음)

@@ -26,18 +26,18 @@ import { logAttach } from '../core/attachLog';
 import { yyChatFlow } from '../core/chatFlowLog';
 import type { ChatRoomTypeV2 } from '../core/roomSchema';
 import { resolveChatDisplayNameFromUserDoc } from '../core/chatDisplayName';
+import { isRoomExplodedV2 } from '../core/ttlEngine';
 
 const logDm = (event: string, payload: Record<string, any>) => {
   try {
-    // eslint-disable-next-line no-console
-    console.log('[YY_CHAT_V2_DM]', JSON.stringify({ event, ...payload }));
+    // 고빈도 로그는 성능을 크게 저하시킴(특히 web) → yyChatFlow 플래그에 따라 출력
+    yyChatFlow(`dm.${event}`, payload);
   } catch {}
 };
 
 function logImgSend(prefix: string, payload: Record<string, any>) {
   try {
-    // eslint-disable-next-line no-console
-    console.log(prefix, JSON.stringify(payload));
+    yyChatFlow(prefix.replace(/^\[|\]$/g, ''), payload);
   } catch {}
 }
 
@@ -245,6 +245,17 @@ function sanitizeMessageForFirestore(msg: ChatMessageV2): Record<string, any> {
 }
 
 async function writeMessageV2(firestore: Firestore, msg: ChatMessageV2, opts?: WriteMsgOpts): Promise<void> {
+  const rid = String((msg as any)?.roomId || '').trim();
+  if (rid) {
+    const rs = await getDoc(getRoomDocRef(firestore, rid));
+    if (rs.exists()) {
+      const r = rs.data() as any;
+      if (String(r?.type) === 'ttl') {
+        const probe = { type: 'ttl' as const, ttl: r?.ttl, roomExpiresAt: r?.roomExpiresAt };
+        if (isRoomExplodedV2(probe, Date.now())) throw new Error('ttl_room_exploded');
+      }
+    }
+  }
   const out = sanitizeMessageForFirestore(withMessageTtlFields(msg, opts));
   const ref = getRoomMessageDocRef(firestore, String(out.roomId), String(out.id));
   try {
@@ -324,11 +335,11 @@ async function finalizeImageMessageSafeV2(input: {
     serverUpdatedAt: serverTimestamp(),
   } as any);
   // eslint-disable-next-line no-console
-  console.log('[IMG_SEND_WRITE_READY]', { roomId, messageId, remoteUrl });
+  yyChatFlow('img.send.write_ready', { roomId, messageId, remoteUrl });
   try {
     await updateDoc(ref, payload as any);
     // eslint-disable-next-line no-console
-    console.log('[IMG_SEND_FINAL]', { roomId, messageId, mode: 'updateDoc' });
+    yyChatFlow('img.send.final', { roomId, messageId, mode: 'updateDoc' });
   } catch (primaryError: any) {
     // eslint-disable-next-line no-console
     console.error('[IMG_SEND_ERROR]', {
@@ -347,7 +358,7 @@ async function finalizeImageMessageSafeV2(input: {
       { merge: true }
     );
     // eslint-disable-next-line no-console
-    console.log('[IMG_SEND_FINAL]', { roomId, messageId, mode: 'setDoc-merge-fallback' });
+    yyChatFlow('img.send.final', { roomId, messageId, mode: 'setDoc-merge-fallback' });
   }
 }
 
@@ -1013,14 +1024,10 @@ export async function sendMediaV2(
     messageStatus: 'sending',
   });
   yyChatFlow('media.pick', { roomId: ctx.roomId, messageId, type: input.type, mimeType: input.mimeType, filename: input.filename, uri: String(input.localUri || '').slice(0, 80) });
-  // eslint-disable-next-line no-console
-  console.log('[IMG_FLOW]', {
-    step: 'PICKED',
+  yyChatFlow('img.flow.picked', {
     roomId: ctx.roomId,
     messageId,
-    localUri: String(input.localUri || ''),
-    remoteUrl: '',
-    url: '',
+    localUri: String(input.localUri || '').slice(0, 180),
   });
   try {
     // eslint-disable-next-line no-undef

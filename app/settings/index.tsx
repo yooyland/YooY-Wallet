@@ -17,6 +17,7 @@ export default function SettingsHome() {
     { title: '프로필', subtitle: '이름 / 아바타', href: '/settings/profile', icon: 'person.crop.circle' as const },
     { title: '언어', subtitle: language === 'en' ? 'English' : '한국어', href: '/settings/language', icon: 'textformat.abc' as const },
     { title: '테마', subtitle: '라이트/다크', href: '/settings/theme', icon: 'paintbrush' as const },
+    { title: '화면 너비', subtitle: 'PC 표시 방식', href: '/settings/layout', icon: 'rectangle.expand.vertical' as const },
     { title: '통화 단위', subtitle: '통화 표시', href: '/settings/currency', icon: 'dollarsign.circle' as const },
     { title: '알림', subtitle: '푸시/알림 설정', href: '/settings/notifications', icon: 'bell.fill' as const },
     { title: '보안', subtitle: '잠금/인증', href: '/settings/security', icon: 'lock.fill' as const },

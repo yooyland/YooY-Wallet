@@ -8,9 +8,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Link } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { IOS_APP_STORE_SHELF } from '@/lib/featureFlags';
+import { loadUserProfileLite } from '@/lib/userProfile';
+import { useEffect, useMemo, useState } from 'react';
 import {
     Dimensions,
+    Linking,
     ScrollView,
     StyleSheet,
     TouchableOpacity,
@@ -32,63 +35,54 @@ export default function MoreScreen() {
   useEffect(() => {
     (async () => {
       if (currentUser?.uid) {
-        const info = await AsyncStorage.getItem(`u:${currentUser.uid}:profile.info`);
-        const photo = await AsyncStorage.getItem(`u:${currentUser.uid}:profile.photoUri`);
-        
-        if (info) {
-          try {
-            const parsedInfo = JSON.parse(info);
-            setUsername(parsedInfo.username || currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
-          } catch {
-            setUsername(currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
-          }
-        } else {
-          setUsername(currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
-        }
-        
-        setAvatarUri(photo);
+        const p = await loadUserProfileLite({
+          uid: currentUser.uid,
+          displayName: (currentUser as any)?.displayName,
+          email: (currentUser as any)?.email,
+        });
+        setUsername(p.username || (currentUser?.email?.split('@')[0] || 'User'));
+        setAvatarUri(p.photoUri || null);
       }
     })();
   }, [currentUser?.uid, profileUpdated]);
 
-  const moreMenuItems = [
-    {
-      title: 'Explore',
-      icon: 'paperplane.fill',
-      href: '/explore',
-      description: 'Discover new features'
-    },
-    {
-      title: 'Shop / NFT',
-      icon: 'bag.fill',
-      href: '/shop',
-      description: 'NFT marketplace'
-    },
-    {
-      title: 'Profile',
-      icon: 'person.circle.fill',
-      href: '/profile',
-      description: 'Profile settings'
-    },
-    {
-      title: 'Settings',
-      icon: 'gearshape.fill',
-      href: '/settings',
-      description: 'App preferences'
-    },
-    {
-      title: 'Help',
-      icon: 'questionmark.circle.fill',
-      href: '/help',
-      description: 'Support center'
-    },
-    {
-      title: 'About',
-      icon: 'info.circle.fill',
-      href: '/about',
-      description: 'App information'
+  const moreMenuItems = useMemo(() => {
+    const termsUrl = (process.env.EXPO_PUBLIC_TERMS_URL as string) || 'https://yooy.land/terms';
+    const privacyUrl = (process.env.EXPO_PUBLIC_PRIVACY_URL as string) || 'https://yooy.land/privacy';
+    const profileTitle = language === 'ko' ? '프로필 편집' : 'Edit profile';
+    const settingsTitle = language === 'ko' ? '설정' : 'Settings';
+    const helpTitle = language === 'ko' ? '도움말' : 'Help';
+    const aboutTitle = language === 'ko' ? '정보' : 'About';
+    const termsTitle = language === 'ko' ? '이용약관' : 'Terms of Service';
+    const privacyTitle = language === 'ko' ? '개인정보처리방침' : 'Privacy Policy';
+
+    const core: Array<{
+      title: string;
+      icon: string;
+      href: string;
+      description: string;
+      external?: boolean;
+    }> = [
+      { title: profileTitle, icon: 'person.circle.fill', href: '/settings/profile', description: language === 'ko' ? '닉네임·사진' : 'Nickname & photo' },
+      { title: settingsTitle, icon: 'gearshape.fill', href: '/settings', description: language === 'ko' ? '앱 환경설정' : 'App preferences' },
+      { title: helpTitle, icon: 'questionmark.circle.fill', href: '/help', description: language === 'ko' ? '고객 지원' : 'Support center' },
+      { title: aboutTitle, icon: 'info.circle.fill', href: '/about', description: language === 'ko' ? '앱 정보' : 'App information' },
+    ];
+
+    if (IOS_APP_STORE_SHELF) {
+      return [
+        ...core,
+        { title: termsTitle, icon: 'doc.text.fill', href: termsUrl, description: language === 'ko' ? '웹에서 열기' : 'Open in browser', external: true },
+        { title: privacyTitle, icon: 'hand.raised.fill', href: privacyUrl, description: language === 'ko' ? '웹에서 열기' : 'Open in browser', external: true },
+      ];
     }
-  ];
+
+    return [
+      { title: 'Explore', icon: 'paperplane.fill', href: '/explore', description: 'Discover new features' },
+      { title: 'Shop / NFT', icon: 'bag.fill', href: '/shop', description: 'NFT marketplace' },
+      ...core,
+    ];
+  }, [language]);
 
   return (
     <ThemedView style={{ flex: 1 }}>
@@ -109,22 +103,41 @@ export default function MoreScreen() {
         </View>
 
         <View style={styles.menuGrid}>
-          {moreMenuItems.map((item, index) => (
-            <Link key={index} href={item.href} asChild>
-              <TouchableOpacity style={styles.menuItem}>
+          {moreMenuItems.map((item, index) =>
+            item.external ? (
+              <TouchableOpacity
+                key={index}
+                style={styles.menuItem}
+                onPress={() => {
+                  try {
+                    void Linking.openURL(item.href);
+                  } catch {}
+                }}
+              >
                 <View style={styles.menuIcon}>
-                  <IconSymbol size={24} name={item.icon} color="#FFD700" />
+                  <IconSymbol size={24} name={item.icon as any} color="#FFD700" />
                 </View>
                 <View style={styles.menuContent}>
                   <ThemedText style={styles.menuTitle}>{item.title}</ThemedText>
-                  <ThemedText style={styles.menuDescription}>
-                    {item.description}
-                  </ThemedText>
+                  <ThemedText style={styles.menuDescription}>{item.description}</ThemedText>
                 </View>
                 <IconSymbol size={20} name="chevron.right" color="#666" />
               </TouchableOpacity>
-            </Link>
-          ))}
+            ) : (
+              <Link key={index} href={item.href as any} asChild>
+                <TouchableOpacity style={styles.menuItem}>
+                  <View style={styles.menuIcon}>
+                    <IconSymbol size={24} name={item.icon as any} color="#FFD700" />
+                  </View>
+                  <View style={styles.menuContent}>
+                    <ThemedText style={styles.menuTitle}>{item.title}</ThemedText>
+                    <ThemedText style={styles.menuDescription}>{item.description}</ThemedText>
+                  </View>
+                  <IconSymbol size={20} name="chevron.right" color="#666" />
+                </TouchableOpacity>
+              </Link>
+            )
+          )}
         </View>
 
         <View style={styles.footer}>
@@ -150,19 +163,18 @@ export default function MoreScreen() {
           setAvatarUri(newAvatarUri);
           setProfileOpen(false);
           setProfileUpdated(prev => !prev); // 프로필 업데이트 상태 토글
-          
-          // username도 다시 로드
-          if (currentUser?.uid) {
-            const info = await AsyncStorage.getItem(`u:${currentUser.uid}:profile.info`);
-            if (info) {
-              try {
-                const parsedInfo = JSON.parse(info);
-                setUsername(parsedInfo.username || currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
-              } catch {
-                setUsername(currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
-              }
+
+          // username도 Firestore 우선으로 재로드
+          try {
+            if (currentUser?.uid) {
+              const p = await loadUserProfileLite({
+                uid: currentUser.uid,
+                displayName: (currentUser as any)?.displayName,
+                email: (currentUser as any)?.email,
+              });
+              setUsername(p.username || (currentUser?.email?.split('@')[0] || 'User'));
             }
-          }
+          } catch {}
         }}
       />
     </ThemedView>

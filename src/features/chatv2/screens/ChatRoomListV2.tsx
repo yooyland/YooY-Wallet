@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, FlatList, Image, StyleSheet, ScrollView, TextInput } from 'react-native';
+import { View, Text, TouchableOpacity, FlatList, Image, StyleSheet, ScrollView, TextInput, Alert, Keyboard } from 'react-native';
 import { router } from 'expo-router';
 import { firestore } from '@/lib/firebase';
 import { firebaseAuth } from '@/lib/firebase';
@@ -14,6 +14,9 @@ import ChatBottomBar from '@/components/ChatBottomBar';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { chatTr } from '../core/chatI18n';
 import { resolveChatDisplayNameFromUserDoc } from '../core/chatDisplayName';
+import { isRoomExplodedV2 } from '../core/ttlEngine';
+import { currentUserIsAppAdmin } from '../core/adminGhost';
+import { callAdminDeleteChatRoomV2 } from '../services/adminModerationService';
 
 type FilterKey = 'all' | 'dm' | 'group' | 'secret' | 'ttl' | 'notice';
 
@@ -62,8 +65,11 @@ const RoomItem = React.memo(function RoomItem(props: {
   isFavorite: boolean;
   onToggleFavorite: () => void;
   language: string;
+  canAdminGhost?: boolean;
+  onAdminGhost?: () => void;
+  onAdminDeleteRoom?: () => void;
 }) {
-  const { item, onPress, manageMode, selected, onToggleSelect, isFavorite, onToggleFavorite, language } = props;
+  const { item, onPress, manageMode, selected, onToggleSelect, isFavorite, onToggleFavorite, language, canAdminGhost, onAdminGhost, onAdminDeleteRoom } = props;
   const title = String(item.type) === 'dm' ? (item.title || item.peerDisplayName || item.roomId) : (item.title || item.roomId);
   const unread = Number(item.unreadCount || 0);
   const lastMessage = String(item.lastMessage || '');
@@ -90,10 +96,35 @@ const RoomItem = React.memo(function RoomItem(props: {
       }}
       activeOpacity={0.85}
       onLongPress={() => {
-        if (!manageMode) {
-          // long-press select in manage-mode style
-          onToggleSelect();
+        if (manageMode) return;
+        if (canAdminGhost && onAdminGhost) {
+          Alert.alert(
+            chatTr(language, '관리자', 'Admin', '管理者', '管理员'),
+            chatTr(language, '입장 방식을 선택하세요.', 'Choose how to open this room.', '入室方法を選んでください。', '请选择进入方式。'),
+            [
+              { text: chatTr(language, '취소', 'Cancel', 'キャンセル', '取消'), style: 'cancel' },
+              {
+                text: chatTr(language, '유령 입장', 'Ghost entry', '幽霊入室', '幽灵进入'),
+                onPress: () => {
+                  try {
+                    onAdminGhost();
+                  } catch {}
+                },
+              },
+              {
+                text: chatTr(language, '방 삭제', 'Delete room', 'ルーム削除', '删除房间'),
+                style: 'destructive',
+                onPress: () => {
+                  try {
+                    onAdminDeleteRoom?.();
+                  } catch {}
+                },
+              },
+            ]
+          );
+          return;
         }
+        onToggleSelect();
       }}
       delayLongPress={350}
     >
@@ -166,6 +197,7 @@ export default function ChatRoomListV2() {
   const [roomFavorites, setRoomFavorites] = useState<Record<string, boolean>>({});
   const [discoveryRows, setDiscoveryRows] = useState<any[]>([]);
   const discoveryReqId = useRef(0);
+  const isAppAdmin = currentUserIsAppAdmin();
 
   useEffect(() => {
     try { initialize?.(); } catch {}
@@ -260,12 +292,15 @@ export default function ChatRoomListV2() {
       setDiscoveryRows([]);
       return;
     }
-    const qLower = queryText;
+       const qLower = queryText;
+    const adminListAll = qLower === '**' && currentUserIsAppAdmin();
     const t = setTimeout(() => {
       const req = ++discoveryReqId.current;
       (async () => {
         try {
-          const qy = query(collection(firestore, 'rooms'), where('searchVisible', '==', true), limit(250));
+          const qy = adminListAll
+            ? query(collection(firestore, 'rooms'), limit(500))
+            : query(collection(firestore, 'rooms'), where('searchVisible', '==', true), limit(250));
           const snap = await getDocs(qy);
           if (req !== discoveryReqId.current) return;
           const out: any[] = [];
@@ -273,17 +308,23 @@ export default function ChatRoomListV2() {
             const data = docSnap.data() as any;
             const type = String(data?.type || 'group').toLowerCase();
             if (type === 'dm') return;
-            if (data?.isSecret === true || type === 'secret') return;
-            const st = String(data?.roomStatus || 'active').toLowerCase();
-            if (st && st !== 'active') return;
-            const ttlSt = data?.ttl?.ttlStatus != null ? String(data.ttl.ttlStatus).toLowerCase() : '';
-            if (ttlSt === 'expired') return;
+            if (!adminListAll) {
+              if (data?.isSecret === true || type === 'secret') return;
+              const st = String(data?.roomStatus || 'active').toLowerCase();
+              if (st && st !== 'active') return;
+              const ttlSt = data?.ttl?.ttlStatus != null ? String(data.ttl.ttlStatus).toLowerCase() : '';
+              if (ttlSt === 'expired') return;
+              if (String(type).toLowerCase() === 'ttl') {
+                const probe = { type: 'ttl' as const, ttl: data?.ttl, roomExpiresAt: data?.roomExpiresAt };
+                if (isRoomExplodedV2(probe as any, Date.now())) return;
+              }
+            }
             const roomId = docSnap.id;
             const title = String(data?.title || '');
             const desc = String(data?.description || '');
             const tags = Array.isArray(data?.tags) ? data.tags.map((x: any) => String(x)).join(' ') : '';
             const hay = `${title} ${desc} ${tags} ${type} ${roomId}`.toLowerCase();
-            if (!hay.includes(qLower)) return;
+            if (!adminListAll && !hay.includes(qLower)) return;
             out.push({
               roomId,
               type: data?.type || 'group',
@@ -305,7 +346,7 @@ export default function ChatRoomListV2() {
       })();
     }, 320);
     return () => clearTimeout(t);
-  }, [uid, searchOpen, queryText]);
+  }, [uid, searchOpen, queryText, isAppAdmin]);
 
   const list = useMemo(() => rows.map((r) => ({ ...r, room: roomsById[r.roomId] })).filter((x) => x.room), [rows, roomsById]);
   const listFiltered = useMemo(() => {
@@ -386,7 +427,7 @@ export default function ChatRoomListV2() {
           <TouchableOpacity style={styles.headerIcon} onPress={() => { try { router.push('/chatv2/rooms'); } catch {} }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Text style={styles.iconText}>💬</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.headerIcon} onPress={() => { try { router.push('/chatv2/rooms'); } catch {} }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+          <TouchableOpacity style={styles.headerIcon} onPress={() => { try { router.push('/chatv2/settings' as any); } catch {} }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
             <Text style={styles.iconText}>⚙️</Text>
           </TouchableOpacity>
         </View>
@@ -506,6 +547,9 @@ export default function ChatRoomListV2() {
             style={{ flex: 1 }}
             data={visibleRows}
             keyExtractor={(it: any) => String(it.roomId)}
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            onScrollBeginDrag={() => Keyboard.dismiss()}
             ListHeaderComponent={
               ['all', 'dm'].includes(filter) ? (
                 <View style={{ paddingTop: 8 }}>
@@ -530,6 +574,52 @@ export default function ChatRoomListV2() {
                 isFavorite={!!roomFavorites[String(item.roomId)]}
                 onToggleFavorite={() => toggleRoomFavorite(String(item.roomId))}
                 language={language}
+                canAdminGhost={isAppAdmin}
+                onAdminGhost={() => {
+                  try {
+                    router.push({ pathname: '/chatv2/room', params: { id: String(item.roomId), ghost: '1' } } as any);
+                  } catch {}
+                }}
+                onAdminDeleteRoom={() => {
+                  const rid = String(item.roomId || '').trim();
+                  if (!rid) return;
+                  Alert.alert(
+                    chatTr(language, '방 삭제', 'Delete room', 'ルーム削除', '删除房间'),
+                    chatTr(
+                      language,
+                      '이 방을 완전히 삭제할까요? 모든 멤버가 나가며 검색·입장이 불가능해집니다.',
+                      'Permanently delete this room? All members will be removed and it will not appear in search.',
+                      'このルームを完全に削除しますか？全員が退室し、検索・入室できなくなります。',
+                      '将永久删除此房间？所有成员会被移出，且无法搜索或进入。'
+                    ),
+                    [
+                      { text: chatTr(language, '취소', 'Cancel', 'キャンセル', '取消'), style: 'cancel' },
+                      {
+                        text: chatTr(language, '삭제', 'Delete', '削除', '删除'),
+                        style: 'destructive',
+                        onPress: () => {
+                          void (async () => {
+                            try {
+                              await callAdminDeleteChatRoomV2({ roomId: rid, reason: 'admin_list_long_press' });
+                              try {
+                                useChatV2Store.getState().evictRoom(rid);
+                              } catch {}
+                              Alert.alert(
+                                chatTr(language, '완료', 'Done', '完了', '完成'),
+                                chatTr(language, '방이 삭제되었습니다.', 'The room was deleted.', 'ルームを削除しました。', '房间已删除。')
+                              );
+                            } catch (e: any) {
+                              Alert.alert(
+                                chatTr(language, '실패', 'Failed', '失敗', '失败'),
+                                String(e?.message || e || 'delete_failed')
+                              );
+                            }
+                          })();
+                        },
+                      },
+                    ]
+                  );
+                }}
                 onPress={() => {
                   try {
                     router.push({ pathname: '/chatv2/room', params: { id: String(item.roomId) } } as any);

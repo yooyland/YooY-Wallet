@@ -10,6 +10,7 @@ import {
     TouchableOpacity,
     View
 } from 'react-native';
+import { EXCHANGE_UI_ENABLED, ORDER_ENABLED } from '@/lib/featureFlags';
 
 type Props = {
   currentScreen?: string;
@@ -32,10 +33,10 @@ const Footer: React.FC<Props> = ({ currentScreen }) => {
     }).start();
   }, []);
 
-  const navigationLinks = [
+  const navigationLinks: { name: string; route: string }[] = [
     { name: 'Home', route: '/(tabs)/dashboard' },
     { name: 'Wallet', route: '/(tabs)/wallet' },
-    { name: 'Exchange', route: '/(tabs)/exchange' },
+    ...(EXCHANGE_UI_ENABLED ? [{ name: 'Exchange', route: '/(tabs)/exchange' }] : []),
     { name: 'Chat', route: '/(tabs)/chat' },
     { name: 'Shop', route: '/(tabs)/shop' },
   ];
@@ -67,15 +68,19 @@ const Footer: React.FC<Props> = ({ currentScreen }) => {
             <Text style={[styles.appSummaryItem, isTablet && styles.tabletAppSummaryItem, isMobile && styles.mobileAppSummaryItem]}>
               · Wallet
             </Text>
+            {EXCHANGE_UI_ENABLED ? (
             <Text style={[styles.appSummaryItem, isTablet && styles.tabletAppSummaryItem, isMobile && styles.mobileAppSummaryItem]}>
               · Exchange
             </Text>
+            ) : null}
             <Text style={[styles.appSummaryItem, isTablet && styles.tabletAppSummaryItem, isMobile && styles.mobileAppSummaryItem]}>
               · Chat
             </Text>
+            {EXCHANGE_UI_ENABLED ? (
             <Text style={[styles.appSummaryItem, isTablet && styles.tabletAppSummaryItem, isMobile && styles.mobileAppSummaryItem]}>
               · NFT
             </Text>
+            ) : null}
             <Text style={[styles.appSummaryItem, isTablet && styles.tabletAppSummaryItem, isMobile && styles.mobileAppSummaryItem]}>
               · Shop
             </Text>

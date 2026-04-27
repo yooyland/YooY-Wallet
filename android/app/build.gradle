@@ -88,9 +88,14 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
 
-// Play / local AAB: MYAPP_VERSION_* in android/gradle.properties
-def myAppVersionCode = (findProperty('MYAPP_VERSION_CODE') ?: '2026033101').toInteger()
-def myAppVersionName = findProperty('MYAPP_VERSION_NAME') ?: '1.0.004'
+// Play / local AAB: version override precedence
+// 1) Environment variables (PowerShell: $env:ANDROID_VERSION_CODE / $env:ANDROID_VERSION_NAME)
+// 2) Gradle properties (-PMYAPP_VERSION_CODE / android/gradle.properties)
+// 3) Fallback defaults
+def envVersionCode = System.getenv("ANDROID_VERSION_CODE")
+def envVersionName = System.getenv("ANDROID_VERSION_NAME")
+def myAppVersionCode = ((envVersionCode ?: findProperty('MYAPP_VERSION_CODE') ?: '2026033101') as String).toInteger()
+def myAppVersionName = (envVersionName ?: findProperty('MYAPP_VERSION_NAME') ?: '1.0.004') as String
 
 android {
     ndkVersion rootProject.ext.ndkVersion

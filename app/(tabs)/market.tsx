@@ -6,13 +6,14 @@ import TopBar from '@/components/top-bar';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAllSupportedCoins, getCoinPriceByCurrency, updateRealTimePrices } from '@/lib/priceManager';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { usePreferences } from '@/contexts/PreferencesContext';
 import { t } from '@/i18n';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Image, Modal, ScrollView, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import { useMergedWalletAssets } from '@/contexts/MergedWalletAssetsContext';
 import { useTransactionStore } from '@/src/stores/transaction.store';
+import { IOS_APP_STORE_SHELF, TRADING_UI_ENABLED, WEB_TRADE_BLOCKED } from '@/lib/featureFlags';
 
 const API_BASE = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://api-test.yooyland.com';
 const isDevelopment = !process.env.EXPO_PUBLIC_API_BASE_URL || /localhost|127\.0\.0\.1/i.test(process.env.EXPO_PUBLIC_API_BASE_URL || '');
@@ -24,6 +25,12 @@ const isDevelopment = !process.env.EXPO_PUBLIC_API_BASE_URL || /localhost|127\.0
 const MARKET_LIVE_TRADING_ENABLED = String(process.env.EXPO_PUBLIC_MARKET_LIVE_TRADING || '').trim() === '1';
 
 export default function MarketTab() {
+  if (WEB_TRADE_BLOCKED) {
+    return <Redirect href="/(tabs)/dashboard" />;
+  }
+  if (IOS_APP_STORE_SHELF) {
+    return <Redirect href="/(tabs)/dashboard" />;
+  }
   const router = useRouter();
   const { currentUser, accessToken } = useAuth();
   const { mergedAssets } = useMergedWalletAssets();
@@ -41,7 +48,10 @@ export default function MarketTab() {
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [profileUpdated, setProfileUpdated] = useState(false);
   const [username, setUsername] = useState<string>('');
-  const [selectedMainTab, setSelectedMainTab] = useState<'market' | 'order' | 'orderHistory'>('order');
+  const [selectedMainTab, setSelectedMainTab] = useState<'market' | 'order' | 'orderHistory'>(() => (TRADING_UI_ENABLED ? 'order' : 'market'));
+  useEffect(() => {
+    if (!TRADING_UI_ENABLED && selectedMainTab !== 'market') setSelectedMainTab('market');
+  }, [selectedMainTab]);
   
   // 주문 관련 상태
   const [selectedOrderMarket, setSelectedOrderMarket] = useState('Market');
@@ -209,21 +219,14 @@ export default function MarketTab() {
   useEffect(() => {
     (async () => {
       if (currentUser?.uid) {
-        const info = await AsyncStorage.getItem(`u:${currentUser.uid}:profile.info`);
-        const photo = await AsyncStorage.getItem(`u:${currentUser.uid}:profile.photoUri`);
-        
-        if (info) {
-          try {
-            const parsedInfo = JSON.parse(info);
-            setUsername(parsedInfo.username || currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
-          } catch {
-            setUsername(currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
-          }
-        } else {
-          setUsername(currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
-        }
-        
-        setAvatarUri(photo);
+        const { loadUserProfileLite } = await import('@/lib/userProfile');
+        const p = await loadUserProfileLite({
+          uid: currentUser.uid,
+          displayName: (currentUser as any)?.displayName,
+          email: (currentUser as any)?.email,
+        });
+        setUsername(p.username || (currentUser?.email?.split('@')[0] || 'User'));
+        setAvatarUri(p.photoUri || null);
       }
     })();
   }, [currentUser?.uid, profileUpdated]);
@@ -381,7 +384,7 @@ export default function MarketTab() {
     const usdtMarket = `USDT-${symbol}`;
     
     // KRW 마켓 우선으로 이동
-    router.push(`/market/${krwMarket}?tab=주문`);
+    router.push(`/market/${krwMarket}?tab=${TRADING_UI_ENABLED ? '주문' : '차트'}`);
   };
 
   const formatPrice = (price: number) => {
@@ -839,7 +842,7 @@ export default function MarketTab() {
         profileUpdated={profileUpdated}
       />
 
-      {!MARKET_LIVE_TRADING_ENABLED ? (
+      {TRADING_UI_ENABLED && !MARKET_LIVE_TRADING_ENABLED ? (
         <View style={styles.paperTradingBanner}>
           <ThemedText style={styles.paperTradingBannerTitle}>
             {language === 'ko' ? '모의거래' : language === 'ja' ? 'デモ取引' : 'Paper trading'}
@@ -864,22 +867,26 @@ export default function MarketTab() {
             Market
           </ThemedText>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.mainTab, selectedMainTab === 'order' && styles.mainTabActive]}
-          onPress={() => setSelectedMainTab('order')}
-        >
-          <ThemedText style={[styles.mainTabText, selectedMainTab === 'order' && styles.mainTabTextActive]}>
-            {t('tabOrder', language)}
-          </ThemedText>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.mainTab, selectedMainTab === 'orderHistory' && styles.mainTabActive]}
-          onPress={() => setSelectedMainTab('orderHistory')}
-        >
-          <ThemedText style={[styles.mainTabText, selectedMainTab === 'orderHistory' && styles.mainTabTextActive]}>
-            {t('history', language)}
-          </ThemedText>
-        </TouchableOpacity>
+        {TRADING_UI_ENABLED ? (
+          <>
+            <TouchableOpacity
+              style={[styles.mainTab, selectedMainTab === 'order' && styles.mainTabActive]}
+              onPress={() => setSelectedMainTab('order')}
+            >
+              <ThemedText style={[styles.mainTabText, selectedMainTab === 'order' && styles.mainTabTextActive]}>
+                {t('tabOrder', language)}
+              </ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.mainTab, selectedMainTab === 'orderHistory' && styles.mainTabActive]}
+              onPress={() => setSelectedMainTab('orderHistory')}
+            >
+              <ThemedText style={[styles.mainTabText, selectedMainTab === 'orderHistory' && styles.mainTabTextActive]}>
+                {t('history', language)}
+              </ThemedText>
+            </TouchableOpacity>
+          </>
+        ) : null}
         <View style={{ flex: 1 }} />
       </View>
 
@@ -1016,7 +1023,7 @@ export default function MarketTab() {
           </>
         )}
 
-        {selectedMainTab === 'order' && (
+        {TRADING_UI_ENABLED && selectedMainTab === 'order' && (
           <View style={styles.orderSection}>
             {/* 거래 유형 (상단으로 이동) */}
             <View style={styles.orderTypeContainer}>
@@ -1488,7 +1495,7 @@ export default function MarketTab() {
           </View>
         )}
 
-        {selectedMainTab === 'orderHistory' && (
+        {TRADING_UI_ENABLED && selectedMainTab === 'orderHistory' && (
           <View style={styles.orderHistorySection}>
             <ThemedText style={styles.sectionTitle}>{t('orderHistory', language)}</ThemedText>
 

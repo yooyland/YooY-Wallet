@@ -21,7 +21,11 @@
     "android:clean-cache": "node -e \"try{require('fs').rmSync('node_modules/.cache',{recursive:true,force:true});console.log('Metro cache cleared');}catch(e){}\"",
     "android:bundle:win": "set NODE_ENV=production&& set NODE_OPTIONS=--max-old-space-size=8192&& set METRO_WORKER_COUNT=1&& cd android&& gradlew :app:bundleRelease --no-daemon --no-parallel",
     "android:bundle:win:clean": "npm run android:clean-cache && npm run android:bundle:win",
-    "android:release": "powershell -ExecutionPolicy Bypass -File ./build-release.ps1"
+    "android:release": "powershell -ExecutionPolicy Bypass -File ./build-release.ps1",
+    "web:build": "npx expo export -p web --output-dir web-dist && node scripts/patch-web-export-html-modules.cjs",
+    "web:dev": "expo start --web",
+    "web:vite:build": "npm run build --prefix ./web",
+    "web:vite:dev": "npm run dev --prefix ./web"
   },
   "engines": {
     "node": "20.x"
@@ -56,6 +60,7 @@
     "expo-image": "~3.0.10",
     "expo-image-loader": "~6.0.0",
     "expo-image-picker": "~17.0.8",
+    "expo-in-app-updates": "^0.9.0",
     "expo-intent-launcher": "~13.0.8",
     "expo-linear-gradient": "~15.0.7",
     "expo-linking": "~8.0.11",

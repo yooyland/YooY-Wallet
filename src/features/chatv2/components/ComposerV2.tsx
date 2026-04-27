@@ -8,6 +8,7 @@ import type { Firestore } from 'firebase/firestore';
 import type { FirebaseStorage } from 'firebase/storage';
 import type { ChatRoomV2 } from '../core/roomSchema';
 import { getMessageExpireSecondsV2 } from '../core/ttlEngine';
+import { isChatV2InviteJoinHttpsUrl } from '../core/linkRouting';
 import { useChatV2Store } from '../store/chatv2.store';
 import {
   sendLinkV2,
@@ -121,6 +122,8 @@ type Props = {
   room: ChatRoomV2;
   uid: string;
   fontSize?: number;
+  /** iOS 키보드 노출 시 하단 safe-area 패딩을 0으로 만들어 입력창-키보드 간격 제거 */
+  keyboardHeight?: number;
   ttlPolicy?: {
     blocked?: boolean;
     reason?: string;
@@ -138,7 +141,7 @@ type Props = {
   onClearReply?: () => void;
 };
 
-export function ComposerV2({ firestore, storage, room, uid, fontSize = 16, ttlPolicy, replyTarget, onClearReply }: Props) {
+export function ComposerV2({ firestore, storage, room, uid, fontSize = 16, keyboardHeight = 0, ttlPolicy, replyTarget, onClearReply }: Props) {
   const insets = useSafeAreaInsets();
   const { language } = usePreferences();
   const t = useMemo(() => (ko: string, en: string, ja?: string, zh?: string) => chatTr(language as any, ko, en, ja, zh), [language]);
@@ -473,7 +476,11 @@ export function ComposerV2({ firestore, storage, room, uid, fontSize = 16, ttlPo
       yyChatFlow('ui.sendText.tap', { roomId: room.id, len: t.length });
       if (isUrlLine) {
         yyChatFlow('ui.sendUrl.tap', { roomId: room.id, url: t.slice(0, 160) });
-        await sendLinkV2(ctx as any, { url: t });
+        if (isChatV2InviteJoinHttpsUrl(t)) {
+          await sendTextOptimisticV2(ctx as any, t, { upsertLocal: (rid, msg) => upsertLocal(rid, msg) });
+        } else {
+          await sendLinkV2(ctx as any, { url: t });
+        }
         clearReply();
       } else {
         const metaMentions = (() => {
@@ -525,7 +532,6 @@ export function ComposerV2({ firestore, storage, room, uid, fontSize = 16, ttlPo
       return;
     }
     try {
-      await ImagePicker.requestMediaLibraryPermissionsAsync();
       const res = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsMultipleSelection: true,
@@ -663,7 +669,6 @@ export function ComposerV2({ firestore, storage, room, uid, fontSize = 16, ttlPo
       return;
     }
     try {
-      await ImagePicker.requestMediaLibraryPermissionsAsync();
       const res = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Videos,
         allowsMultipleSelection: false,
@@ -1018,7 +1023,11 @@ export function ComposerV2({ firestore, storage, room, uid, fontSize = 16, ttlPo
 
       if (urlNorm) {
         try {
-          await sendLinkV2(ctx as any, { url: urlNorm });
+          if (isChatV2InviteJoinHttpsUrl(urlNorm)) {
+            await sendTextOptimisticV2(ctx as any, urlNorm, { upsertLocal: (rid, msg) => upsertLocal(rid, msg) });
+          } else {
+            await sendLinkV2(ctx as any, { url: urlNorm });
+          }
           yyChatFlow('ui.sendQR.url.message.ok', { roomId: room.id, urlLen: urlNorm.length });
         } catch (eLink: any) {
           yyChatFlow('ui.sendQR.url.message.fail', { roomId: room.id, error: String(eLink?.message || eLink || '') });
@@ -1040,7 +1049,6 @@ export function ComposerV2({ firestore, storage, room, uid, fontSize = 16, ttlPo
       return;
     }
     try {
-      await ImagePicker.requestMediaLibraryPermissionsAsync();
       const res = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsMultipleSelection: false,
@@ -1086,8 +1094,10 @@ export function ComposerV2({ firestore, storage, room, uid, fontSize = 16, ttlPo
     }
   };
 
-  // Android: 시스템 내비/창 리사이즈와 겹쳐 보이는 하단 여백(x) 제거 — iOS만 safe area 반영
-  const composerPadBottom = Platform.OS === 'ios' ? Math.max(8, Number(insets.bottom || 0) + 2) : 6;
+  // iOS: 키보드가 올라온 동안에는 safe-area bottom 패딩을 추가하지 않아 입력창이 키보드에 "붙게" 함
+  const composerPadBottom = Platform.OS === 'ios'
+    ? (keyboardHeight > 0 ? 0 : Math.max(8, Number(insets.bottom || 0) + 2))
+    : 6;
 
   /** 첨부 시트: 6개 메뉴 + 최근사진이 잘리지 않도록 최대 높이 + 하단 safe area */
   const attachSheetMaxH = useMemo(() => {

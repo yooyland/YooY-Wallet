@@ -217,6 +217,8 @@ export async function subscribeLatestMessagesV2(input: {
   roomId: string;
   uid: string;
   limitN?: number;
+  /** 관리자 유령 입장: 멤버십·joinedRooms·unread 갱신 없이 메시지 구독만 */
+  adminGhost?: boolean;
   onInitial: (messages: ChatMessageV2[], hasMore: boolean) => void;
   onUpserts: (messages: ChatMessageV2[]) => void;
 }): Promise<() => void> {
@@ -226,20 +228,24 @@ export async function subscribeLatestMessagesV2(input: {
 
   // 신규 입장자: joinedRooms.clearedAt 이전 메시지는 숨김
   let minVisibleCreatedAt = 0;
-  try {
-    const jr = await getDoc(getUserJoinedRoomDocRef(input.firestore, input.uid, input.roomId));
-    const ca = jr.exists() ? Number((jr.data() as any)?.clearedAt || 0) : 0;
-    if (Number.isFinite(ca) && ca > 0) minVisibleCreatedAt = ca;
-  } catch {}
+  if (!input.adminGhost) {
+    try {
+      const jr = await getDoc(getUserJoinedRoomDocRef(input.firestore, input.uid, input.roomId));
+      const ca = jr.exists() ? Number((jr.data() as any)?.clearedAt || 0) : 0;
+      if (Number.isFinite(ca) && ca > 0) minVisibleCreatedAt = ca;
+    } catch {}
+  }
 
-  // Enter room clears unread (write-based)
-  try {
-    yyChatFlow('receiver.enterRoom.clearUnread.start', { roomId: input.roomId, uid: input.uid });
-  } catch {}
-  await enterRoomV2({ firestore: input.firestore, roomId: input.roomId, uid: input.uid });
-  try {
-    yyChatFlow('receiver.enterRoom.clearUnread.ok', { roomId: input.roomId, uid: input.uid });
-  } catch {}
+  // Enter room clears unread (write-based) — 유령 입장 시 생략
+  if (!input.adminGhost) {
+    try {
+      yyChatFlow('receiver.enterRoom.clearUnread.start', { roomId: input.roomId, uid: input.uid });
+    } catch {}
+    await enterRoomV2({ firestore: input.firestore, roomId: input.roomId, uid: input.uid });
+    try {
+      yyChatFlow('receiver.enterRoom.clearUnread.ok', { roomId: input.roomId, uid: input.uid });
+    } catch {}
+  }
 
   let first = true;
   const unsub = onSnapshot(q, (snap) => {

@@ -1,0 +1,282 @@
+/* WordPress 충돌 방지: 전역 html/body 미터치, 모든 스타일은 .yooy-web-app 내부만 */
+
+.yooy-web-app {
+  --yy-bg: #0a0a0a;
+  --yy-panel: #111111;
+  --yy-border: #2a2418;
+  --yy-gold: #d4af37;
+  --yy-gold-dim: #9a7b2c;
+  --yy-text: #e8e4dc;
+  --yy-muted: #8a8580;
+  --yy-accent-bg: #1a1610;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans KR', sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--yy-text);
+  background: var(--yy-bg);
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+.yooy-web-app *,
+.yooy-web-app *::before,
+.yooy-web-app *::after {
+  box-sizing: inherit;
+}
+
+.yooy-web-app a.yy-link {
+  color: var(--yy-gold);
+  text-decoration: none;
+}
+.yooy-web-app a.yy-link:hover {
+  text-decoration: underline;
+}
+
+.yooy-web-app .yy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--yy-border);
+  background: var(--yy-accent-bg);
+  color: var(--yy-text);
+  cursor: pointer;
+  font: inherit;
+}
+.yooy-web-app .yy-btn-primary {
+  background: linear-gradient(145deg, #3d3420, #1f1a12);
+  border-color: var(--yy-gold-dim);
+  color: var(--yy-gold);
+}
+.yooy-web-app .yy-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.yooy-web-app .yy-input,
+.yooy-web-app .yy-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--yy-border);
+  background: #0d0d0d;
+  color: var(--yy-text);
+  font: inherit;
+}
+.yooy-web-app .yy-textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.yooy-web-app .yy-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.yooy-web-app .yy-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--yy-panel);
+  border-right: 1px solid var(--yy-border);
+  display: flex;
+  flex-direction: column;
+}
+.yooy-web-app .yy-brand {
+  padding: 18px 16px;
+  border-bottom: 1px solid var(--yy-border);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--yy-gold);
+}
+.yooy-web-app .yy-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 8px;
+  gap: 4px;
+}
+.yooy-web-app .yy-nav a {
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: var(--yy-text);
+  text-decoration: none;
+  border: 1px solid transparent;
+}
+.yooy-web-app .yy-nav a:hover {
+  background: var(--yy-accent-bg);
+}
+.yooy-web-app .yy-nav a.yy-active {
+  border-color: var(--yy-gold-dim);
+  background: #1a1610;
+  color: var(--yy-gold);
+}
+.yooy-web-app .yy-sidebar-foot {
+  margin-top: auto;
+  padding: 12px;
+  border-top: 1px solid var(--yy-border);
+  font-size: 12px;
+  color: var(--yy-muted);
+}
+
+.yooy-web-app .yy-main {
+  flex: 1;
+  overflow: auto;
+  padding: 20px 24px;
+}
+
+.yooy-web-app .yy-card {
+  background: var(--yy-panel);
+  border: 1px solid var(--yy-border);
+  border-radius: 12px;
+  padding: 18px;
+  max-width: 720px;
+}
+.yooy-web-app .yy-card + .yy-card {
+  margin-top: 14px;
+}
+
+.yooy-web-app .yy-title {
+  margin: 0 0 12px;
+  font-size: 1.25rem;
+  color: var(--yy-gold);
+}
+.yooy-web-app .yy-muted {
+  color: var(--yy-muted);
+  font-size: 13px;
+}
+
+.yooy-web-app .yy-chat-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) 1fr;
+  gap: 0;
+  height: calc(100vh - 40px);
+  max-height: 900px;
+  border: 1px solid var(--yy-border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--yy-panel);
+}
+.yooy-web-app .yy-chat-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--yy-border);
+}
+.yooy-web-app .yy-chat-col:last-child {
+  border-right: none;
+}
+.yooy-web-app .yy-chat-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--yy-border);
+}
+.yooy-web-app .yy-chat-tabs button {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  background: transparent;
+  color: var(--yy-muted);
+  cursor: pointer;
+  font: inherit;
+}
+.yooy-web-app .yy-chat-tabs button.yy-on {
+  color: var(--yy-gold);
+  border-bottom: 2px solid var(--yy-gold);
+}
+.yooy-web-app .yy-room-list {
+  flex: 1;
+  overflow-y: auto;
+}
+.yooy-web-app .yy-room-row {
+  padding: 12px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid #1a1a1a;
+  text-align: left;
+  width: 100%;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.yooy-web-app .yy-room-row:hover {
+  background: #151515;
+}
+.yooy-web-app .yy-room-row.yy-sel {
+  background: #1a1610;
+}
+.yooy-web-app .yy-pill {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: #3d2a10;
+  color: var(--yy-gold);
+}
+
+.yooy-web-app .yy-thread {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.yooy-web-app .yy-msgs {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.yooy-web-app .yy-bubble {
+  max-width: 78%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--yy-border);
+  background: #141414;
+}
+.yooy-web-app .yy-bubble.yy-me {
+  align-self: flex-end;
+  background: #1f1a12;
+  border-color: var(--yy-gold-dim);
+}
+.yooy-web-app .yy-msg-meta {
+  font-size: 11px;
+  color: var(--yy-muted);
+  margin-top: 6px;
+}
+.yooy-web-app .yy-compose {
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--yy-border);
+  align-items: flex-end;
+}
+.yooy-web-app .yy-compose input[type='text'] {
+  flex: 1;
+}
+
+.yooy-web-app .yy-mobile-nav {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .yooy-web-app .yy-shell {
+    flex-direction: column;
+  }
+  .yooy-web-app .yy-sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--yy-border);
+  }
+  .yooy-web-app .yy-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .yooy-web-app .yy-chat-grid {
+    grid-template-columns: 1fr;
+    height: auto;
+    max-height: none;
+  }
+  .yooy-web-app .yy-chat-col.yy-list {
+    max-height: 220px;
+  }
+}

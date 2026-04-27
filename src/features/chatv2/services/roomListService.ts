@@ -6,6 +6,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { getRoomDocRef, getUserJoinedRoomDocRef } from '../firebase/roomRefs';
 import { normalizeRoomId } from '../utils/roomId';
 import { parseFirestoreMs } from '../core/firestoreMs';
+import { isJoinedTtlRowExplodedV2 } from '../core/ttlEngine';
 import { resolveChatDisplayNameFromUserDoc } from '../core/chatDisplayName';
 
 export type JoinedRoomRowV2 = {
@@ -100,7 +101,8 @@ export function subscribeJoinedRoomsV2(input: {
         });
       });
       rows.sort(sortJoinedRoomsV2);
-      onRows(rows);
+      const now = Date.now();
+      onRows(rows.filter((row) => !isJoinedTtlRowExplodedV2(row, now)));
 
       // Peer displayName stability: heal missing dm peerDisplayName in background
       try {

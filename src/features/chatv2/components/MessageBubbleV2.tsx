@@ -21,6 +21,7 @@ import {
 } from '../core/attachmentAccess';
 import { extractFirstOpenableUrl, isOpenableUrlString, parseChatTextWithLinks } from '../core/chatTextLinks';
 import { isYooyDeepLinkCandidate, openInternalAppLink } from '../core/openInternalAppLink';
+import { isChatV2InviteJoinHttpsUrl } from '../core/linkRouting';
 import { parseYoutubeVideoId } from '../services/linkPreviewService';
 import { getMessageReactionsMap } from '../services/messageReactionService';
 import { usePreferences } from '@/contexts/PreferencesContext';
@@ -106,7 +107,8 @@ function isMediaUploadComplete(msg: ChatMessageV2): boolean {
 function TtlMsgCountdownRow({ msg, ttlSec, alignRight }: { msg: ChatMessageV2; ttlSec: number; alignRight: boolean }) {
   const [tick, setTick] = React.useState(0);
   React.useEffect(() => {
-    const id = setInterval(() => setTick((x) => x + 1), 500);
+    // 500ms tick은 모든 말풍선에 누적되면 CPU 사용량이 크게 증가 → 1s로 완화
+    const id = setInterval(() => setTick((x) => x + 1), 1000);
     return () => clearInterval(id);
   }, [msg.id]);
   if (!ttlSec || ttlSec <= 0) return null;
@@ -137,13 +139,17 @@ function TtlMsgCountdownRow({ msg, ttlSec, alignRight }: { msg: ChatMessageV2; t
 function MessageMetaRow({
   time,
   readReceipt,
+  unreadCount,
   alignRight,
 }: {
   time: string;
   readReceipt: string | null;
+  /** 내 말풍선: 아직 이 메시지를 읽지 않은 다른 참가자 수(0이면 숨김) */
+  unreadCount?: number | null;
   alignRight: boolean;
 }) {
-  if (!time && !readReceipt) return null;
+  const showUnread = unreadCount != null && unreadCount > 0;
+  if (!time && !readReceipt && !showUnread) return null;
   return (
     <View
       style={{
@@ -160,19 +166,13 @@ function MessageMetaRow({
       {time ? (
         <Text style={{ color: '#777', fontSize: 11 }}>{time}</Text>
       ) : null}
+      {showUnread ? (
+        <Text style={{ color: '#FF9800', fontSize: 11, fontWeight: '800' }}>{unreadCount}</Text>
+      ) : null}
       {readReceipt ? (
         <Text
           style={{
-            color:
-              readReceipt === '읽음'
-                ? '#8BC34A'
-                : readReceipt === '안 읽음'
-                  ? '#FF9800'
-                  : readReceipt === '전송됨'
-                    ? '#6A9E4A'
-                    : readReceipt === '전송 실패'
-                      ? '#E57373'
-                      : '#999',
+            color: readReceipt === '전송 실패' ? '#E57373' : readReceipt === '보내는 중' ? '#AAA' : '#999',
             fontSize: 10,
             fontWeight: '800',
           }}
@@ -259,6 +259,8 @@ type Props = {
   uid?: string;
   senderName?: string;
   senderAvatarUrl?: string;
+  /** 익명(ID만 표시) 사용자 — 이름/아바타 탭으로 프로필 이동 불가 */
+  profileTapDisabled?: boolean;
   showSenderMeta?: boolean;
   /** 채팅 목록에 보이는 표시명·프사를 프로필 화면으로 전달 */
   onOpenSenderProfile?: (senderId: string, hint?: { name?: string; avatarUrl?: string }) => void;
@@ -286,10 +288,14 @@ type Props = {
   roomType?: 'dm' | 'group' | 'ttl';
   /** TTL 방: 메시지 만료까지 남은 시간 표시(초) */
   ttlMessageExpireSeconds?: number | null;
-  /** DM: 상대 roomMember.lastReadAt (ms) */
-  peerLastReadAt?: number | null;
+  /** roomMembers … lastReadAt(ms) — 미읽음 인원 집계 */
+  memberLastReadByUid?: Record<string, number>;
+  /** rooms.participantIds — 읽음 집계 대상(본인 제외) */
+  participantIdsForRead?: string[];
   /** 방장·부방장(adminIds·createdBy) */
   isRoomModerator?: boolean;
+  /** 관리자 유령 입장: 롱프레스 메뉴 비활성 */
+  readOnly?: boolean;
 };
 
 export const MessageBubbleV2 = React.memo(function MessageBubbleV2({
@@ -298,6 +304,7 @@ export const MessageBubbleV2 = React.memo(function MessageBubbleV2({
   uid,
   senderName = '',
   senderAvatarUrl = '',
+  profileTapDisabled = false,
   showSenderMeta = false,
   onOpenSenderProfile,
   onReply,
@@ -317,8 +324,10 @@ export const MessageBubbleV2 = React.memo(function MessageBubbleV2({
   fontSize = 16,
   roomType = 'group',
   ttlMessageExpireSeconds = null,
-  peerLastReadAt = null,
+  memberLastReadByUid = {},
+  participantIdsForRead = [],
   isRoomModerator = false,
+  readOnly = false,
 }: Props) {
   const bubbleR = bubbleShape === 'square' ? 4 : 14;
   const { width: winW } = useWindowDimensions();
@@ -362,6 +371,7 @@ export const MessageBubbleV2 = React.memo(function MessageBubbleV2({
   const openProfile = () => {
     if (isMe) return;
     if (!senderId) return;
+    if (profileTapDisabled) return;
     onOpenSenderProfile?.(senderId, { name: senderName, avatarUrl: senderAvatarUrl });
   };
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -407,30 +417,53 @@ export const MessageBubbleV2 = React.memo(function MessageBubbleV2({
     ((msg.type === 'file' || msg.type === 'audio') && (!!bubbleLocalPv || !!bubbleRemote));
 
   const timeStr = formatBubbleTimeLabel(msg);
-  /** DM: 읽음/안 읽음 · 그룹/TTL: 전송 상태(읽음 추적 없음) */
+  /** 보내는 중·전송 실패만 문구 표시(전송됨/읽음 문구는 미사용) */
   const readReceiptDm = React.useMemo(() => {
     if (!isMe) return null;
-    const created = Number(msg.createdAt || 0) || Number(msg.updatedAt || 0);
     const st = String(msg.status || 'sent');
     const mediaDone = isMediaUploadComplete(msg);
     if ((st === 'sending' || st === 'uploaded') && !bubbleHideUploadSpinner) return '보내는 중';
     if (st === 'failed') return '전송 실패';
-    if (roomType === 'dm') {
-      if (!created) return null;
-      if (st !== 'sent' && st !== 'ready' && !mediaDone) return null;
-      if (peerLastReadAt == null || !Number.isFinite(Number(peerLastReadAt))) return '안 읽음';
-      const peerAt = Number(peerLastReadAt);
-      return peerAt + 500 >= created ? '읽음' : '안 읽음';
-    }
-    if (st === 'sent' || st === 'ready' || mediaDone || ((st === 'sending' || st === 'uploaded') && bubbleHideUploadSpinner))
-      return '전송됨';
     return null;
-  }, [isMe, roomType, peerLastReadAt, msg, bubbleHideUploadSpinner]);
+  }, [isMe, msg, bubbleHideUploadSpinner]);
+
+  /** 본인 메시지: 다른 참가자 중 이 시각 기준 아직 안 읽은 사람 수(본인 제외) */
+  const unreadRecipientCount = React.useMemo(() => {
+    if (!isMe) return null;
+    const st = String(msg.status || 'sent');
+    const mediaDone = isMediaUploadComplete(msg);
+    if ((st === 'sending' || st === 'uploaded') && !bubbleHideUploadSpinner) return null;
+    if (st === 'failed') return null;
+    if (st !== 'sent' && st !== 'ready' && !mediaDone) return null;
+    const created = Number(msg.createdAt || 0) || Number(msg.updatedAt || 0);
+    if (!created) return null;
+    const my = String(uid || '');
+    const ids = Array.isArray(participantIdsForRead)
+      ? participantIdsForRead.map((x) => String(x)).filter(Boolean)
+      : [];
+    const others = ids.filter((id) => id && id !== my);
+    if (others.length === 0) return null;
+    const map = memberLastReadByUid && typeof memberLastReadByUid === 'object' ? memberLastReadByUid : {};
+    const READ_SLOP_MS = 500;
+    let unread = 0;
+    for (const pid of others) {
+      const lr = map[pid];
+      if (lr == null || !Number.isFinite(Number(lr))) {
+        unread++;
+        continue;
+      }
+      if (Number(lr) + READ_SLOP_MS < created) unread++;
+    }
+    return unread;
+  }, [isMe, uid, msg, participantIdsForRead, memberLastReadByUid, bubbleHideUploadSpinner]);
 
   const menuText = String(msg.text || getMediaRemoteUrl(msg) || getLinkUrlSafe(msg) || '').trim();
   const firstOpenableUrl = React.useMemo(() => extractFirstOpenableUrl(menuText), [menuText]);
   const canOpenLink = !!firstOpenableUrl;
-  const openMenu = () => setMenuOpen(true);
+  const openMenu = () => {
+    if (readOnly) return;
+    setMenuOpen(true);
+  };
   const closeMenu = () => {
     setMenuOpen(false);
     setEmojiPickerOpen(false);
@@ -590,6 +623,7 @@ export const MessageBubbleV2 = React.memo(function MessageBubbleV2({
       const u = String(getLinkUrlSafe(msg) || msg.text || '').trim();
       const thumb = String(msg.link?.image || '').trim();
       const isYt = !!parseYoutubeVideoId(u);
+      const inviteJoinHttps = isChatV2InviteJoinHttpsUrl(u);
       let host = '';
       try {
         host = new URL(u).hostname;
@@ -600,11 +634,17 @@ export const MessageBubbleV2 = React.memo(function MessageBubbleV2({
         <TouchableOpacity
           activeOpacity={0.85}
           onPress={async () => {
+            if (!u) return;
+            if (inviteJoinHttps) {
+              const ok = await openInternalAppLink(u);
+              if (ok) return;
+              Linking.openURL(u).catch(() => {});
+              return;
+            }
             if (onOpenMedia) {
               onOpenMedia(msg);
               return;
             }
-            if (!u) return;
             if (isYooyDeepLinkCandidate(u)) {
               const ok = await openInternalAppLink(u);
               if (ok) return;
@@ -741,24 +781,16 @@ export const MessageBubbleV2 = React.memo(function MessageBubbleV2({
             const count = countFor(String(op.id));
             const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
             const picked = myVotes.includes(String(op.id));
-            return (
-              <TouchableOpacity
-                key={String(op.id)}
-                activeOpacity={0.85}
-                onPress={() => {
-                  try {
-                    onVotePoll?.(msg, String(op.id));
-                  } catch {}
-                }}
-                style={{
-                  marginTop: 8,
-                  borderWidth: 1,
-                  borderColor: picked ? '#FFD700' : isMe ? '#4A4020' : '#333',
-                  borderRadius: 10,
-                  overflow: 'hidden',
-                  backgroundColor: picked ? (isMe ? 'rgba(0,0,0,0.12)' : 'rgba(212,175,55,0.10)') : isMe ? '#3D3515' : '#0C0C0C',
-                }}
-              >
+            const pollRowStyle = {
+              marginTop: 8,
+              borderWidth: 1,
+              borderColor: picked ? '#FFD700' : isMe ? '#4A4020' : '#333',
+              borderRadius: 10,
+              overflow: 'hidden' as const,
+              backgroundColor: picked ? (isMe ? 'rgba(0,0,0,0.12)' : 'rgba(212,175,55,0.10)') : isMe ? '#3D3515' : '#0C0C0C',
+            };
+            const pollInner = (
+              <View>
                 <View style={{ height: 8, width: `${pct}%`, backgroundColor: '#FFD700' }} />
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 10, paddingVertical: 10 }}>
                   <Text style={{ color: cardTextPrimary, fontWeight: '800', flex: 1, paddingRight: 10 }} numberOfLines={2}>
@@ -769,6 +801,24 @@ export const MessageBubbleV2 = React.memo(function MessageBubbleV2({
                     {totalVotes > 0 ? ` (${pct}%)` : ''}
                   </Text>
                 </View>
+              </View>
+            );
+            return readOnly ? (
+              <View key={String(op.id)} style={pollRowStyle}>
+                {pollInner}
+              </View>
+            ) : (
+              <TouchableOpacity
+                key={String(op.id)}
+                activeOpacity={0.85}
+                onPress={() => {
+                  try {
+                    onVotePoll?.(msg, String(op.id));
+                  } catch {}
+                }}
+                style={pollRowStyle}
+              >
+                {pollInner}
               </TouchableOpacity>
             );
           })}
@@ -1652,7 +1702,7 @@ export const MessageBubbleV2 = React.memo(function MessageBubbleV2({
                 {renderReplyPreview()}
                 {renderContent()}
               </TouchableOpacity>
-              <MessageMetaRow time={timeStr} readReceipt={readReceiptDm} alignRight />
+              <MessageMetaRow time={timeStr} readReceipt={readReceiptDm} unreadCount={unreadRecipientCount} alignRight />
               {renderReactionChips()}
               {roomType === 'ttl' && typeof ttlMessageExpireSeconds === 'number' && ttlMessageExpireSeconds > 0 ? (
                 <TtlMsgCountdownRow msg={msg} ttlSec={ttlMessageExpireSeconds} alignRight />
@@ -1670,20 +1720,35 @@ export const MessageBubbleV2 = React.memo(function MessageBubbleV2({
     <View style={{ width: '100%', marginVertical: 4, flexDirection: 'row', alignItems: 'flex-start' }}>
       <View style={{ width: LEFT_COL_W, alignItems: 'center' }}>
         {showSenderMeta ? (
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={openProfile}
-            accessibilityRole="button"
-            accessibilityLabel={t('프로필 보기', 'View profile', 'プロフィールを見る', '查看资料')}
-            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
-            style={{ width: AVATAR_SZ, height: AVATAR_SZ, borderRadius: AVATAR_SZ / 2, overflow: 'hidden', backgroundColor: '#2A2A2A', alignItems: 'center', justifyContent: 'center', marginTop: 2 }}
-          >
-            {senderAvatarUrl ? (
-              <EImage source={{ uri: senderAvatarUrl }} style={{ width: AVATAR_SZ, height: AVATAR_SZ }} contentFit="cover" />
-            ) : (
-              <Text style={{ color: '#D4AF37', fontWeight: '900' }}>{String(senderName || senderId || '?').charAt(0)}</Text>
-            )}
-          </TouchableOpacity>
+          profileTapDisabled ? (
+            <View
+              accessibilityLabel={t('익명', 'Anonymous', '匿名', '匿名')}
+              style={{ width: AVATAR_SZ, height: AVATAR_SZ, borderRadius: AVATAR_SZ / 2, overflow: 'hidden', backgroundColor: '#2A2A2A', alignItems: 'center', justifyContent: 'center', marginTop: 2 }}
+            >
+              {senderAvatarUrl ? (
+                <EImage source={{ uri: senderAvatarUrl }} style={{ width: AVATAR_SZ, height: AVATAR_SZ }} contentFit="cover" />
+              ) : (
+                <Text style={{ color: '#D4AF37', fontWeight: '900' }}>{String(senderName || senderId || '?').charAt(0)}</Text>
+              )}
+            </View>
+          ) : (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={openProfile}
+              accessibilityRole="button"
+              accessibilityLabel={t('프로필 보기', 'View profile', 'プロフィールを見る', '查看资料')}
+              hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+              style={{ width: AVATAR_SZ, height: AVATAR_SZ, borderRadius: AVATAR_SZ / 2, overflow: 'hidden', backgroundColor: '#2A2A2A', alignItems: 'center', justifyContent: 'center', marginTop: 2 }}
+            >
+              {senderAvatarUrl ? (
+                <EImage source={{ uri: senderAvatarUrl }} style={{ width: AVATAR_SZ, height: AVATAR_SZ }} contentFit="cover" />
+              ) : (
+                <Text style={{ color: '#D4AF37', fontWeight: '900' }}>{String(senderName || senderId || '?').charAt(0)}</Text>
+              )}
+            </TouchableOpacity>
+          )
+        ) : profileTapDisabled ? (
+          <View style={{ width: AVATAR_SZ, height: AVATAR_SZ, borderRadius: AVATAR_SZ / 2 }} />
         ) : (
           <TouchableOpacity
             activeOpacity={0.7}
@@ -1697,17 +1762,25 @@ export const MessageBubbleV2 = React.memo(function MessageBubbleV2({
       </View>
       <View style={{ flex: 1, minWidth: 0, paddingLeft: CONTENT_GAP, alignItems: 'flex-start' }}>
         {showSenderMeta ? (
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={openProfile}
-            accessibilityRole="button"
-            accessibilityLabel={`${senderName || senderId} ${t('프로필', 'profile', 'プロフィール', '资料')}`}
-            style={{ alignSelf: 'flex-start', marginBottom: 4, maxWidth: peerBubbleMax }}
-          >
-            <Text style={{ color: '#AFAFAF', fontSize: 12, fontWeight: '800' }} numberOfLines={1}>
-              {senderName || senderId}
-            </Text>
-          </TouchableOpacity>
+          profileTapDisabled ? (
+            <View style={{ alignSelf: 'flex-start', marginBottom: 4, maxWidth: peerBubbleMax }}>
+              <Text style={{ color: '#AFAFAF', fontSize: 12, fontWeight: '800' }} numberOfLines={1}>
+                {senderName || senderId}
+              </Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={openProfile}
+              accessibilityRole="button"
+              accessibilityLabel={`${senderName || senderId} ${t('프로필', 'profile', 'プロフィール', '资料')}`}
+              style={{ alignSelf: 'flex-start', marginBottom: 4, maxWidth: peerBubbleMax }}
+            >
+              <Text style={{ color: '#AFAFAF', fontSize: 12, fontWeight: '800' }} numberOfLines={1}>
+                {senderName || senderId}
+              </Text>
+            </TouchableOpacity>
+          )
         ) : null}
         <View
           style={{
@@ -1728,7 +1801,7 @@ export const MessageBubbleV2 = React.memo(function MessageBubbleV2({
               {renderReplyPreview()}
               {renderContent()}
             </TouchableOpacity>
-            <MessageMetaRow time={timeStr} readReceipt={null} alignRight={false} />
+            <MessageMetaRow time={timeStr} readReceipt={null} unreadCount={null} alignRight={false} />
             {renderReactionChips()}
             {roomType === 'ttl' && typeof ttlMessageExpireSeconds === 'number' && ttlMessageExpireSeconds > 0 ? (
               <TtlMsgCountdownRow msg={msg} ttlSec={ttlMessageExpireSeconds} alignRight={false} />

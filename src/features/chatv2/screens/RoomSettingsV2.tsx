@@ -20,7 +20,7 @@ import type { NotificationSoundType } from '@/lib/notificationSound';
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import type { Firestore } from 'firebase/firestore';
-import { doc, getDoc, writeBatch } from 'firebase/firestore';
+import { collection, deleteField, doc, getDoc, onSnapshot, orderBy, query, writeBatch } from 'firebase/firestore';
 import type { ChatRoomV2, RoomPermissionsV2 } from '../core/roomSchema';
 import { resolveChatDisplayNameFromUserDoc } from '../core/chatDisplayName';
 import {
@@ -33,6 +33,7 @@ import {
   kickMemberFromRoomV2,
   setRoomMemberAdminV2,
   regenerateRoomInviteV2,
+  inviteUserToRoomByUidV2,
   healRoomParticipantIdsIfEmptyV2,
   ensureMyRoomMemberDocV2,
   ensureRoomAdminIdsForCreatorV2,
@@ -42,15 +43,23 @@ import { getRoomDocRef, getUserJoinedRoomDocRef } from '../firebase/roomRefs';
 import { firebaseStorage } from '@/lib/firebase';
 import * as ImagePicker from 'expo-image-picker';
 import { getTtlRemainingSecondsV2, getTtlStatusV2 } from '../core/ttlEngine';
-import { buildInviteDeepLinkV2, buildInviteQrPayloadV2 } from '../services/roomInviteService';
-import { resolveRoomOwnerUidV2 } from '../core/roomPermissions';
+import {
+  buildInviteExternalSharePayloadV2,
+  buildInviteQrPayloadV2,
+  generateInviteTokenV2,
+  sanitizeOwnerJoinCodeV2,
+  type InviteShareLangV2,
+} from '../services/roomInviteService';
+import { isRoomOwnerV2, resolveRoomOwnerUidV2 } from '../core/roomPermissions';
 import { QrSavePopupCard } from '@/components/QrSavePopupCard';
 import { useScreenshotCloseModal } from '@/lib/useScreenshotCloseModal';
+import { logYyRoom } from '../core/roomLog';
+import { usePreferences } from '@/contexts/PreferencesContext';
+import * as Crypto from 'expo-crypto';
+import { callInternalYoyLedgerV1 } from '@/lib/internalYoyLedger';
 
 const TTL_MAX_EXTEND_MS_FROM_NOW = 30 * 86400 * 1000;
 const TTL_EXTEND_COST_YOY = 10;
-import { logYyRoom } from '../core/roomLog';
-import { usePreferences } from '@/contexts/PreferencesContext';
 
 type TabKey = 'basic' | 'members' | 'notification' | 'theme' | 'permissions' | 'ttl' | 'manage';
 
@@ -137,6 +146,12 @@ export default function RoomSettingsV2(props: {
   const [searchVisibleDraft, setSearchVisibleDraft] = useState(true);
   /** 방장: 비밀 모드(참여 코드·초대 링크로만 신규 입장) — type=secret 이거나 isSecret */
   const [secretJoinDraft, setSecretJoinDraft] = useState(false);
+  /** 방장 설정 참여 코드(A–Z/0–9, 저장 시 검증) */
+  const [secretJoinCodeDraft, setSecretJoinCodeDraft] = useState('');
+  const [memberInviteModalOpen, setMemberInviteModalOpen] = useState(false);
+  const [memberInviteIdDraft, setMemberInviteIdDraft] = useState('');
+  const [inviteFriendRows, setInviteFriendRows] = useState<Array<{ friendId: string; name: string }>>([]);
+  const [memberInviteBusy, setMemberInviteBusy] = useState(false);
   /** heal 후 rooms.participantIds 스냅샷 — 멤버 탭·joinedRooms 배치에 사용 */
   const [participantIdsUi, setParticipantIdsUi] = useState<string[]>([]);
 
@@ -147,7 +162,7 @@ export default function RoomSettingsV2(props: {
   );
 
   const ownerUid = useMemo(() => resolveRoomOwnerUidV2(room), [room]);
-  const isOwner = useMemo(() => !!ownerUid && ownerUid === uid, [ownerUid, uid]);
+  const isOwner = useMemo(() => isRoomOwnerV2(room, uid), [room, uid]);
   const isAdmin = useMemo(() => {
     if (isOwner) return true;
     if (Array.isArray(room.adminIds) && room.adminIds.map((x) => String(x)).includes(uid)) return true;
@@ -206,6 +221,78 @@ export default function RoomSettingsV2(props: {
     return isAdmin || (memberCanInvitePerm && ids.includes(uid));
   }, [room.type, room, isAdmin, effectiveParticipantIds, uid]);
 
+  /** 저장된 방 기준: 비밀·시크릿 방만 초대 QR/링크 사용 */
+  const secretLikeRoom = useMemo(
+    () => !!(room as any)?.isSecret || String(room.type) === 'secret',
+    [room]
+  );
+
+  /** 권한 탭: 멤버 초대(또는 관리자)일 때 UID/친구 초대 UI */
+  const canShowDirectMemberInvite = useMemo(() => {
+    if (String(room.type) === 'dm') return false;
+    if (isAdmin) return true;
+    return permDraft.memberCanInvite !== false && effectiveParticipantIds.map((x) => String(x)).includes(String(uid));
+  }, [room.type, isAdmin, permDraft.memberCanInvite, effectiveParticipantIds, uid]);
+
+  useEffect(() => {
+    if (!memberInviteModalOpen || !uid) {
+      setInviteFriendRows([]);
+      return;
+    }
+    const ref = query(collection(firestore, 'users', uid, 'friends'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        const rows = snap.docs
+          .map((d) => {
+            const x = d.data() as any;
+            const friendId = String(x.userId || x.uid || d.id || '').trim();
+            const name = String(x.chatName || x.displayName || x.name || friendId).trim();
+            return { friendId, name };
+          })
+          .filter((r) => !!r.friendId);
+        setInviteFriendRows(rows);
+      },
+      () => setInviteFriendRows([])
+    );
+    return () => {
+      try {
+        unsub();
+      } catch {}
+    };
+  }, [memberInviteModalOpen, uid, firestore]);
+
+  const runInviteByUid = useCallback(
+    async (targetUidRaw: string) => {
+      const tid = String(targetUidRaw || '').trim();
+      if (!tid) {
+        Alert.alert(tr('알림', 'Notice', '通知', '提示'), tr('UID를 입력해 주세요.', 'Enter a UID.', 'UIDを入力してください。', '请输入 UID。'));
+        return;
+      }
+      setMemberInviteBusy(true);
+      try {
+        await inviteUserToRoomByUidV2({ firestore, roomId: room.id, actorUid: uid, targetUid: tid });
+        const rs = await getDoc(getRoomDocRef(firestore, room.id));
+        const p = rs.exists() ? ((rs.data() as any)?.participantIds as string[]) : [];
+        if (Array.isArray(p) && p.length) setParticipantIdsUi(p.map((x) => String(x)).filter(Boolean));
+        Alert.alert(tr('완료', 'Done', '完了', '完成'), tr('멤버를 초대했습니다.', 'Member invited.', 'メンバーを招待しました。', '已邀请成员。'));
+        setMemberInviteIdDraft('');
+        setMemberInviteModalOpen(false);
+      } catch (e: any) {
+        const m = String(e?.message || e || '');
+        let msg = m;
+        if (m.includes('already_member')) msg = tr('이미 멤버입니다.', 'Already a member.', 'すでにメンバーです。', '已是成员。');
+        if (m.includes('room_full')) msg = tr('인원 상한에 도달했습니다.', 'Room is full.', '定員に達しました。', '已达人数上限。');
+        if (m.includes('not_allowed')) msg = tr('초대 권한이 없습니다.', 'No permission to invite.', '招待する権限がありません。', '无邀请权限。');
+        if (m.includes('ttl_room_exploded')) msg = tr('TTL 방이 만료되었습니다.', 'TTL room expired.', 'TTLルームは期限切れです。', 'TTL 房间已过期。');
+        Alert.alert(tr('초대 실패', 'Invite failed', '招待失敗', '邀请失败'), msg);
+      } finally {
+        setMemberInviteBusy(false);
+      }
+    },
+    [firestore, room.id, uid, tr]
+  );
+
   useEffect(() => {
     setParticipantIdsUi([]);
   }, [room.id]);
@@ -249,6 +336,9 @@ export default function RoomSettingsV2(props: {
     }
     setSearchVisibleDraft((room as any)?.searchVisible !== false);
     setSecretJoinDraft(!!(room as any)?.isSecret);
+    setSecretJoinCodeDraft(
+      !!(room as any)?.isSecret && (room as any)?.inviteCode ? String((room as any).inviteCode) : ''
+    );
     // TTL drafts
     try {
       const ttl = (room as any)?.ttl || null;
@@ -374,10 +464,23 @@ export default function RoomSettingsV2(props: {
     };
   }, [visible]);
 
-  /** 초대 QR 모달: room에 값이 없고 관리자면 자동 생성 */
+  /** 초대 QR 모달: 비밀(isSecret)·시크릿 방에서만 사용. 값 없으면 권한 있을 때 자동 생성 */
   useEffect(() => {
     if (!inviteOpen || String(room.type) === 'dm') return;
     setInviteError(null);
+    if (!secretLikeRoom) {
+      setInviteSnap(null);
+      setInviteBusy(false);
+      setInviteError(
+        tr(
+          '참여 코드 필수(비밀)를 켜고 저장하면 초대 QR·코드를 사용할 수 있습니다.',
+          'Turn on “Join code required (secret)” and save to use invite QR/code.',
+          '「参加コード必須（秘密）」をオンにして保存すると、招待QR/コードが使えます。',
+          '请开启「需参与码（私密）」并保存后再使用邀请二维码与代码。'
+        )
+      );
+      return;
+    }
     const ic = (room as any)?.inviteCode;
     const it = (room as any)?.inviteToken;
     let iqv = (room as any)?.inviteQrValue;
@@ -386,7 +489,7 @@ export default function RoomSettingsV2(props: {
       iqv = buildInviteQrPayloadV2({ roomId: String(room.id), inviteToken: String(it), inviteCode: String(ic) });
     }
     setInviteSnap({ inviteCode: ic, inviteToken: it, inviteQrValue: iqv });
-    if ((room as any)?.inviteQrValue) return;
+    if ((room as any)?.inviteQrValue || (ic && it && iqv)) return;
     if (!canInvite) {
       setInviteError(tr('초대 권한이 없습니다.', 'No permission to invite.', '招待する権限がありません。', '无邀请权限。'));
       return;
@@ -406,6 +509,13 @@ export default function RoomSettingsV2(props: {
         if (code.includes('not_admin')) msg = tr('초대 권한이 없습니다.', 'No permission to invite.', '招待する権限がありません。', '无邀请权限。');
         if (code.includes('room_not_found')) msg = tr('방을 찾을 수 없습니다.', 'Room not found.', 'ルームが見つかりません。', '找不到房间。');
         if (code.includes('dm_no_invite')) msg = tr('DM 방은 초대장을 사용할 수 없습니다.', 'DM rooms cannot use invites.', 'DMルームでは招待を使えません。', 'DM 房间不能使用邀请。');
+        if (code.includes('invite_not_secret_mode'))
+          msg = tr(
+            '비밀 모드가 아닙니다. 기본 탭에서 참여 코드 필수(비밀)를 켜고 저장해 주세요.',
+            'Secret join is off. Turn on “Join code required (secret)” on the Basic tab and save.',
+            '秘密モードではありません。基本タブで「参加コード必須（秘密）」をオンにして保存してください。',
+            '当前非私密模式。请在基础页开启「需参与码（私密）」并保存。'
+          );
         if (!cancelled) setInviteError(msg);
         logYyRoom('room.invite.generate.fail', { roomId: room.id, error: code });
       } finally {
@@ -415,7 +525,7 @@ export default function RoomSettingsV2(props: {
     return () => {
       cancelled = true;
     };
-  }, [inviteOpen, room.id, room.type, (room as any)?.inviteQrValue, canInvite, firestore, uid, tr]);
+  }, [inviteOpen, room.id, room.type, (room as any)?.inviteQrValue, (room as any)?.isSecret, secretLikeRoom, canInvite, firestore, uid, tr]);
 
   const pills: Array<{ key: TabKey; label: string }> = useMemo(() => {
     const t = String(room.type);
@@ -602,7 +712,14 @@ export default function RoomSettingsV2(props: {
         const ownerSecretDirty =
           isOwner &&
           String(room.type) !== 'dm' &&
-          Boolean(secretJoinDraft) !== curSecret;
+          (() => {
+            const want = !!secretJoinDraft;
+            if (want !== curSecret) return true;
+            if (!want) return false;
+            const curCode = String((room as any)?.inviteCode || '').trim();
+            const nextCode = String(secretJoinCodeDraft || '').trim();
+            return curCode !== nextCode;
+          })();
         const shouldUpdateRoomMeta = identityDirty || policyDirty || ownerSecretDirty;
         const shouldWriteTtlBlock = canEditTtl && ttlRoomDirty;
         const shouldWriteMessageTtlOnly = canEditTtl && ttlMessageDirty && !ttlRoomDirty;
@@ -646,7 +763,35 @@ export default function RoomSettingsV2(props: {
             }
           }
           if (ownerSecretDirty) {
-            roomPatch.isSecret = !!secretJoinDraft;
+            if (!secretJoinDraft) {
+              roomPatch.isSecret = false;
+              roomPatch.inviteCode = deleteField();
+              roomPatch.inviteToken = deleteField();
+              roomPatch.inviteQrValue = deleteField();
+            } else {
+              let codeOut: string;
+              try {
+                codeOut = sanitizeOwnerJoinCodeV2(String(secretJoinCodeDraft || '').trim());
+              } catch {
+                Alert.alert(
+                  tr('알림', 'Notice', '通知', '提示'),
+                  tr(
+                    '참여 코드는 영문 대문자와 숫자만 사용할 수 있으며, 4~32자여야 합니다.',
+                    'Join code must be 4–32 characters using A–Z and 0–9 only.',
+                    '参加コードは英大文字と数字のみ、4〜32文字である必要があります。',
+                    '参与码仅可为 A–Z 与数字，长度 4–32。'
+                  )
+                );
+                setBusy(false);
+                return;
+              }
+              const token = generateInviteTokenV2();
+              const qr = buildInviteQrPayloadV2({ roomId: room.id, inviteToken: token, inviteCode: codeOut });
+              roomPatch.isSecret = true;
+              roomPatch.inviteCode = codeOut;
+              roomPatch.inviteToken = token;
+              roomPatch.inviteQrValue = qr;
+            }
           }
           if (shouldWriteTtlBlock) {
             const roomSec = Math.max(
@@ -667,7 +812,7 @@ export default function RoomSettingsV2(props: {
               }
               Alert.alert(
                 tr('연장 비용', 'Extension cost', '延長コスト', '延长费用'),
-                tr(`남은 시간을 늘리는 경우 ${TTL_EXTEND_COST_YOY} YOY가 소요됩니다. (지갑 연동 후 자동 차감)`, `Extending TTL costs ${TTL_EXTEND_COST_YOY} YOY. (Auto deducted after wallet link)`, `TTL延長には ${TTL_EXTEND_COST_YOY} YOY が必要です。（ウォレット連携後に自動差引）`, `延长 TTL 需要 ${TTL_EXTEND_COST_YOY} YOY。（钱包连接后自动扣除）`)
+                tr(`남은 시간을 늘리는 경우 ${TTL_EXTEND_COST_YOY} YOY가 내부 잔액에서 차감됩니다.`, `Extending TTL costs ${TTL_EXTEND_COST_YOY} YOY from your internal balance.`, `TTL延長には内部残高から ${TTL_EXTEND_COST_YOY} YOY が差し引かれます。`, `延长 TTL 将从内部余额扣除 ${TTL_EXTEND_COST_YOY} YOY。`)
               );
             }
             const msgSec = Math.max(0, Number(ttlMsgH || 0) * 3600 + Number(ttlMsgM || 0) * 60 + Number(ttlMsgS || 0));
@@ -793,7 +938,6 @@ export default function RoomSettingsV2(props: {
     if (!canEditRoomIdentity) return;
     setBusy(true);
     try {
-      await ImagePicker.requestMediaLibraryPermissionsAsync();
       const res = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsMultipleSelection: false,
@@ -847,37 +991,68 @@ export default function RoomSettingsV2(props: {
         tr('현재 시각 기준 최대 30일까지 반영했습니다.', 'Applied up to 30 days from now.', '現在時刻基準で最大30日まで適用しました。', '已按当前时间最多应用到 30 天。')
       );
     }
-    Alert.alert(
-      tr('연장 비용', 'Extension cost', '延長コスト', '延长费用'),
-      tr(`${TTL_EXTEND_COST_YOY} YOY (지갑 연동 시 차감)`, `${TTL_EXTEND_COST_YOY} YOY (deducted when wallet linked)`, `${TTL_EXTEND_COST_YOY} YOY（ウォレット連携時に差引）`, `${TTL_EXTEND_COST_YOY} YOY（钱包连接时扣除）`)
-    );
+    const opId = await Crypto.randomUUID();
+    try {
+      await callInternalYoyLedgerV1({
+        action: 'ttl_extend_charge',
+        opId,
+        roomId: room.id,
+        amount: TTL_EXTEND_COST_YOY,
+      });
+    } catch (e: any) {
+      const msg = String(e?.message || e || '');
+      const human = msg.includes('insufficient_user_yoy')
+        ? tr(
+            'YOY가 부족합니다. 출석 등으로 적립 후 다시 시도해 주세요.',
+            'Not enough YOY. Earn more (e.g. daily check-in) and try again.',
+            'YOYが不足しています。出席チェックインなどで貯めてから再試行してください。',
+            'YOY 不足，请先通过签到等方式获取后再试。'
+          )
+        : msg;
+      Alert.alert(tr('연장 불가', 'Cannot extend', '延長できません', '无法延长'), human);
+      return;
+    }
     try {
       // eslint-disable-next-line no-console
       console.log('[YY_CHAT_TTL]', JSON.stringify({ roomId: room.id, roomType: room.type, extend: 'start', roomExpiresAt: nextExp }));
     } catch {}
-    const batch = writeBatch(firestore);
-    batch.set(
-      getRoomDocRef(firestore, room.id),
-      {
-        ttl: {
-          ...((room as any)?.ttl || {}),
-          explodeRoomAt: nextExp,
+    try {
+      const batch = writeBatch(firestore);
+      batch.set(
+        getRoomDocRef(firestore, room.id),
+        {
+          ttl: {
+            ...((room as any)?.ttl || {}),
+            explodeRoomAt: nextExp,
+            ttlStatus: 'active',
+            ttlLastExtendedAt: Date.now(),
+            ttlLastModifiedBy: uid,
+          },
+          roomExpiresAt: nextExp,
           ttlStatus: 'active',
           ttlLastExtendedAt: Date.now(),
           ttlLastModifiedBy: uid,
-        },
-        roomExpiresAt: nextExp,
-        ttlStatus: 'active',
-        ttlLastExtendedAt: Date.now(),
-        ttlLastModifiedBy: uid,
-      } as any,
-      { merge: true }
-    );
-    await batch.commit();
-    try {
-      // eslint-disable-next-line no-console
-      console.log('[YY_CHAT_TTL]', JSON.stringify({ roomId: room.id, roomType: room.type, extend: 'success', roomExpiresAt: nextExp }));
-    } catch {}
+        } as any,
+        { merge: true }
+      );
+      await batch.commit();
+      try {
+        const { useMonitorStore } = await import('@/lib/monitorStore');
+        await useMonitorStore.getState().syncMe('[ttl_extend][ledger]', { force: true });
+      } catch {}
+      try {
+        // eslint-disable-next-line no-console
+        console.log('[YY_CHAT_TTL]', JSON.stringify({ roomId: room.id, roomType: room.type, extend: 'success', roomExpiresAt: nextExp }));
+      } catch {}
+    } catch (e: any) {
+      try {
+        await callInternalYoyLedgerV1({ action: 'ttl_extend_refund', opId });
+      } catch {}
+      Alert.alert(
+        tr('연장 실패', 'Extend failed', '延長失敗', '延长失败'),
+        String(e?.message || e || tr('알 수 없는 오류', 'Unknown error', '不明なエラー', '未知错误'))
+      );
+    }
   };
 
   return (
@@ -1024,7 +1199,7 @@ export default function RoomSettingsV2(props: {
                 <View style={{ marginTop: 10, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: '#222', backgroundColor: '#111' }}>
                   <Text style={{ color: '#AAA' }}>{tr('방 ID', 'Room ID', 'ルームID', '房间ID')}</Text>
                   <Text style={{ color: '#EEE', fontWeight: '800', marginTop: 6 }}>{room.id}</Text>
-                  {String(room.type) !== 'dm' ? (
+                  {String(room.type) !== 'dm' && secretLikeRoom && canInvite ? (
                     <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
                       <TouchableOpacity
                         onPress={() => setInviteOpen(true)}
@@ -1033,6 +1208,15 @@ export default function RoomSettingsV2(props: {
                         <Text style={{ color: '#FFD700', fontWeight: '900' }}>{tr('초대장', 'Invite', '招待', '邀请')}</Text>
                       </TouchableOpacity>
                     </View>
+                  ) : String(room.type) !== 'dm' && !secretLikeRoom ? (
+                    <Text style={{ color: '#666', fontSize: 11, marginTop: 8 }}>
+                      {tr(
+                        '초대 QR·코드는 참여 코드 필수(비밀)를 켠 뒤 사용할 수 있습니다.',
+                        'Invite QR/code is available after “Join code required (secret)” is on.',
+                        '招待QR/コードは「参加コード必須（秘密）」をオンにすると使えます。',
+                        '开启「需参与码（私密）」后可使用邀请二维码与代码。'
+                      )}
+                    </Text>
                   ) : null}
                 </View>
 
@@ -1110,8 +1294,40 @@ export default function RoomSettingsV2(props: {
                     </View>
                     <Switch
                       value={!!secretJoinDraft}
-                      onValueChange={(v) => setSecretJoinDraft(v)}
+                      onValueChange={(v) => {
+                        setSecretJoinDraft(v);
+                        if (!v) setSecretJoinCodeDraft('');
+                      }}
                       disabled={!isOwner}
+                    />
+                  </View>
+                ) : null}
+
+                {String(room.type) !== 'dm' && isOwner && secretJoinDraft ? (
+                  <View style={{ marginTop: 10, padding: 10, borderRadius: 10, borderWidth: 1, borderColor: '#2A3A2A', backgroundColor: '#0F140F' }}>
+                    <Text style={{ color: '#AEE9C0', fontWeight: '800' }}>{tr('참여 코드 (저장 시 적용)', 'Join code (applied on save)', '参加コード（保存時に反映）', '参与码（保存时生效）')}</Text>
+                    <Text style={{ color: '#666', fontSize: 11, marginTop: 4 }}>
+                      {tr('영문 대문자와 숫자만, 4~32자.', 'A–Z and 0–9 only, 4–32 characters.', '英大文字と数字のみ、4〜32文字。', '仅大写英文与数字，4–32 位。')}
+                    </Text>
+                    <TextInput
+                      value={secretJoinCodeDraft}
+                      onChangeText={(t) => setSecretJoinCodeDraft(String(t || '').toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                      placeholder="ABCD1234"
+                      placeholderTextColor="#555"
+                      autoCapitalize="characters"
+                      autoCorrect={false}
+                      editable={!!isOwner}
+                      style={{
+                        marginTop: 8,
+                        padding: 10,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: '#333',
+                        color: '#EEE',
+                        backgroundColor: '#0C0C0C',
+                        letterSpacing: 1,
+                        fontWeight: '800',
+                      }}
                     />
                   </View>
                 ) : null}
@@ -1131,13 +1347,22 @@ export default function RoomSettingsV2(props: {
               <View>
                 <Text style={{ color: '#AAA', marginTop: 6 }}>{tr('멤버', 'Members', 'メンバー', '成员')}</Text>
                 <Text style={{ color: '#666', fontSize: 12, marginTop: 4 }}>{String(room.type) === 'dm' ? tr('1:1 방은 참여자 2명입니다.', '1:1 room has 2 participants.', '1:1ルームは参加者2名です。', '1:1 房间有 2 位参与者。') : tr('roomMembers 기준·역할 관리', 'Role management based on roomMembers.', 'roomMembers基準のロール管理', '基于 roomMembers 的角色管理')}</Text>
-                {canInvite ? (
+                {canInvite && secretLikeRoom ? (
                   <TouchableOpacity
                     onPress={() => setInviteOpen(true)}
                     style={{ marginTop: 10, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#FFD700', alignItems: 'center' }}
                   >
                     <Text style={{ color: '#FFD700', fontWeight: '900' }}>{tr('초대 QR · 코드', 'Invite QR · Code', '招待QR・コード', '邀请二维码·代码')}</Text>
                   </TouchableOpacity>
+                ) : canInvite && !secretLikeRoom ? (
+                  <Text style={{ color: '#666', fontSize: 12, marginTop: 10 }}>
+                    {tr(
+                      '비밀(참여 코드) 모드가 꺼져 있으면 링크·QR 초대를 쓸 수 없습니다. 기본 탭에서 켜 주세요.',
+                      'Invite link/QR needs secret join mode. Enable it on the Basic tab.',
+                      'リンク/QR招待は秘密（参加コード）モードが必要です。基本タブでオンにしてください。',
+                      '链接/二维码邀请需开启私密（参与码）模式，请在基础页开启。'
+                    )}
+                  </Text>
                 ) : null}
                 {sortedParticipantIds.map((id) => {
                   const isDm = String(room.type) === 'dm';
@@ -1275,6 +1500,51 @@ export default function RoomSettingsV2(props: {
                     </TouchableOpacity>
                   </View>
                 ))}
+                {canShowDirectMemberInvite ? (
+                  <View style={{ marginTop: 14, padding: 12, borderRadius: 10, borderWidth: 1, borderColor: '#2A4A2A', backgroundColor: '#0F1A0F' }}>
+                    <Text style={{ color: '#AEE9C0', fontWeight: '900' }}>{tr('멤버 직접 초대', 'Invite member directly', 'メンバー直接招待', '直接邀请成员')}</Text>
+                    <Text style={{ color: '#666', fontSize: 11, marginTop: 4 }}>
+                      {tr(
+                        '친구 목록 또는 사용자 UID로 이 방에 추가합니다. (권한 변경 후에는 저장이 필요할 수 있습니다.)',
+                        'Add someone by friends list or user UID. (Save permission changes if needed.)',
+                        '友だち一覧またはUIDで追加します。（権限変更後は保存が必要な場合があります）',
+                        '通过好友列表或用户 UID 加入本房。（若刚改了权限请先保存）'
+                      )}
+                    </Text>
+                    <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, alignItems: 'center' }}>
+                      <TextInput
+                        value={memberInviteIdDraft}
+                        onChangeText={setMemberInviteIdDraft}
+                        placeholder="UID"
+                        placeholderTextColor="#666"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        style={{
+                          flex: 1,
+                          padding: 10,
+                          borderRadius: 10,
+                          borderWidth: 1,
+                          borderColor: '#333',
+                          color: '#EEE',
+                          backgroundColor: '#0C0C0C',
+                        }}
+                      />
+                      <TouchableOpacity
+                        disabled={memberInviteBusy}
+                        onPress={() => runInviteByUid(memberInviteIdDraft)}
+                        style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, borderWidth: 1, borderColor: '#FFD700', opacity: memberInviteBusy ? 0.5 : 1 }}
+                      >
+                        <Text style={{ color: '#FFD700', fontWeight: '900' }}>{tr('초대', 'Invite', '招待', '邀请')}</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => setMemberInviteModalOpen(true)}
+                      style={{ marginTop: 10, paddingVertical: 11, borderRadius: 10, borderWidth: 1, borderColor: '#3A5A3A', alignItems: 'center', backgroundColor: '#0C120C' }}
+                    >
+                      <Text style={{ color: '#9ED9A8', fontWeight: '800' }}>{tr('친구에서 초대', 'Invite from friends', '友だちから招待', '从好友邀请')}</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
                 <Text style={{ color: '#AAA', marginTop: 6 }}>{tr('방 정보 수정', 'Edit room info', 'ルーム情報編集', '编辑房间信息')}</Text>
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, flexWrap: 'wrap' as any }}>
                   {(['owner', 'admin'] as const).map((w) => {
@@ -1638,7 +1908,6 @@ export default function RoomSettingsV2(props: {
                           disabled={busy}
                           onPress={async () => {
                             try {
-                              await ImagePicker.requestMediaLibraryPermissionsAsync();
                               const res = await ImagePicker.launchImageLibraryAsync({
                                 mediaTypes: ImagePicker.MediaTypeOptions.Images,
                                 allowsMultipleSelection: false,
@@ -1974,23 +2243,22 @@ export default function RoomSettingsV2(props: {
                 onPress={() => {
                   try {
                     const roomId = String(room.id);
-                    const web = buildInviteQrPayloadV2({
+                    const lang: InviteShareLangV2 =
+                      language === 'ja' ? 'ja' : language === 'zh' ? 'zh' : language === 'ko' ? 'ko' : 'en';
+                    const { message, primaryUrl } = buildInviteExternalSharePayloadV2({
                       roomId,
                       inviteToken: String(inviteSnap.inviteToken),
                       inviteCode: String(inviteSnap.inviteCode),
+                      lang,
                     });
-                    const deep = buildInviteDeepLinkV2({
-                      roomId,
-                      inviteToken: String(inviteSnap.inviteToken),
-                      inviteCode: String(inviteSnap.inviteCode),
-                    });
-                    const webInstall = 'https://yooy.land/app'; // 공개 버전용 설치 페이지 (향후 스토어 URL로 교체)
-                    const textKo =
-                      `YooYLand 방 초대 코드: ${inviteSnap.inviteCode}\n\n` +
-                      `1) 링크(권장):\n${web}\n\n` +
-                      `2) 앱 딥링크(설치된 경우 바로 열림):\n${deep}\n\n` +
-                      `앱이 설치되지 않았다면 이 링크로 설치 후 다시 열어 주세요:\n${webInstall}`;
-                    Share.share({ message: textKo }).catch(() => {});
+                    const sharePayload: { message: string; title?: string; url?: string } = {
+                      message,
+                      title: tr('YooYLand 방 초대', 'YooYLand room invite', 'YooYLand ルーム招待', 'YooYLand 房间邀请'),
+                    };
+                    if (Platform.OS === 'ios') {
+                      sharePayload.url = primaryUrl;
+                    }
+                    Share.share(sharePayload).catch(() => {});
                   } catch {}
                 }}
                 style={{ flex: 1, minWidth: 120, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#FFD700', alignItems: 'center' }}
@@ -1999,6 +2267,53 @@ export default function RoomSettingsV2(props: {
               </TouchableOpacity>
             ) : null}
           </View>
+        </View>
+      </View>
+    </Modal>
+
+    <Modal
+      visible={memberInviteModalOpen}
+      animationType="fade"
+      transparent
+      onRequestClose={() => {
+        if (!memberInviteBusy) setMemberInviteModalOpen(false);
+      }}
+    >
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+        <View style={{ width: 340, maxWidth: '100%', maxHeight: '72%', backgroundColor: '#111', borderRadius: 14, borderWidth: 2, borderColor: '#3A5A3A', padding: 14 }}>
+          <Text style={{ color: '#EEE', fontWeight: '900', fontSize: 16 }}>{tr('친구에서 초대', 'Invite from friends', '友だちから招待', '从好友邀请')}</Text>
+          <ScrollView style={{ marginTop: 10 }} keyboardShouldPersistTaps="handled">
+            {inviteFriendRows.length === 0 ? (
+              <Text style={{ color: '#777', paddingVertical: 20, textAlign: 'center' }}>
+                {tr('친구 목록이 비어 있거나 불러오지 못했습니다.', 'No friends yet or could not load.', '友だちがいないか読み込めません。', '暂无好友或加载失败。')}
+              </Text>
+            ) : (
+              inviteFriendRows.map((r) => (
+                <TouchableOpacity
+                  key={r.friendId}
+                  disabled={memberInviteBusy || String(r.friendId) === String(uid)}
+                  onPress={() => runInviteByUid(r.friendId)}
+                  style={{ paddingVertical: 12, paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: '#222' }}
+                >
+                  <Text style={{ color: '#EEE', fontWeight: '800' }}>{r.name}</Text>
+                  <Text style={{ color: '#666', fontSize: 11, marginTop: 2 }}>{r.friendId}</Text>
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
+          {memberInviteBusy ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 12 }}>
+              <ActivityIndicator color="#FFD700" size="small" />
+              <Text style={{ color: '#AAA' }}>{tr('처리 중...', 'Processing...', '処理中...', '处理中...')}</Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              onPress={() => setMemberInviteModalOpen(false)}
+              style={{ marginTop: 12, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: '#444', alignItems: 'center' }}
+            >
+              <Text style={{ color: '#EEE', fontWeight: '800' }}>{tr('닫기', 'Close', '閉じる', '关闭')}</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     </Modal>

@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { router, usePathname } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Linking, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 type Props = {
   title?: string;
@@ -68,7 +68,17 @@ export default function TopBar({ title, onMenuPress, onProfilePress, avatarUri, 
       
       <View style={styles.centerContainer}>
         <TouchableOpacity
-          onPress={() => router.push('/(tabs)/dashboard')}
+          onPress={() => {
+            if (Platform.OS === 'web') {
+              try {
+                void Linking.openURL('https://yooyland.com/');
+                return;
+              } catch {}
+            }
+            try {
+              router.push('/(tabs)/dashboard');
+            } catch {}
+          }}
           style={{ opacity: showCenterLogo ? 1 : 0, pointerEvents: showCenterLogo ? 'auto' as any : 'none' as any }}
           disabled={!showCenterLogo}
         >

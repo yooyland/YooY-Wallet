@@ -13,7 +13,8 @@ import { loadCustomCoins, onCustomCoinsChange } from '@/lib/customCoins';
 import { useMarket } from '@/contexts/MarketContext';
 import { getAllUpbitMarkets, UpbitPrice, UpbitTicker } from '@/lib/upbit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Link, useLocalSearchParams, useRouter } from 'expo-router';
+import { Link, Redirect, useLocalSearchParams, useRouter } from 'expo-router';
+import { EXCHANGE_UI_ENABLED, IOS_APP_STORE_SHELF, WEB_TRADE_BLOCKED } from '@/lib/featureFlags';
 import { useEffect, useMemo, useState } from 'react';
 import {
     Dimensions,
@@ -44,7 +45,7 @@ interface Market {
   change?: number;
 }
 
-export default function ExchangeScreen() {
+function ExchangeScreenContent() {
   const router = useRouter();
   const { tab: tabParam } = useLocalSearchParams<{ tab?: string }>();
   const { currentUser } = useAuth();
@@ -1223,6 +1224,13 @@ export default function ExchangeScreen() {
       <HamburgerMenu visible={menuOpen} onClose={() => setMenuOpen(false)} avatarUri={avatarUri} />
     </ThemedView>
   );
+}
+
+export default function ExchangeScreen() {
+  if (WEB_TRADE_BLOCKED || !EXCHANGE_UI_ENABLED || IOS_APP_STORE_SHELF) {
+    return <Redirect href="/(tabs)/dashboard" />;
+  }
+  return <ExchangeScreenContent />;
 }
 
 const styles = StyleSheet.create({

@@ -23,6 +23,26 @@ export function resolveRoomOwnerUidV2(room: ChatRoomV2 | null | undefined): stri
   return '';
 }
 
+/**
+ * 방 문서 기준 「방장」UI·저장 권한 — 1:1 DM은 `participantIds`(및 memberIds)에 포함된 양쪽 모두 방장과 동일.
+ * 그 외 타입은 `resolveRoomOwnerUidV2`와 동일한 단일 소유자.
+ */
+export function isRoomOwnerV2(room: ChatRoomV2 | null | undefined, uid: string | null | undefined): boolean {
+  if (!room || uid == null || String(uid).trim() === '') return false;
+  const u = String(uid);
+  if (String(room.type) === 'dm') {
+    const ids = [
+      ...(Array.isArray(room.participantIds) ? room.participantIds : []),
+      ...(Array.isArray(room.memberIds) ? room.memberIds : []),
+    ]
+      .map((x: unknown) => String(x))
+      .filter(Boolean);
+    return new Set(ids).has(u);
+  }
+  const owner = resolveRoomOwnerUidV2(room);
+  return !!owner && owner === u;
+}
+
 /** 방장(createdBy) 또는 adminIds(부방장 등). DM은 참여자 2인 모두 관리 권한(레거시 방에 adminIds 누락 대비). */
 export function isRoomModeratorV2(room: ChatRoomV2 | null | undefined, uid: string | null | undefined): boolean {
   if (!room || uid == null || String(uid).trim() === '') return false;

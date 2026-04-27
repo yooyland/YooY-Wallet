@@ -42,6 +42,10 @@ export default function ChatV2EntryRoute() {
           setErr('이 방은 초대가 비활성화되어 새로 들어갈 수 없습니다.');
           return;
         }
+        if (m.includes('ttl_room_exploded')) {
+          setErr('TTL 방 시간이 만료되어 폭파되었습니다. 입장할 수 없습니다.');
+          return;
+        }
         setErr(m || 'entry failed');
       }
     })();

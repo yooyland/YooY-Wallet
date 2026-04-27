@@ -41,11 +41,13 @@ import {
     View,
     RefreshControl,
     AppState,
-    InteractionManager
+    InteractionManager,
+    Platform
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useWalletConnect } from '@/contexts/WalletConnectContext';
 import { useMonitorStore } from '@/lib/monitorStore';
+import { EXCHANGE_UI_ENABLED, IOS_APP_STORE_SHELF, TRADING_UI_ENABLED } from '@/lib/featureFlags';
 import { perfStart, perfEnd, logAppStartupTime } from '@/lib/perfTimer';
 import { mergeAssets } from '@/lib/mergeAssets';
 import { onChainSnapToAssetRows } from '@/lib/onchainAssetRows';
@@ -64,6 +66,25 @@ export default function DashboardScreen() {
   }, []);
 
   const [booting, setBooting] = useState(() => !dashboardWelcomeGateDone);
+
+  const showAlert = useCallback((title: string, message?: string) => {
+    const t = String(title || 'Alert');
+    const m = String(message || '');
+    // RN Web에서 Alert.alert가 무반응처럼 보이는 환경이 있어 폴백 제공
+    if (Platform.OS === 'web') {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const w: any = typeof window !== 'undefined' ? window : null;
+        if (w?.alert) {
+          w.alert(m ? `${t}\n\n${m}` : t);
+          return;
+        }
+      } catch {}
+    }
+    try {
+      Alert.alert(t, m);
+    } catch {}
+  }, []);
   useEffect(() => {
     if (dashboardWelcomeGateDone) {
       setBooting(false);
@@ -100,13 +121,14 @@ export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const { signOut, isAuthenticated, currentUser } = useAuth();
   const { currency, language } = usePreferences();
-  const { yoyPriceUSD } = useMarket();
+  const { yoyPriceUSD, usdkrw } = useMarket();
   const { getRecentTransactions, addTransaction, updateTransactionMemo } = useTransaction();
   const DEBUG = typeof __DEV__ !== 'undefined' ? __DEV__ : false;
   const { state: wc } = useWalletConnect();
   
   // 전역 거래 스토어 사용
   const { getTransactions, recordReward, addTransaction: addTxStore } = useTransactionStore();
+  const { upsertTransactions } = useTransactionStore();
   // 실제 사용자 이메일 사용
   const currentUserEmail = currentUser?.email || 'user@example.com';
   // 모니터 서버 기반으로만 표시: 초기값은 빈 배열
@@ -267,6 +289,66 @@ export default function DashboardScreen() {
     })();
   }, [wc?.connected, wc?.address]);
 
+  // 내부 YOY 원장 이벤트(리워드/TTL 수수료 등) 영구 기록을 불러와 거래 내역에 병합
+  useEffect(() => {
+    (async () => {
+      try {
+        const uid = String((currentUser as any)?.uid || '').trim();
+        if (!uid) return;
+        const {
+          fetchInternalYoyEventsAsTransactions,
+          fetchInternalYoyEvents,
+          sumRewardYoyFromInternalEvents,
+          sumIncomeSpentNetFromInternalEvents,
+        } = await import('@/lib/internalYoyEvents');
+        const [txs, evs] = await Promise.all([
+          fetchInternalYoyEventsAsTransactions(uid, 300),
+          fetchInternalYoyEvents(uid, 500),
+        ]);
+        if (txs?.length) upsertTransactions(txs as any);
+        // 서버 영구 기록 기준: 누적 보상(출석/설치/추천) 합계를 UI에 반영
+        const serverTotalRewards = sumRewardYoyFromInternalEvents(evs || []);
+        const s2 = sumIncomeSpentNetFromInternalEvents(evs || []);
+        setLedgerTotals(s2);
+        if (serverTotalRewards > 0) {
+          setTotalRewards((prev) => (serverTotalRewards > (prev || 0) ? serverTotalRewards : prev));
+          try {
+            const key = `total_rewards_${String(currentUserEmail || '').trim() || 'user@example.com'}`;
+            await AsyncStorage.setItem(key, String(serverTotalRewards));
+          } catch {}
+        }
+      } catch {}
+    })();
+  }, [currentUser?.uid]);
+
+  // Memo auto-hydration for visible dashboard rows (top 10)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const uid = String((currentUser as any)?.uid || '').trim();
+        if (!uid) return;
+        const rows = (getTransactions({ limit: 20 }) as any[]) || [];
+        const visible = rows.slice(0, 10);
+        const need = visible
+          .map((tx) => ({ id: String(tx?.id || '').trim(), memo: String(tx?.memo || '').trim() }))
+          .filter((x) => x.id && !x.memo)
+          .map((x) => x.id);
+        if (!need.length) return;
+        const { loadTransactionMemosBulk } = await import('@/lib/transactionMemos');
+        const map = await loadTransactionMemosBulk(need, uid, { concurrency: 6 });
+        if (cancelled) return;
+        for (const [id, memo] of Object.entries(map || {})) {
+          if (!memo) continue;
+          try { useTransactionStore.getState().updateTransaction(id, { memo }); } catch {}
+        }
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.uid, memoModalVisible]);
+
   // 모니터 거래내역을 주기적으로 끌어와 전역 거래 스토어에 반영 (WC 우선)
   // Optimized: Skip polling when screen is unfocused
   useEffect(() => {
@@ -398,6 +480,12 @@ export default function DashboardScreen() {
 
   // 마켓 페이지로 이동하는 함수
   const handleNavigateToMarket = useCallback(async (coinSymbol: string) => {
+    if (IOS_APP_STORE_SHELF) {
+      try {
+        router.push(`/(tabs)/wallet?coin=${encodeURIComponent(coinSymbol)}&tab=assets`);
+      } catch {}
+      return;
+    }
     try {
       // 먼저 KRW 마켓이 있는지 확인
       const krwMarketSymbol = coinSymbol === 'YOY' ? 'KRW-YOY' : `KRW-${coinSymbol}`;
@@ -405,19 +493,20 @@ export default function DashboardScreen() {
       // 중앙화된 가격 시스템에서 지원하는 코인인지 확인
       const supportedCoins = ['YOY', 'BTC', 'ETH', 'BNB', 'AAVE', 'SOL', 'XMR', 'USDT', 'USDC', 'ADA', 'DOT', 'LINK', 'UNI', 'LTC', 'BCH', 'XRP', 'DOGE', 'SHIB', 'MATIC', 'AVAX', 'ATOM', 'TRX', 'XLM', 'ALGO', 'VET', 'ICP', 'FIL', 'THETA', 'EOS', 'XTZ'];
       
+      const targetTab = TRADING_UI_ENABLED ? '주문' : '차트';
       if (supportedCoins.includes(coinSymbol)) {
         // 지원하는 코인인 경우 KRW 마켓으로 이동
-        router.push(`/market/${krwMarketSymbol}?tab=주문`);
+        router.push(`/market/${krwMarketSymbol}?tab=${targetTab}`);
       } else {
         // 지원하지 않는 코인인 경우 USDT 마켓으로 이동
         const usdtMarketSymbol = `USDT-${coinSymbol}`;
-        router.push(`/market/${usdtMarketSymbol}?tab=주문`);
+        router.push(`/market/${usdtMarketSymbol}?tab=${targetTab}`);
       }
     } catch (error) {
       console.error('마켓 정보 조회 오류:', error);
       // 오류 발생 시 기본 KRW 마켓으로 이동
       const marketSymbol = coinSymbol === 'YOY' ? 'KRW-YOY' : `KRW-${coinSymbol}`;
-      router.push(`/market/${marketSymbol}?tab=주문`);
+      router.push(`/market/${marketSymbol}?tab=${TRADING_UI_ENABLED ? '주문' : '정보'}`);
     }
   }, []);
 
@@ -493,21 +582,14 @@ export default function DashboardScreen() {
   useEffect(() => {
     (async () => {
       if (isAuthenticated && currentUser?.uid) {
-        const saved = await AsyncStorage.getItem(photoKeyFor(currentUser.uid));
-        if (saved) setAvatarUri(saved);
-        
-        // Load username
-        const info = await AsyncStorage.getItem(`u:${currentUser.uid}:profile.info`);
-        if (info) {
-          try {
-            const parsedInfo = JSON.parse(info);
-            setUsername(parsedInfo.username || currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
-          } catch {
-            setUsername(currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
-          }
-        } else {
-          setUsername(currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User');
-        }
+        const { loadUserProfileLite } = await import('@/lib/userProfile');
+        const p = await loadUserProfileLite({
+          uid: currentUser.uid,
+          displayName: (currentUser as any)?.displayName,
+          email: (currentUser as any)?.email,
+        });
+        if (p.photoUri) setAvatarUri(p.photoUri);
+        setUsername(p.username || (currentUser?.email?.split('@')[0] || 'User'));
       }
     })();
   }, [isAuthenticated, currentUser?.uid, profileUpdated]);
@@ -553,9 +635,11 @@ export default function DashboardScreen() {
       case 'USD':
         return usdValue;
       case 'KRW':
-        return usdValue * 1300; // 간단 환산
+        // 웹/안드로이드 동일 결과를 위해 실시간 환율 사용 (rates 우선, marketContext.usdkrw 폴백)
+        return usdValue * (Number(rates?.KRW) > 0 ? Number(rates.KRW) : (Number(usdkrw || 0) > 0 ? Number(usdkrw) : 1300));
       case 'ETH':
-        return usdValue / 3000; // 간단 환산
+        // ETH 기준은 ETH/USD 실시간 가격 사용
+        return usdValue / Math.max(1e-9, Number(getCoinPriceByCurrency('ETH', 'USD') || 0) || 3000);
       case 'COIN':
         // 코인 자체 단위: USD 가격을 해당 코인 가격(USD)로 나눠서 수량 기준으로 표시
         if (!priceUSD || priceUSD === 0) return undefined;
@@ -759,10 +843,18 @@ export default function DashboardScreen() {
     return onChainSnapToAssetRows(onChainSnap, usdToKrwRate, { priceBySymbol: marketUsdOverrides });
   }, [onChainSnap, usdToKrwRate, marketUsdOverrides]);
 
+  // 중복 합산 방지: 온체인 스냅이 제공하는 심볼은 internal에서 제외
+  const internalAssetsDeduped = useMemo(() => {
+    const internal = Array.isArray(internalAssets) ? internalAssets : [];
+    const onSyms = new Set((onchainAssets || []).map((a: any) => String(a?.symbol || '').toUpperCase().trim()).filter(Boolean));
+    if (onSyms.size === 0) return internal;
+    return internal.filter((a: any) => !onSyms.has(String(a?.symbol || '').toUpperCase().trim()));
+  }, [internalAssets, onchainAssets]);
+
   // 최종 보유 = 온체인 + 내부 (단일 소스)
   const mergedAssets = useMemo(() => {
-    return mergeAssets(onchainAssets, internalAssets, { usdToKrw: usdToKrwRate });
-  }, [onchainAssets, internalAssets, usdToKrwRate]);
+    return mergeAssets(onchainAssets, internalAssetsDeduped, { usdToKrw: usdToKrwRate });
+  }, [onchainAssets, internalAssetsDeduped, usdToKrwRate]);
 
   useEffect(() => {
     if (!DEBUG) return;
@@ -961,6 +1053,11 @@ export default function DashboardScreen() {
   const [showRewardModal, setShowRewardModal] = useState(false);
   const [totalRewards, setTotalRewards] = useState(0);
   const [consecutiveDays, setConsecutiveDays] = useState(0);
+  const [ledgerTotals, setLedgerTotals] = useState<{ incomeYoy: number; spentYoy: number; netYoy: number }>({
+    incomeYoy: 0,
+    spentYoy: 0,
+    netYoy: 0,
+  });
   const [showAllAssets, setShowAllAssets] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null);
   const [transactionModalVisible, setTransactionModalVisible] = useState(false);
@@ -1150,8 +1247,16 @@ export default function DashboardScreen() {
       // NFT 기능이 구현되면 해당 페이지로 이동
       Alert.alert('알림', 'NFT 기능은 준비 중입니다.');
     } else if (actionId === 'buy') {
+      if (!EXCHANGE_UI_ENABLED) {
+        Alert.alert('알림', '현재 버전에서는 해당 기능을 사용할 수 없습니다.');
+        return;
+      }
       router.push('/(tabs)/exchange');
     } else if (actionId === 'sell') {
+      if (!EXCHANGE_UI_ENABLED) {
+        Alert.alert('알림', '현재 버전에서는 해당 기능을 사용할 수 없습니다.');
+        return;
+      }
       router.push('/(tabs)/exchange');
     } else if (actionId === 'diary') {
       // Diary 기능이 구현되면 해당 페이지로 이동
@@ -1167,67 +1272,67 @@ export default function DashboardScreen() {
 
   const handleDailyReward = async () => {
     if (dailyRewardClaimed) {
-      Alert.alert('Already Claimed', 'You have already claimed today\'s reward.');
+      showAlert('Already Claimed', 'You have already claimed today\'s reward.');
       return;
     }
 
     try {
-      // Check if user is logged in
       if (!isAuthenticated) {
-        Alert.alert('Error', 'Please log in to claim rewards.');
+        showAlert('Error', 'Please log in to claim rewards.');
         return;
       }
 
-      // 전역 거래 스토어에 일일보상 기록
-      recordReward({
-        symbol: 'YOY',
-        amount: 1,
-        description: '일일 출석 보상',
-        type: 'daily_reward'
+      const { claimDailyRewardFromServer } = await import('@/lib/dailyRewardClaim');
+      const res = await claimDailyRewardFromServer({
+        isAuthenticated,
+        currentUserEmail,
+        recordReward,
       });
-      // 모니터 스토어에도 즉시 반영 + 영구 로컬 조정 기록(재로그인/업데이트 후에도 유지)
-      try {
-        const { useMonitorStore } = require('@/lib/monitorStore');
-        await useMonitorStore.getState().applyLocalChange({ symbol: 'YOY', delta: 1, type: 'daily_reward', description: '일일 출석 보상' });
-      } catch {}
-      
-      // 잔액 업데이트 (payments.tsx와 동일한 저장소 사용)
-      const storageKey = `user_balances_${currentUserEmail}`;
-      const currentBalances = await AsyncStorage.getItem(storageKey);
-      let userBalances = currentBalances ? JSON.parse(currentBalances) : {};
-      
-      userBalances['YOY'] = (userBalances['YOY'] || 0) + 1;
-      await AsyncStorage.setItem(storageKey, JSON.stringify(userBalances));
-      
-      // 대시보드 잔액도 업데이트
-      setRealTimeBalances(prev => prev.map(balance => 
-        balance.symbol === 'YOY' 
-          ? { ...balance, amount: balance.amount + 1, valueUSD: (balance.amount + 1) * (yoyPriceUSD || 0) }
-          : balance
-      ));
 
-      // Mark as claimed
+      if (!res.ok) {
+        if (res.reason === 'auth') {
+          showAlert('Error', 'Please log in to claim rewards.');
+          return;
+        }
+        if (res.reason === 'ledger' && res.message === 'treasury_insufficient') {
+          showAlert('알림', '보상 풀 일시 부족입니다. 잠시 후 다시 시도해 주세요.');
+          return;
+        }
+        if (res.reason === 'ledger') {
+          showAlert('오류', '출석 보상 처리에 실패했습니다.');
+          return;
+        }
+        showAlert('Error', res.message ? `Failed to claim reward.\n${res.message}` : 'Failed to claim reward. Please try again.');
+        return;
+      }
+
+      if (res.already) {
+        setDailyRewardClaimed(true);
+        showAlert('알림', '오늘 출석 보상은 이미 받으셨습니다.');
+        return;
+      }
+
+      const credited = res.credited;
+      setRealTimeBalances((prev) =>
+        prev.map((balance) =>
+          balance.symbol === 'YOY'
+            ? {
+                ...balance,
+                amount: balance.amount + credited,
+                valueUSD: (balance.amount + credited) * (yoyPriceUSD || 0),
+              }
+            : balance
+        )
+      );
+
       setDailyRewardClaimed(true);
-      
-      // Update total rewards and consecutive days
-      const newTotalRewards = totalRewards + 1;
-      const newConsecutiveDays = consecutiveDays + 1;
-      
-      setTotalRewards(newTotalRewards);
-      setConsecutiveDays(newConsecutiveDays);
-      
-      // Save to AsyncStorage
-      const today = new Date().toDateString();
-      await AsyncStorage.setItem(`daily_reward_${currentUserEmail}_${today}`, 'claimed');
-      await AsyncStorage.setItem(`total_rewards_${currentUserEmail}`, newTotalRewards.toString());
-      await AsyncStorage.setItem(`consecutive_days_${currentUserEmail}`, newConsecutiveDays.toString());
-      
-      // Show reward modal
+      setTotalRewards(res.newTotalRewards);
+      setConsecutiveDays(res.newConsecutiveDays);
       setShowRewardModal(true);
-      
     } catch (error) {
       console.error('Error claiming daily reward:', error);
-      Alert.alert('Error', 'Failed to claim reward. Please try again.');
+      const msg = String((error as any)?.message || error || '');
+      showAlert('Error', msg ? `Failed to claim reward.\n${msg}` : 'Failed to claim reward. Please try again.');
     }
   };
 
@@ -1374,7 +1479,13 @@ export default function DashboardScreen() {
               {(() => {
                 const totalInSelected = getTotalInCurrency(selectedCurrency);
                 return (
-                  <ThemedText style={styles.balanceAmount}>
+                  <ThemedText
+                    style={styles.balanceAmount}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.72}
+                    ellipsizeMode="clip"
+                  >
                     {`${formatNumber(totalInSelected.amount, selectedCurrency)} ${totalInSelected.symbol}`}
                   </ThemedText>
                 );
@@ -1710,8 +1821,11 @@ export default function DashboardScreen() {
                           {holding.isFavorite ? '★' : '☆'}
                         </ThemedText>
                       </TouchableOpacity>
-                      <Link href={{ pathname: '/market/[id]', params: { id: holding.symbol } }} asChild>
-                        <TouchableOpacity style={styles.coinInfoLink}>
+                      {IOS_APP_STORE_SHELF ? (
+                        <TouchableOpacity
+                          style={styles.coinInfoLink}
+                          onPress={() => router.push(`/(tabs)/wallet?coin=${encodeURIComponent(holding.symbol)}&tab=assets`)}
+                        >
                           <View style={styles.coinIcon}>
                             {holding.symbol === 'YOY' ? (
                               <Image 
@@ -1756,7 +1870,55 @@ export default function DashboardScreen() {
                             </ThemedText>
                           </View>
                         </TouchableOpacity>
-                      </Link>
+                      ) : (
+                        <Link href={{ pathname: '/market/[id]', params: { id: holding.symbol } }} asChild>
+                          <TouchableOpacity style={styles.coinInfoLink}>
+                            <View style={styles.coinIcon}>
+                              {holding.symbol === 'YOY' ? (
+                                <Image 
+                                  source={require('@/assets/images/yoy.png')}
+                                  style={styles.coinLogo}
+                                />
+                              ) : (
+                                <Image 
+                                  source={{ uri: `https://static.upbit.com/logos/${holding.symbol}.png` }}
+                                  style={styles.coinLogo}
+                                  defaultSource={{ uri: `https://static.upbit.com/logos/${holding.symbol}.png` }}
+                                />
+                              )}
+                            </View>
+                            <View style={styles.coinDetails}>
+                              <View style={styles.coinNameContainer}>
+                                {nameLanguage === 'en' ? (
+                                  <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.coinNameEnglish}>
+                                    {holding.symbol}
+                                  </ThemedText>
+                                ) : (
+                                  <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.coinNameKorean}>
+                                    {holding.name}
+                                  </ThemedText>
+                                )}
+                              </View>
+                              <ThemedText numberOfLines={1} allowFontScaling={false} style={styles.coinPair}>
+                                {(() => {
+                                  switch (selectedMarket) {
+                                    case 'USDT':
+                                      return `${holding.symbol}/USDT`;
+                                    case 'KRW':
+                                      return `${holding.symbol}/KRW`;
+                                    case 'ETH':
+                                      return `${holding.symbol}/ETH`;
+                                    case 'FAV':
+                                      return `${holding.symbol}/USD`;
+                                    default:
+                                      return `${holding.symbol}/USD`;
+                                  }
+                                })()}
+                              </ThemedText>
+                            </View>
+                          </TouchableOpacity>
+                        </Link>
+                      )}
                     </View>
                     
                     <View style={styles.priceInfo}>
@@ -2013,14 +2175,6 @@ export default function DashboardScreen() {
             {(() => {
               // 전역 거래 스토어에서 모든 거래 기록 가져오기 (필터 없이 모든 코인 포함)
               const allTransactions = getTransactions(); // 필터 없이 모든 거래 가져오기
-              console.log('Dashboard - All transactions (no filter):', allTransactions);
-              console.log('Dashboard - Transaction types:', allTransactions.map(tx => ({ 
-                type: tx.type, 
-                symbol: tx.symbol, 
-                fromToken: tx.fromToken, 
-                toToken: tx.toToken,
-                description: tx.description
-              })));
               const recentTransactions = allTransactions.slice(0, 10);
               
               return recentTransactions.map((transaction, index) => (
@@ -2198,6 +2352,18 @@ export default function DashboardScreen() {
                   <ThemedText style={styles.statValue}>{consecutiveDays}</ThemedText>
                   <ThemedText style={styles.statLabel}>Consecutive Days</ThemedText>
                 </View>
+                <View style={styles.statItem}>
+                  <ThemedText style={styles.statValue}>{ledgerTotals.incomeYoy}</ThemedText>
+                  <ThemedText style={styles.statLabel}>Total Income</ThemedText>
+                </View>
+                <View style={styles.statItem}>
+                  <ThemedText style={styles.statValue}>{ledgerTotals.spentYoy}</ThemedText>
+                  <ThemedText style={styles.statLabel}>Total Spent</ThemedText>
+                </View>
+                <View style={styles.statItem}>
+                  <ThemedText style={styles.statValue}>{ledgerTotals.netYoy}</ThemedText>
+                  <ThemedText style={styles.statLabel}>Net</ThemedText>
+                </View>
               </View>
               
               <ThemedText style={styles.rewardMessage}>
@@ -2222,7 +2388,15 @@ export default function DashboardScreen() {
         visible={!!selectedTransaction && transactionModalVisible}
         tx={(selectedTransaction as any) || ({} as any)}
         onClose={() => setTransactionModalVisible(false)}
-        onSaveMemo={async(id, memo)=>{ await updateTransactionMemo(id, memo); setTransactionModalVisible(false); }}
+        onSaveMemo={async (id, memo) => {
+          try { useTransactionStore.getState().updateTransaction(id, { memo }); } catch {}
+          try {
+            const { saveTransactionMemo } = await import('@/lib/transactionMemos');
+            await saveTransactionMemo(id, memo);
+          } catch {}
+          try { await updateTransactionMemo(id, memo); } catch {}
+          setTransactionModalVisible(false);
+        }}
         memoDraft={memoDraft}
         setMemoDraft={setMemoDraft}
       />
@@ -2387,6 +2561,8 @@ const styles = StyleSheet.create({
   balanceAmount: {
     color: '#FFD700',
     fontSize: 28,
+    lineHeight: 34,
+    paddingTop: 2,
     fontWeight: 'bold',
     marginBottom: 4,
   },

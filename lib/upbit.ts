@@ -1,6 +1,7 @@
 // Upbit API integration for real-time cryptocurrency prices
 import { Platform } from 'react-native';
 import { YOY_INFO } from './yoy';
+import { firebaseApp } from '@/lib/firebase';
 
 export interface UpbitTicker {
   market: string;
@@ -42,9 +43,17 @@ const UPBIT_API_BASE = 'https://api.upbit.com/v1';
 // 웹 CORS 우회용 프록시 시도 헬퍼
 export async function fetchJsonWithProxy(url: string, init?: RequestInit): Promise<any> {
   const origin = (typeof window !== 'undefined' && window.location && window.location.origin) ? window.location.origin : '';
+  const appProjectId = String((firebaseApp as any)?.options?.projectId || '').trim();
+  const projectId =
+    (process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID as string | undefined) ||
+    (process.env.EXPO_PUBLIC_FIREBASE_PROJECT as string | undefined) ||
+    appProjectId ||
+    '';
+  const region = String((process.env.EXPO_PUBLIC_FIREBASE_FUNCTIONS_REGION as string | undefined) || 'us-central1').trim() || 'us-central1';
+  const fnProxy = projectId ? `https://${region}-${projectId}.cloudfunctions.net/proxyV1?url=${encodeURIComponent(url)}` : '';
   const candidates: { url: string; note: string }[] = [
-    // 1) 내부 서버 프록시 (CORS 허용, allowlist 적용)
-    origin ? { url: `${origin}/api/proxy?url=${encodeURIComponent(url)}`, note: 'internal-proxy' } : null,
+    // 1) Firebase Functions 프록시 (웹에서 확실한 CORS 우회)
+    fnProxy ? { url: fnProxy, note: 'functions-proxyV1' } : null,
     // 2) 직접 (네이티브/서버 환경에서만 의미 있음)
     { url, note: 'direct' },
     // 간단 프록시 (isomorphic-git)
@@ -1233,10 +1242,13 @@ export function convertKRWToUSD(krwPrice: number, usdKrwRate: number = 1300): nu
 // Get USD/KRW exchange rate
 export async function getUSDKRWRate(): Promise<number> {
   try {
-    const response = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
+    const url = 'https://api.exchangerate-api.com/v4/latest/USD';
     const data = Platform.OS === 'web'
-      ? await fetchJsonWithProxy('https://api.exchangerate-api.com/v4/latest/USD')
-      : await response.json();
+      ? await fetchJsonWithProxy(url)
+      : await (async () => {
+          const response = await fetch(url);
+          return await response.json();
+        })();
     return data.rates.KRW || 1300; // fallback to 1300 if API fails
   } catch (error) {
     console.error('Failed to fetch USD/KRW rate:', error);

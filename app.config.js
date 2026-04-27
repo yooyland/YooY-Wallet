@@ -16,6 +16,8 @@ try {
   // base -> env-specific 순서로 override
   const candidates = [
     path.resolve(__dirname, 'env/.env'), // optional shared secrets
+    // 개발 환경에서만 env/.env.dev 지원 (지도/지오코딩 키 등 로컬 개발용 설정)
+    ...(envName === 'dev' ? [path.resolve(__dirname, 'env/.env.dev')] : []),
     path.resolve(__dirname, `.env.${envName}`),
     path.resolve(__dirname, '.env'), // local dev override (dev에서만 주로 사용)
   ].filter((p) => {
