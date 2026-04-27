@@ -6,7 +6,19 @@ import { Platform } from 'react-native';
 function currentUidHint(): string {
   try {
     const u = String((globalThis as any)?.__YOY_UID__ || '').trim();
-    return u;
+    if (u) return u;
+    // Native fallback: avoid static import to prevent web circular deps
+    if (Platform.OS !== 'web') {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const fb = require('@/lib/firebase');
+        const uid = String(fb?.firebaseAuth?.currentUser?.uid || '').trim();
+        if (uid) return uid;
+      } catch {
+        /* ignore */
+      }
+    }
+    return '';
   } catch {
     return '';
   }
