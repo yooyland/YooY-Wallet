@@ -2,8 +2,8 @@ import { FirebaseApp, getApps, initializeApp } from 'firebase/app';
 import { getAuth, initializeAuth, type Auth, signInAnonymously, setPersistence, browserSessionPersistence, indexedDBLocalPersistence, getReactNativePersistence } from 'firebase/auth';
 import {
   initializeFirestore,
+  memoryLocalCache,
   persistentLocalCache,
-  persistentMultipleTabManager,
   persistentSingleTabManager,
   type Firestore,
   setLogLevel,
@@ -233,18 +233,29 @@ if (Platform.OS === 'web') {
 }
 export const firebaseAuth: Auth = authInstance;
 
-// Firestore: localCache에는 TabManager가 아니라 persistentLocalCache(...)가 와야 함.
-// 웹: 다중 탭 동기화(IndexedDB) — 단일탭 매니저만 쓰면 다른 창/복구 타이밍에서 비정상 동작·초기화 오류가 날 수 있음.
-// 네이티브: 기존처럼 single-tab 매니저(한 앱 프로세스).
-export const firestore: Firestore = initializeFirestore(app, {
-  experimentalAutoDetectLongPolling: true,
-  useFetchStreams: false,
-  localCache: persistentLocalCache({
-    tabManager:
-      Platform.OS === 'web' ? persistentMultipleTabManager() : persistentSingleTabManager(),
-  }),
-  ignoreUndefinedProperties: true,
-});
+// Firestore
+// - 웹: memoryLocalCache — Firestore IndexedDB 캐시를 사용하지 않음. 과거 `localCache: persistentSingleTabManager()`처럼
+//   잘못된 설정으로 쌓인/손상된 IndexedDB, 또는 멀티탭·복구 타이밍과 겹치면 런타임 초기화(TDZ/ReferenceError)가 날 수 있어
+//   단일 탭·로그인 안정성을 최우선으로 한다(오프라인 캐시는 희생).
+// - 네이티브: persistentLocalCache + single-tab 매니저(한 프로세스).
+export const firestore: Firestore = initializeFirestore(
+  app,
+  Platform.OS === 'web'
+    ? {
+        experimentalAutoDetectLongPolling: true,
+        useFetchStreams: false,
+        localCache: memoryLocalCache(),
+        ignoreUndefinedProperties: true,
+      }
+    : {
+        experimentalAutoDetectLongPolling: true,
+        useFetchStreams: false,
+        localCache: persistentLocalCache({
+          tabManager: persistentSingleTabManager(),
+        }),
+        ignoreUndefinedProperties: true,
+      }
+);
 // Firebase SDK 로그 소음 축소 (권한 오류로 인한 붉은 LogBox 억제)
 try { setLogLevel('error'); } catch {}
 // Storage: 환경값을 그대로 존중(버킷 ID 그대로 사용). 전체 URL만 주어지면 호스트만 추출
