@@ -1,13 +1,14 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, TextInput, ScrollView, Platform } from 'react-native';
+import { router } from 'expo-router';
 import { collection, getDocs, limit, query, where } from 'firebase/firestore';
-import { firestore, firebaseAuth } from '../../../lib/firebase';
+import { firestore, firebaseAuth } from '@/lib/firebase';
 import { getDmPairKeyV2 } from '../core/roomSchema';
 import { chatV2Paths } from '../core/firestorePaths';
 
 type Row = { ok: boolean; title: string; detail?: string };
 
-export default function ChatV2Validate() {
+function ChatV2ValidateAuto() {
   const uid = String(firebaseAuth.currentUser?.uid || '');
   const [rows, setRows] = useState<Row[]>([]);
   const [running, setRunning] = useState(false);
@@ -106,20 +107,7 @@ export default function ChatV2Validate() {
   const okCount = useMemo(() => rows.filter((r) => r.ok).length, [rows]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#0C0C0C' }}>
-      <View
-        style={{
-          paddingHorizontal: 14,
-          paddingTop: 14,
-          paddingBottom: 10,
-          borderBottomWidth: 1,
-          borderBottomColor: '#1E1E1E',
-        }}
-      >
-        <Text style={{ color: '#FFD700', fontWeight: '900', fontSize: 18 }}>채팅 점검</Text>
-        <Text style={{ color: '#777', marginTop: 4, fontSize: 12 }}>자동 점검 + 기기 확인 항목</Text>
-      </View>
-
+    <View style={{ backgroundColor: '#0C0C0C' }}>
       <View style={{ paddingHorizontal: 14, paddingTop: 12 }}>
         <TouchableOpacity
           activeOpacity={0.9}
@@ -163,10 +151,6 @@ export default function ChatV2Validate() {
   );
 }
 
-import React, { useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, TextInput, ScrollView, Platform } from 'react-native';
-import { router } from 'expo-router';
-
 export default function ChatV2Validate() {
   const [otherId, setOtherId] = useState('');
   const [roomId, setRoomId] = useState('');
@@ -196,6 +180,14 @@ export default function ChatV2Validate() {
       <Text style={{ color: '#AAA', marginTop: 8, lineHeight: 18 }}>
         내부 점검용 화면입니다. ({Platform.OS})
       </Text>
+
+      <View style={{ marginTop: 14 }}>
+        <Text style={{ color: '#EEE', fontWeight: '900' }}>자동 점검</Text>
+        <Text style={{ color: '#777', marginTop: 6 }}>Firestore 데이터/스키마 관련 기본 점검을 실행합니다.</Text>
+        <View style={{ marginTop: 10, borderRadius: 12, borderWidth: 1, borderColor: '#1E1E1E', overflow: 'hidden' }}>
+          <ChatV2ValidateAuto />
+        </View>
+      </View>
 
       <View style={{ marginTop: 14, padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#222', backgroundColor: '#111' }}>
         {tips.map((t) => (

@@ -64,7 +64,7 @@ export default function RootLayout() {
       }
     } catch {}
   }, [pathname]);
-  
+
   // 앱 시작 시 스크린 캡처 허용 (이전에 막힌 상태가 남아있을 수 있음)
   useEffect(() => {
     (async () => {

@@ -1,10 +1,12 @@
 import { FirebaseApp, getApps, initializeApp } from 'firebase/app';
 import { getAuth, initializeAuth, type Auth, signInAnonymously, setPersistence, browserSessionPersistence, indexedDBLocalPersistence, getReactNativePersistence } from 'firebase/auth';
 import {
-    initializeFirestore,
-    persistentSingleTabManager,
-    type Firestore,
-    setLogLevel,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  persistentSingleTabManager,
+  type Firestore,
+  setLogLevel,
 } from 'firebase/firestore';
 import { getStorage, type FirebaseStorage } from 'firebase/storage';
 import { Platform } from 'react-native';
@@ -231,14 +233,16 @@ if (Platform.OS === 'web') {
 }
 export const firebaseAuth: Auth = authInstance;
 
-// Firestore: 웹 안정화(롱폴링 + fetch stream 비활성 + 단일탭 캐시)
+// Firestore: localCache에는 TabManager가 아니라 persistentLocalCache(...)가 와야 함.
+// 웹: 다중 탭 동기화(IndexedDB) — 단일탭 매니저만 쓰면 다른 창/복구 타이밍에서 비정상 동작·초기화 오류가 날 수 있음.
+// 네이티브: 기존처럼 single-tab 매니저(한 앱 프로세스).
 export const firestore: Firestore = initializeFirestore(app, {
-  // 일부 네트워크/프록시 환경에서 WebChannel Write/channel 400을 회피하기 위해
-  // 강제 롱폴링을 해제하고 자동 감지를 사용합니다.
   experimentalAutoDetectLongPolling: true,
-  // 개발 환경 안정성을 위해 fetch stream은 유지/혹은 런타임이 지원하지 않으면 자동 폴백
   useFetchStreams: false,
-  localCache: persistentSingleTabManager(),
+  localCache: persistentLocalCache({
+    tabManager:
+      Platform.OS === 'web' ? persistentMultipleTabManager() : persistentSingleTabManager(),
+  }),
   ignoreUndefinedProperties: true,
 });
 // Firebase SDK 로그 소음 축소 (권한 오류로 인한 붉은 LogBox 억제)
